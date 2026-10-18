@@ -19,8 +19,6 @@ it as an ordinary `pkg` package. It keeps Helium's privacy features and
 replaces the missing Chromium sandbox on FreeBSD with one built on FreeBSD's
 own security primitives.
 
-Helium is element 2. Beryllium is element 4.
-
 ## Status
 
 > [!WARNING]
