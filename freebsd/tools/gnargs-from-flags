@@ -176,6 +176,10 @@ def main(argv=None):
                         help="NAME=value for @NAME@ placeholders")
         sp.add_argument("--arg", action="append", default=[],
                         help="option-driven key=value")
+        sp.add_argument("--helium-flags", help="default: <repo>/helium/flags.gn")
+        sp.add_argument("--fragment", help="default: <repo>/flags.freebsd.gn")
+        sp.add_argument("--privacy-keys",
+                        help="default: <repo>/freebsd/privacy/gn-privacy-keys.json")
         if name == "gen":
             sp.add_argument("--format", choices=("args.gn", "cmdline", "json"),
                             default="args.gn")
@@ -184,17 +188,19 @@ def main(argv=None):
     try:
         if a.cmd == "check":
             # Placeholders are irrelevant to the policy check; fill them.
-            with open(os.path.join(a.repo, "flags.freebsd.gn"),
+            with open(a.fragment or os.path.join(a.repo, "flags.freebsd.gn"),
                       encoding="utf-8") as f:
                 names = set(_PLACEHOLDER_RE.findall(f.read()))
             variables = {n: "CHECK" for n in names}
             variables.update(_kv(a.var, "--var"))
-            args, _ = collect(a.repo, a.arg, variables)
+            args, _ = collect(a.repo, a.arg, variables, a.fragment,
+                              a.helium_flags, a.privacy_keys)
             print(f"gnargs-from-flags: OK ({len(args)} arguments, privacy keys "
                   f"match freebsd/privacy/gn-privacy-keys.json)")
             return 0
 
-        args, origin = collect(a.repo, a.arg, _kv(a.var, "--var"))
+        args, origin = collect(a.repo, a.arg, _kv(a.var, "--var"), a.fragment,
+                               a.helium_flags, a.privacy_keys)
         if a.format == "args.gn":
             for k, v in args.items():
                 print(f"{k}={v}")

@@ -3,10 +3,13 @@
 """Beryllium's name substitution step (plan/05 stage 6).
 
 Runs Helium's helium/utils/name_substitution.py unchanged, with Beryllium's
-replacement rules swapped in, in place of Helium's own run. One pass turns
-user-visible "Chrome", "Chromium" and "Helium" into "Beryllium" and
-"chrome://" and "helium://" into "beryllium://" in .grd/.grdp strings, and
-recomputes the .xtb translation fingerprints the same way Helium does.
+replacement rules swapped in. It runs after Helium's own pass
+(Chrome -> Helium) and after i18n_apply.py (Helium's translations, whose
+fingerprints assume Helium's text), so it is a pure rename of Helium's
+result: user-visible "Helium" (and any remaining "Chrome"/"Chromium")
+becomes "Beryllium", and "helium://" (or "chrome://") becomes
+"beryllium://", in .grd/.grdp strings and their .xtb translations, with
+the translation fingerprints recomputed the same way Helium does.
 
 Matches patches/branding/beryllium-webui-scheme.patch, which makes the
 display scheme "beryllium" (decision Q11, 1 November 2026). Internal
@@ -23,7 +26,10 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HELIUM_UTILS = os.path.join(HERE, "..", "..", "helium", "utils")
+# Repository layout by default; the port sets HELIUM_UTILS to the extracted
+# Helium distfile.
+HELIUM_UTILS = os.environ.get(
+    "HELIUM_UTILS", os.path.join(HERE, "..", "..", "helium", "utils"))
 
 BERYLLIUM_REGEXES_STR = [
     # Names that must not change (same exceptions as Helium's).

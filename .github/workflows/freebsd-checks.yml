@@ -28,6 +28,16 @@ jobs:
         run: python3 -W error::ResourceWarning -m unittest discover -s freebsd/tools/tests -v
       - name: Privacy key check against the pinned Helium flags
         run: ./freebsd/tools/gnargs-from-flags check
+      - name: Port inputs in sync with the repository
+        run: ./freebsd/tools/sync-port --check
+      - name: Privacy key check on the port's own copy
+        run: >
+          ./freebsd/tools/gnargs-from-flags check
+          --helium-flags helium/flags.gn
+          --fragment freebsd/ports/www/beryllium/files/beryllium/flags.freebsd.gn
+          --privacy-keys freebsd/ports/www/beryllium/files/beryllium/gn-privacy-keys.json
+      - name: BSD patch review debt (advisory until the first full review, RT-10)
+        run: ./freebsd/tools/import-bsd-patches check > review-debt.txt; head -n 1 review-debt.txt
       - name: Shell syntax
         run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
 

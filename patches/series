@@ -2,3 +2,4 @@
 #   helium/utils/patches.py apply <tree> helium/patches patches
 # Paths are relative to this directory. See plan/05-PATCH-STRATEGY.md.
 branding/beryllium-webui-scheme.patch
+platform/beryllium-paths-and-branding.patch
