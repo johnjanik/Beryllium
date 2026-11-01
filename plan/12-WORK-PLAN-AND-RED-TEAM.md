@@ -1,6 +1,6 @@
 # Beryllium: Work Plan and Red-Team Review
 
-**Status:** Review of plan documents 00 to 11 and the spec, with facts re-checked against live sources
+**Status:** Review of plan documents 00 to 11 and the spec, with facts re-checked against live sources; decisions and Sprint 1 status in sections 8 and 9
 **Date:** 1 November 2026
 **Reads with:** [09-ROADMAP.md](09-ROADMAP.md) (phases), [06-SECURITY-MODEL.md](06-SECURITY-MODEL.md) (sandbox design), [08-TESTING-AND-VERIFICATION.md](08-TESTING-AND-VERIFICATION.md) (proof obligations)
 
@@ -538,15 +538,27 @@ browsers cannot use in the same way:
   randomised host identifiers (RT-01) and its own network path, destroyed on
   exit. FreeBSD makes this cheap and fast.
 
-## 8. Decisions and information needed from you
+## 8. Decisions recorded on 1 November 2026
 
-1. **Builder hardware.** RAM, cores, free disk and inodes on your FreeBSD
-   machine. A Release build wants at least 16 GB RAM and 100 GB free disk
-   to be comfortable; 32 GB or more helps. If your desktop is also the test
-   machine, a separate builder is worth considering because of RT-11.
-2. **FreeBSD version(s)** you will test on (`freebsd-version -kru`), and
-   whether the kernel includes the `SA-26:28.capsicum` fix.
-3. **Display and GPU.** X11 or Wayland (and which compositor); GPU vendor and
-   driver. This sets the order of the Phase 3 GPU work and RT-07.
-4. **Q1 (name)** and **Q2 (Helium services hosting)** from 10 section 2.
-5. **Agreement on the amendments** in section 3.3, or which to drop.
+| Item | Answer | Effect |
+|---|---|---|
+| Build and test host | amd64, 128 GB RAM, 24 cores, about 7 TB disk | meets the dedicated-builder requirement in RT-11; stable branches built in Poudriere jails and tested in bhyve guests on the same host |
+| FreeBSD version | 16.0-CURRENT (installed after June 2026) | primary development host; release targets stay 14.x and 15.x; the `SA-26:28` fix is confirmed by the oracle's `proc.sigqueue_other` probe, not by version number |
+| Display and GPU | Wayland; NVIDIA RTX 5090, proprietary driver 595.99.02 | RT-07 is lower priority on this host but stays a published limitation; the first GPU policy targets NVIDIA on Wayland, whose closed driver and large ioctl surface are a new risk (R23 in 10) |
+| Q1 name | Beryllium only; no association with Helium | charter D2 and D8, README rewritten; GPL attribution kept |
+| Q2 services | Helium endpoints not used; services off until Beryllium self-hosts | charter D3, 07 section 3; component updates going stale is a release blocker (R13); hosting is new open question Q10 |
+| Section 3.3 amendments | agreed | applied to documents 01 to 11 |
+
+New open questions: Q10 (who hosts Beryllium services, under which domain)
+and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
+
+## 9. Sprint 1 status
+
+| Item | Status | Where |
+|---|---|---|
+| 1. Submodule to 0.20.3 | done | `helium` at `2f81b9ca`, Chromium 156.0.8078.79 |
+| 2. Baseline collection | written, **to be run on the 16-CURRENT host** | `freebsd/tools/baseline-collect.sh` |
+| 3. Capsicum oracle and red-team probes | written (86 probes plus kernel attestation and a sysctl sweep); compiled and linked against a 16.0-CURRENT sysroot with `-Werror`; **not yet run** | `freebsd/tests/capsicum-standalone/` |
+| 3a. Oracle on 14.x and 15.x | CI job runs it in FreeBSD VMs and uploads JSON | `.github/workflows/freebsd-checks.yml` |
+| 4. GN args generator and privacy guard | done, 13 unit tests, passes against Helium 0.20.3 | `freebsd/tools/gnargs-from-flags`, `flags.freebsd.gn`, `freebsd/privacy/gn-privacy-keys.json` |
+| 5. Patch matrix | next | |

@@ -1,7 +1,7 @@
 # Beryllium: Security Model and Capsicum Sandbox Design
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026 from the red-team review ([12-WORK-PLAN-AND-RED-TEAM.md](12-WORK-PLAN-AND-RED-TEAM.md), findings RT-01 to RT-15)
 **Implements:** spec sections 5 to 9 (process architecture, Capsicum renderer sandbox, jails, resource controls, MAC)
 **Related:** [03-ARCHITECTURE.md](03-ARCHITECTURE.md) section 4 for the process map and brokered resources; [08-TESTING-AND-VERIFICATION.md](08-TESTING-AND-VERIFICATION.md) for the proof obligations
 
@@ -12,19 +12,21 @@
 | Layer | Protects against | Status at snapshot | Phase |
 |---|---|---|---|
 | 1. Renderer Capsicum policy | a compromised renderer reaching files, network, devices, other processes | absent (RLIMIT_DATA only) | 2 |
-| 2. Launcher descriptor hygiene and IPC validation | authority leaking into any child; confused-deputy via Mojo | partial (Chromium's own IPC checks; no descriptor closing beyond CLOEXEC) | 2 |
+| 2. Launcher descriptor and environment hygiene, IPC validation | authority or secrets leaking into any child (RT-05); confused-deputy via Mojo | partial (Chromium's own IPC checks; no descriptor closing beyond CLOEXEC; full environment inherited) | 2 |
 | 3. Per-process policies for utilities, audio, network, GPU, CDM | same as 1 for the other high-risk processes | absent | 3 |
-| 4. Process-control hardening (`procctl`) | tracing, privilege gain, signal abuse within the user's session | absent | 2 |
+| 4. Process-control hardening (`procctl`, including trace-disable on the browser process, RT-03) | tracing, privilege gain, signal abuse within the user's session | absent | 2 |
 | 5. Resource limits (`rlimit`, optional `rctl`) | denial of service | RLIMIT_DATA only | 2 (rlimit), 4 (rctl) |
 | 6. Optional whole-browser jail | filesystem and device exposure of the whole browser; blast radius of a browser-process compromise | none | 4 |
-| 7. MAC (study only) | residual confidentiality flows if any | none | 5 |
+| 7. MAC module for capability-mode processes (study, RT-02) | kernel surface, machine identifiers and process visibility that Capsicum leaves reachable | none | 5 |
 
 Layer 1 is the milestone; nothing else is allowed to stand in for it.
 
 ## 2. Capsicum facts the design relies on
 
 To be confirmed by the standalone oracle on each supported branch (the test
-suite exists precisely because these are the load-bearing assumptions):
+suite exists because the design depends on these assumptions). Items marked
+"main" were read from FreeBSD `main` source on 1 November 2026 and still need
+the oracle run on 14.x, 15.x and the 16-CURRENT development host:
 
 - `cap_enter(2)` is irreversible and inherited by children; `cap_getmode(2)`
   reports it. `procctl(2)` is not permitted in capability mode, so every
@@ -48,10 +50,33 @@ suite exists precisely because these are the load-bearing assumptions):
   pid. `openat` must be strictly relative to the directory descriptor; absolute
   paths and `..` escapes fail with `ENOTCAPABLE`. `__sysctl` is permitted but
   each node must carry `CTLFLAG_CAPRD`; most `kern.*` and `vm.*` reads do not,
-  which is where the 2023 attempt died. `ptrace` is marked CAPENABLED and
-  whether it is restricted to self in capability mode is unconfirmed, hence
-  the oracle test and the `procctl` trace-disable regardless. `dlopen` by path
-  fails because it opens by path.
+  which is where the 2023 attempt died. `ptrace` is marked CAPENABLED; on
+  main, `ptrace_check_allowed()` (`sys/kern/sys_process.c`) limits a
+  capability-mode caller to self-directed requests and process descriptors
+  (`pdptrace`), and only while `security.bsd.allow_ptrace_in_cap_mode=1` (the
+  default). Older branches are unmeasured, so the oracle tests it per branch
+  and the browser process disables tracing of itself regardless (RT-03).
+  `dlopen` by path fails because it opens by path.
+- Also confirmed on main: `sendto` with a destination address fails with
+  `ECAPMODE`; `kenv`, `posix_openpt`, `thr_kill2` and `ktrace` are not
+  CAPENABLED; `setpriority`/`getpriority` are limited to self; `fork` checks
+  the user's process count against the *caller's own* `RLIMIT_NPROC`
+  (`sys/kern/kern_fork.c`), so `RLIMIT_NPROC=1` in a renderer denies `fork` in
+  that process only (RT-15).
+- What capability mode leaves reachable (RT-01, RT-02): sysctl nodes flagged
+  `CTLFLAG_CAPRD` include machine identifiers (`kern.hostuuid`,
+  `kern.hostid`, `kern.hostname`, `kern.boot_id`) as well as `kern.osrelease`
+  and `kern.build_id`; `socket()` succeeds for any domain (`AF_INET`,
+  `AF_INET6`, `PF_ROUTE`, `AF_NETLINK`), reaching protocol code even though
+  `connect`/`bind` fail; `kevent(EVFILT_PROC)` checks only `p_cansee()`
+  (`sys/kern/kern_event.c`), so a confined process can probe for any visible
+  pid and watch other processes fork, exec and exit. Because a compromised
+  renderer can always send data out through ordinary web requests, anything
+  readable here is treated as disclosed.
+- The kernel exposes capability mode per process as `KI_CRF_CAPABILITY_MODE`
+  in `kinfo_proc.ki_cr_flags` (`sys/sys/user.h`), readable by the browser
+  through `sysctl kern.proc.pid.<pid>`; this is what the status page and the
+  navigation gate use (RT-04).
 - Operations on already-held descriptors continue to work, limited by
   `cap_rights_limit(2)`, `cap_ioctls_limit(2)` and `cap_fcntls_limit(2)`:
   reads, writes, `mmap`, `fstat`, `kqueue` on them, `recvmsg` with
@@ -90,6 +115,8 @@ suite exists precisely because these are the load-bearing assumptions):
 browser: ChildProcessLauncherHelper
    build fds_to_remap = {Mojo channel (socketpair), V8 snapshot, field-trial and
                          shared-files descriptors, log, /dev/null x3}
+   env = allowlist (locale, TZ; display variables only for types that need
+         them); LD_* dropped in production                  <- RT-05
    for each fd: cap_rights_limit to its role            <- browser side, before fork
    fork; in child: dup2 shuffle, then base::CloseSuperfluousFds (reads /dev/fd on
          FreeBSD: only lists 0-2 unless fdescfs is mounted, so Beryllium adds
@@ -107,12 +134,14 @@ renderer: ContentMainRunner -> RendererMain
       re-apply cap_rights_limit / cap_ioctls_limit / cap_fcntls_limit per role
       caph_cache_tzdata(); caph_limit_stdio()
       procctl(PROC_TRACE_CTL_DISABLE), procctl(PROC_NO_NEW_PRIVS_CTL)   <- before cap_enter, procctl is not CAPENABLED
-      setrlimit(RLIMIT_DATA, policy value)
+      setrlimit(RLIMIT_DATA, policy value); RLIMIT_NPROC = 1; RLIMIT_CORE = 0   <- RT-15
       cap_enter(); CHECK(cap_getmode() == 1)
       record status bitmask; write structured log line
       production: any failure above -> LOG + _exit(kSandboxFailed)
       devel: failure -> LOG, continue, status says "NOT SANDBOXED"
    RendererMainPlatformDelegate::EnableSandbox returns status
+browser: read kinfo_proc(pid); KI_CRF_CAPABILITY_MODE set?          <- RT-04
+      no -> production: no navigation commit, terminate the renderer
    ... first untrusted content only after this point
 ```
 
@@ -135,13 +164,17 @@ inventory may lower them.
 | V8 snapshot, ICU data if file-based | browser | same as paks | `icu_use_data_file=false` on FreeBSD removes the ICU one |
 | Shared memory regions passed later | browser/GPU over Mojo | `CAP_READ CAP_WRITE CAP_MMAP_RW CAP_FSTAT` (`CAP_MMAP_RWX` only for the executable region type if used) | arrive after lockdown via `SCM_RIGHTS`; rights limited by the sender before sending |
 | Font file descriptors | browser `FontService` over Mojo | `CAP_READ CAP_SEEK CAP_FSTAT CAP_MMAP_R` | limited by the browser before sending |
-| Casper `cap_sysctl` channel | renderer, before `cap_enter`, only if caching proves insufficient | socket rights | documented exception if present |
+| (no Casper channel) | | | renderers get no Casper channel; sysctl values are cached before entry. Casper services run outside capability mode and parse requests from the client, so a channel is an unconfined parser within an attacker's reach (RT-14) |
 | `kqueue` descriptors | renderer itself | created in capability mode, allowed | not inherited |
 
 Explicitly absent: any directory descriptor; any socket other than the Mojo
 channel; any profile, cache, cookie, history, local storage or download
 descriptor; any device node; `/dev/urandom` (arc4random); the X11 or Wayland
-socket; D-Bus; a `/proc`-like descriptor (FreeBSD has none in use).
+socket; D-Bus; a `/proc`-like descriptor (FreeBSD has none in use); any
+Casper channel. Not a descriptor but treated the same way: the environment
+carries no secrets or socket paths (`SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`,
+tokens), because anything readable in the renderer is assumed disclosed
+(RT-05).
 
 ### 3.3 Shared memory primitive
 
@@ -192,6 +225,13 @@ Design:
   rather than being ignored; `InitializeSandbox` failure calls `_exit` with a
   distinctive code; the browser shows the renderer-crashed page and
   `chrome://sandbox` shows the failure stage.
+- Removing `--no-sandbox` is not enough (RT-12). Production builds also
+  remove, or ignore with a log line, switches that change the security model
+  of a running browser: `--renderer-cmd-prefix`, `--utility-cmd-prefix`,
+  `--gpu-launcher`, `--js-flags` (V8 flags can switch off mitigations),
+  `--disable-site-isolation-trials`, `--disable-web-security`, and any
+  later addition to that list. The production switch table is diffed against
+  a committed list in the sandbox suite.
 - With the flag false: switches exist, failures are logged and the status
   bitmask reports the truth; the package name makes the difference obvious.
 - The wrapper script never adds switches (spec 6.1.8).
@@ -221,6 +261,16 @@ fields.
   requirement (6.2) is what makes this safe: the child needs nothing the
   remap table does not list. Phase 0 confirms the `/dev/fd` behaviour on each
   branch and whether the BSD patch set already compensates.
+- Environment (RT-05): the launcher builds each child's environment from an
+  allowlist per process type instead of passing the browser's. `LD_PRELOAD`,
+  `LD_LIBRARY_PATH` and other `LD_*` variables are dropped for children in
+  production, since they change what runs before the sandbox.
+- Browser self-protection (RT-03): production builds call
+  `procctl(PROC_TRACE_CTL, PROC_TRACE_CTL_DISABLE)` in the browser process
+  itself, so neither a compromised child on a kernel that allows
+  cross-process `ptrace` from capability mode nor unrelated same-user
+  software can attach to the unconfined browser. `beryllium-devel` leaves it
+  off for debugging.
 - Mojo message validation is Chromium's; Beryllium adds no new browser-side
   interfaces. Every Beryllium change that adds a Mojo interface or a Casper
   channel is a `security-review: required` patch.
@@ -240,18 +290,46 @@ Casper channels if any, and the proof tests. Starting shapes:
 |---|---|---|---|
 | PDF (`kPdfConversion`, print compositor) | fonts as renderer; PDFium font mapper | none | PDFium's own font directory scanning on BSD |
 | Data decoder, image, generic utility, service with JIT | as renderer | none | |
-| Audio | pre-open `/dev/dsp*` (OSS via ALSA shim) or pre-open the directory holding the sndio/PulseAudio socket with `CAP_CONNECTAT` so the service can `connectat` later (the shkhln prototype's approach) | the audio descriptor with `CAP_READ CAP_WRITE CAP_IOCTL` and an OSS ioctl allowlist, or the socket-directory capability | device hot-plug after lockdown needs a restart of the audio service, which Chromium supports; ALSA was left unsandboxed in the prototype |
-| Network | NSS init, read `/etc/resolv.conf` and `/etc/hosts` (or `cap_dns`), open the profile's `Network` directory as a directory capability | sockets created on demand require either no capability mode or `cap_net`; directory capability with `CAP_LOOKUP CAP_READ CAP_WRITE CAP_CREATE CAP_FSTAT CAP_UNLINKAT` and `O_RESOLVE_BENEATH` on every open | whether `cap_net` throughput and feature coverage (QUIC/UDP, IPv6, SOCKS) are acceptable; otherwise the network service stays out of capability mode with rights-limited descriptors and restricted filesystem reach, and the matrix says so |
-| GPU | existing BSD hook plus: open `/dev/dri/renderD*` and `card*`, `/dev/pci` with an ioctl allowlist (libpci), the Mesa shader cache directory as a capability with create/unlink/rename rights, `~/.Xauthority` and the `/tmp/.X11-unix` directory with `CAP_CONNECTAT` for X11, the Wayland socket directory likewise, library directories with `CAP_MMAP_RX`, load every ICD and driver, warm Vulkan instance creation (the shkhln prototype's GPU policy is the starting inventory) | DRM descriptors with `cap_ioctls_limit` on the DRM ioctl set the driver actually uses (measured), shader cache dir capability, dma-buf descriptors over Mojo | NVIDIA proprietary and VA-API paths; the Vulkan loader re-reading ICD JSON by path after startup; Wayland was a TODO in the prototype |
+| Audio | pre-open `/dev/dsp*` (OSS via ALSA shim) or pre-connect the sndio/PulseAudio socket; a reconnect goes through the browser, which connects and passes the new descriptor over Mojo. The shkhln prototype's socket-directory capability is not adopted, because `$XDG_RUNTIME_DIR` also holds the Wayland, D-Bus and `gpg-agent` sockets (RT-06) | the audio descriptor with `CAP_READ CAP_WRITE CAP_IOCTL` and an OSS ioctl allowlist, or the connected socket | device hot-plug after lockdown needs a restart of the audio service, which Chromium supports; ALSA was left unsandboxed in the prototype |
+| Network | NSS init, read `/etc/resolv.conf` and `/etc/hosts` (or `cap_dns`), open the profile's `Network` directory as a directory capability | sockets created on demand require either no capability mode or `cap_net`; directory capability with `CAP_LOOKUP CAP_READ CAP_WRITE CAP_CREATE CAP_FSTAT CAP_UNLINKAT` and `O_RESOLVE_BENEATH` on every open | whether `cap_net` throughput and feature coverage (QUIC/UDP, IPv6, SOCKS) are acceptable; otherwise the network service stays out of capability mode with rights-limited descriptors and restricted filesystem reach, and the matrix says so. If `cap_net` is used, its request handling (`libnv`) gets a fuzz target in CI, and the non-thread-safe channel is serialised (RT-14) |
+| GPU | existing BSD hook plus: open `/dev/dri/renderD*` and `card*` (and for NVIDIA's proprietary driver `/dev/nvidia0`, `/dev/nvidiactl`, `/dev/nvidia-modeset`, with `/dev/dri` provided by `nvidia-drm`), `/dev/pci` with an ioctl allowlist (libpci), a per-session shader cache directory the browser creates and deletes (RT-08), the display connection made before entry (Wayland socket, or the X11 socket after reading `~/.Xauthority`), never a `/tmp`, `/tmp/.X11-unix` or `$XDG_RUNTIME_DIR` directory capability (RT-06), library directories with `CAP_MMAP_RX`, load every ICD and driver, warm Vulkan instance creation (the shkhln prototype's GPU policy is the starting inventory) | DRM and NVIDIA descriptors with `cap_ioctls_limit` on the ioctl set the driver actually uses (measured), the per-session cache directory, dma-buf descriptors over Mojo, the connected display socket | NVIDIA proprietary driver first (owner's hardware: RTX 5090, driver 595.99.02, Wayland); VA-API paths; the Vulkan loader re-reading ICD JSON by path after startup; Wayland was a TODO in the prototype |
 | CDM | load the CDM library and open its storage directory before entry | library and storage capabilities | foreign-cdm's Linux-compatibility shim may need paths; if so, unsandboxed opt-in |
 
 The rule from the roadmap applies: a process class is either in the matrix
 as kernel-enforced with tests, or in the known-limitations page with a risk
 statement and an owner.
 
+GPU notes from the red-team review and the owner's hardware:
+
+- **NVIDIA proprietary driver.** The first GPU target is the NVIDIA
+  proprietary driver on Wayland through `nvidia-drm`. Its device nodes take a
+  large, undocumented ioctl interface, so an ioctl allowlist is hard to derive
+  and the residual kernel attack surface is large and closed-source. Phase 3
+  measures the ioctls the GPU process actually issues (ktrace on the GPU
+  pid across the workload set), applies `cap_ioctls_limit` if the set is
+  stable, and otherwise documents the gap. The hardened software-rendering
+  option below is the fallback.
+- **X11 (RT-07).** Under X11 any client can capture other windows and inject
+  input with XTEST, and injecting input into a terminal is a sandbox escape.
+  A GPU process holding an X connection therefore has desktop-level
+  authority whatever this policy says. Wayland is recommended. Phase 3
+  measures whether the GPU process can present through the browser on X11
+  without its own X connection; if not, "GPU process on X11: effectively
+  unsandboxed" is a published limitation. The owner's setup is Wayland, so
+  this is lower priority for development but still part of the release table.
+- **Hardened option.** WebGPU disabled and software rendering only: the GPU
+  process then needs no device node and can be confined like a utility.
+  Measure the performance cost before offering it.
+- **Caches (RT-08).** A cache written by one confined process and read by the
+  next one, without the browser in between, turns a one-time compromise into
+  a persistent one. `MESA_SHADER_CACHE_DIR` points at a per-session directory
+  the browser creates and deletes (or the Mesa cache is disabled in hardened
+  mode); Chromium's own GPU program cache stays browser-mediated.
+
 ## 6. Process-control hardening (Phase 2)
 
-Applied in every confined child at the lockdown point:
+Applied in every confined child at the lockdown point (and, for trace
+disable, in the production browser process too, RT-03):
 
 - `procctl(P_PID, getpid(), PROC_TRACE_CTL, PROC_TRACE_CTL_DISABLE)`: no
   `ptrace` attach to the process, and no core dump of its memory to disk in
@@ -262,8 +340,11 @@ Applied in every confined child at the lockdown point:
   against setuid execution should `exec` ever become possible.
 - `setrlimit`: `RLIMIT_DATA` (per-type value, following OpenBSD's scaled
   table rather than the single `kDataSizeLimit` the FreeBSD stub uses),
-  `RLIMIT_NOFILE` to a measured ceiling, `RLIMIT_NPROC` is not per-process
-  on FreeBSD so it is left to the resource profiles.
+  `RLIMIT_NOFILE` to a measured ceiling, `RLIMIT_NPROC=1` (fork checks the
+  user's process count against the caller's own limit, so this denies `fork`
+  in the renderer without affecting the rest of the session; corrected from
+  the 18 October draft, RT-15), `RLIMIT_CORE=0` (renderer memory holds page
+  content and cookies).
 - Signals: capability mode already restricts `kill` to self; the oracle covers
   `sigqueue` after the advisory.
 
@@ -296,6 +377,12 @@ Spec 7.1 adopted. Design notes specific to the FreeBSD desktop:
   input via portals; neither is isolation.
 - Network: shared stack with `pf` rules per jail user, or VNET with an
   explicit route and DNS; the renderer policy is unchanged inside the jail.
+- Host identifiers (RT-01): `host.hostuuid` and `host.hostname` are per-jail
+  values (`CTLFLAG_PRISON`), so the profile sets random ones. This is the
+  only way to hide the real machine UUID and hostname from a compromised
+  confined process without a kernel module, which gives the jail a privacy
+  purpose in addition to its perimeter role. A jail also hides processes
+  outside it from `kevent(EVFILT_PROC)` probes (RT-02).
 - Dedicated UID inside the jail; downloads land on a mapped directory the
   user chooses; `xdg-open` from inside the jail cannot reach the host session,
   so external-link handling is either disabled or routed through a documented
@@ -303,15 +390,32 @@ Spec 7.1 adopted. Design notes specific to the FreeBSD desktop:
 - The example ships as `freebsd/jail/README.md`, `jail.conf.example`,
   `devfs.rules.example`; nothing in the package touches `/etc`.
 
-## 9. MAC study (Phase 5)
+## 9. MAC study (Phase 5), reframed by RT-02
 
-Spec section 9 adopted. The study's deliverable is a decision memo answering:
-which residual threat from the Phase 2 and 3 reviews a MAC policy would
-address; whether `mac_mls` labels on the profile, downloads and `~/.ssh`
-give a property Capsicum and jail do not (likely answer: only for the
-browser process itself, which is unconfined by design); the cost of
-labelling an existing home directory; and the rollback procedure. A
-prototype on a disposable system follows only if the memo says yes.
+Spec section 9 adopted, with the first candidate changed. `mac_mls` and
+`mac_biba` model labels on subjects and objects across the system; the likely
+answer for them was always "only for the browser process itself". The
+red-team review found a more specific gap: Capsicum is not a system call
+filter, and capability-mode processes can still create sockets of any
+domain, read `CTLFLAG_CAPRD` identifiers and observe other processes.
+
+The first candidate is therefore a small policy module, provisionally
+`mac_beryllium.ko`, that applies only to credentials in capability mode and
+uses existing MAC hooks:
+
+| Hook | Policy for capability-mode credentials |
+|---|---|
+| `mpo_socket_check_create` | allow `AF_UNIX` only |
+| `mpo_system_check_sysctl` | allowlist of nodes (the oracle's reviewed list minus identifiers) |
+| `mpo_cred_check_visible` | other processes invisible (covers `EVFILT_PROC` probes) |
+
+It is optional and loaded by an administrator, has no effect on processes
+outside capability mode, never ships enabled by the package, and needs a
+kernel-side review before anyone depends on it. The study's deliverable stays
+a decision memo (threat addressed, maintenance cost across kernel versions,
+rollback), followed by a prototype on a disposable system if the memo says
+yes. `mac_mls` for the profile and `~/.ssh` remains a secondary question in
+the same memo.
 
 ## 10. Status reporting details
 
@@ -321,9 +425,12 @@ Upstream's `chrome://sandbox` Linux block (`sandbox_internals_ui.cc` and the
 patches the WebUI to render a FreeBSD block from a new status bitmask
 (capability mode entered, rights limited, ioctl and fcntl limits applied,
 trace disabled, `RLIMIT_DATA` applied, fail-closed build, Casper channels
-present, kernel advisory preflight result), obtained per process type from
-the browser's record of each child's startup log line rather than from
-build flags. Also fixed: `Sandbox::IsProcessSandboxed()` falls through to
+present, kernel advisory preflight result). The capability-mode row comes
+from the kernel: the browser reads `KI_CRF_CAPABILITY_MODE` from each child's
+`kinfo_proc`, because a child's own report can be made to lie by code that
+runs before its check (RT-04); users can confirm the same flag with
+`procstat`. The other rows come from the browser's record of each child's
+startup log line, never from build flags. Also fixed: `Sandbox::IsProcessSandboxed()` falls through to
 `false` on BSD today but returns `true` for any non-browser process started
 with `--no-sandbox` (an upstream quirk), which would mislead any code that
 consults it; the FreeBSD implementation returns the real capability-mode
@@ -338,8 +445,17 @@ Stated plainly so release notes can copy them:
   permissions) has the user's full authority minus whatever the optional jail
   removes.
 - Kernel and driver bugs reachable from the allowed interfaces: the DRM ioctl
-  set from the GPU process, the audio device, Mojo over Unix sockets, and the
-  Capsicum implementation itself.
+  set from the GPU process (and the closed-source NVIDIA driver's interface),
+  the audio device, Mojo over Unix sockets, socket creation of any domain and
+  other CAPENABLED system calls (RT-02), and the Capsicum implementation
+  itself.
+- Without the jail profile or the MAC module, a compromised renderer can read
+  the machine UUID and hostname (RT-01).
+- On X11, a compromised GPU process (and the browser process) has
+  desktop-level authority (RT-07).
+- Until the allocator shim, BackupRefPtr and CFI are enabled on FreeBSD, the
+  browser process has weaker use-after-free and control-flow hardening than
+  Helium on Linux (RT-09).
 - Side channels and speculative execution are out of scope; Chromium's site
   isolation remains the mitigation.
 - A renderer can still exhaust CPU and memory up to its limits.

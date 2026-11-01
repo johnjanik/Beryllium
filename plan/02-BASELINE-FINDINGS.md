@@ -5,13 +5,30 @@
 
 ---
 
+## 0. Update, 1 November 2026
+
+The tables below are the 18 October snapshot and are kept as a historical
+record. Facts re-checked on 1 November 2026 (details and sources in
+[12-WORK-PLAN-AND-RED-TEAM.md](12-WORK-PLAN-AND-RED-TEAM.md) section 2):
+
+| Item | 18 Oct snapshot | 1 Nov 2026 |
+|---|---|---|
+| Helium pin | 0.19.4, `832faa78`, Chromium 155.0.8059.84 | 0.20.3, `2f81b9ca`, Chromium 156.0.8078.79 (tagged 30 Oct; 0.20.1 and 0.20.2 in between); `flags.gn` and `deps.ini` unchanged; 346 patches in `series` |
+| FreeBSD `www/chromium` | 154.0.8037.57_2 | 156.0.8078.47_1, same Chromium major as the pin |
+| First BSD import | OpenBSD 155 set plus FreeBSD 154 deltas | copy of the FreeBSD 156 set plus point-release fixes |
+| BSD user-agent patches | not examined | UA platform `X11; Linux x86_64`, client hint platform `Linux`, reduced `navigator.platform` `Linux x86_64`; the unreduced `navigator.platform` path still calls `uname()` and returns `FreeBSD amd64` (RT-13) |
+| `ptrace` in capability mode | unconfirmed | on FreeBSD `main`, limited to self-directed requests and process descriptors while `security.bsd.allow_ptrace_in_cap_mode=1`; 14.x and 15.x to be measured (RT-03) |
+| Capability-mode-readable identifiers | not examined | `kern.hostuuid`, `kern.hostid`, `kern.hostname`, `kern.boot_id` carry `CTLFLAG_CAPRD` (RT-01) |
+| Other kernel facts | | `kevent(EVFILT_PROC)` checks only `p_cansee()` (RT-02); `sendto` with an address returns `ECAPMODE`; `kenv`, `posix_openpt`, `thr_kill2` are not `CAPENABLED`; `fork` checks the caller's own `RLIMIT_NPROC` (RT-15); `mmap` limits protection by `CAP_MMAP_*` rights; `KI_CRF_CAPABILITY_MODE` exposes capability mode in `kinfo_proc` (RT-04) |
+| Owner decisions | | Beryllium is independent of Helium; Helium service endpoints are not used; development host is FreeBSD 16.0-CURRENT with an NVIDIA RTX 5090 on Wayland (document 10 section 2) |
+
 ## 1. Helium
 
 ### 1.1 Versions and cadence
 
 | Item | Value |
 |---|---|
-| Latest release | Helium 0.19.4, 16 October 2026, Chromium 155.0.8059.84 |
+| Latest release | Helium 0.19.4, 16 October 2026, Chromium 155.0.8059.84 (historical; 0.20.3 on 1 Nov, see section 0) |
 | Platform tags | helium-linux 0.19.4.1 (16 Oct), helium-windows 0.19.4.1, helium-macos 0.19.4.1 (17 Oct) |
 | `main` | commit `832faa78`, same Chromium version, revision 4 |
 | Version formula | `version.txt` (0) . (Chromium major - 136) . `revision.txt` . platform revision |
@@ -57,7 +74,7 @@ Recorded in [07-PRIVACY-INVARIANTS-PLAN.md](07-PRIVACY-INVARIANTS-PLAN.md) secti
 
 | Item | Value |
 |---|---|
-| Version | 154.0.8037.57, PORTREVISION 2; updated 26 September 2026 by Robert Nagy; last touched 14 October 2026 (Rust 1.99 sweep) |
+| Version | 154.0.8037.57, PORTREVISION 2; updated 26 September 2026 by Robert Nagy; last touched 14 October 2026 (Rust 1.99 sweep). Historical: 156.0.8078.47_1 on 1 Nov, see section 0 |
 | `www/ungoogled-chromium` | 151.0.7922.169, PORTREVISION 4; updated 21 August 2026 |
 | OpenBSD `www/chromium` | 155.0.8059.84, 17 October 2026 |
 | Maintainer | `chromium@FreeBSD.org`; every version update committed by Robert Nagy, who also maintains the OpenBSD port. The wiki's team list is stale. |

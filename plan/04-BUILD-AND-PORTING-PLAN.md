@@ -1,7 +1,7 @@
 # Beryllium: Build and Porting Plan
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026 (pin 0.20.3 / Chromium 156, owner decisions, red-team review)
 **Implements:** spec section 11 and Phase 1 of section 12
 **Depends on:** [05-PATCH-STRATEGY.md](05-PATCH-STRATEGY.md) for the layering order
 
@@ -10,7 +10,8 @@
 ## 1. Shape of the port
 
 `freebsd/ports/www/beryllium` is a full standalone port modelled on
-`www/chromium` (current layout, 154-era build steps) and
+`www/chromium` (current layout, 156-era build steps; 154 at the 18 October
+snapshot) and
 `www/ungoogled-chromium` (the pattern for running Helium's tooling inside the
 framework). It is not a slave port of `www/chromium`: the two ports pin
 different Chromium versions by design, and slave ports cannot do that.
@@ -35,7 +36,13 @@ Helium CI, which removes the layout-mismatch risk (R1). Facts to design around:
 - `distinfo` records the sha256 from the release's `.hashes` file. The port's
   `MASTER_SITES` lists `tarballs.imput.net` first and a Beryllium-controlled
   mirror second; the plan keeps every tarball a release was built from on that
-  mirror (R2).
+  mirror (R2). The archive is unsigned and `distinfo` pins whatever was
+  fetched first, so once per Chromium version the tree is cross-checked file
+  by file against an independent source (Google's official tarball or a
+  `gclient` checkout) for the overlapping files (RT-10). Fetching a published
+  build input is not use of a Helium online service in the sense of charter
+  D3, but if the owner prefers no dependency on imputnet infrastructure at
+  all, the fallback below becomes primary.
 - The base layer bundles Google's prebuilt `third_party/depot_tools`,
   `third_party/node` (Linux node and node_modules), `third_party/rust-toolchain`,
   `third_party/cpython3` and `third_party/widevine`. Pruning (stage 1) deletes
@@ -63,7 +70,7 @@ verifies all distfiles), `utils/clone.py` (needs `gclient` and network).
 
 | Dep | Output path | Note |
 |---|---|---|
-| `nonfree-search-engines-data-<ver>.tar.gz` | `third_party/search_engines_data/resources_internal` | licence status decides whether it ships (Q5); if not, the port substitutes Chromium's free defaults and documents the difference |
+| `nonfree-search-engines-data-<ver>.tar.gz` | `third_party/search_engines_data/resources_internal` | licence status decides whether it ships (Q5); if not, the port substitutes Chromium's free defaults and documents the difference. Fetched from the published GitHub release with a pinned hash; this is a build input, not a runtime service, so it does not conflict with charter D3 |
 | `helium-onboarding-<ver>.tar.gz` | `components/helium_onboarding` | Svelte build output, no toolchain needed |
 | `uBlock0_<ver>.chromium.zip` | `third_party/ublock` | `strip_leading_dirs`; the comment in `deps.ini` about re-stripping `assets.json` applies when bumping |
 
@@ -122,7 +129,7 @@ Generated, never hand-copied (R14). `freebsd/tools/gnargs-from-flags` concatenat
 4. The fail-closed flag (`beryllium_sandbox_required=true` in `www/beryllium`,
    `false` in `-devel`), added by the Beryllium build-config patch in Phase 2.
 
-Expected FreeBSD fragment at the snapshot (to be confirmed by a first build):
+Expected FreeBSD fragment (to be confirmed by a first build against `www/chromium` 156):
 
 ```text
 is_clang=true use_lld=true use_sysroot=false use_custom_libcxx=true use_custom_libunwind=true
@@ -138,9 +145,23 @@ is_official_build=true is_debug=false symbol_level=0 blink_symbol_level=0
 Note `use_system_libffi` differs between the FreeBSD port (`true`) and Helium
 Linux (`false`); FreeBSD's value wins since it is a platform fact.
 
+Tracked hardening items (RT-09). The fragment above disables the allocator
+shim, PartitionAlloc-as-malloc and BackupRefPtr (MiraclePtr), which is
+Chromium's main use-after-free mitigation in the browser process, and CFI
+status on the FreeBSD toolchain is unknown. Helium on Linux has these. They do
+not block the first build, but each one is a row in the release status table
+with a target phase:
+
+| Item | First step | Target |
+|---|---|---|
+| Record `is_cfi`, `use_allocator_shim`, `use_partition_alloc_as_malloc`, `enable_backup_ref_ptr_support` in `BUILD-MANIFEST.json` | first build | Phase 1 |
+| Allocator shim on FreeBSD (libc `malloc` interposition; feasibility to be confirmed) | experiment in `beryllium-devel` | Phase 2 |
+| PartitionAlloc-as-malloc plus BackupRefPtr | `beryllium-devel`, measure stability and memory, then promote | Phase 2 |
+| CFI (`is_cfi=true`) | attempt after the allocator work | Phase 2 or 3 |
+
 ## 5. Toolchain and dependencies
 
-Carried over from `www/chromium` 154 unchanged unless the 155 import changes
+Carried over from `www/chromium` 156 unchanged unless a later import changes
 them: LLVM 22 via `BINARY_ALIAS`, `lang/rust` with `RUSTC_BOOTSTRAP=1`,
 `rust-bindgen-cli`, `www/node`, Go for `tsgo` (or `lang/typescript-go`),
 `devel/esbuild`, cargo for the rollup native binding, Qt5 build tools, nasm on
@@ -151,19 +172,27 @@ manifest: confirm PIE, RELRO, stack protector and `-fstack-clash-protection`
 status of the produced `beryllium` binary with `readelf`/`checksec`-style
 checks; record whether `is_cfi` is on (Helium Linux requires it; Chromium
 turns it on for official Linux x64 builds, and whether the FreeBSD toolchain
-and the BSD patch set keep it is unknown until tried); do not change
-`treat_warnings_as_errors` or `fatal_linker_warnings` to hide problems.
+and the BSD patch set keep it is unknown until tried) and the allocator flags
+from section 4 (RT-09); do not change `treat_warnings_as_errors` or
+`fatal_linker_warnings` to hide problems.
 
 ## 6. Build infrastructure
 
+- Build host (decided 1 November 2026): the owner's FreeBSD 16.0-CURRENT
+  machine, amd64, 128 GB RAM, 24 cores, about 7 TB disk. It satisfies the
+  dedicated-builder requirement from RT-11 and has the capacity for
+  Poudriere jails for 14.x and 15.x (a newer kernel builds older-branch
+  jails) plus bhyve guests for runtime tests on each branch. Packages for
+  users are built in the stable-branch jails, never against 16-CURRENT.
 - Poudriere on the build host with one jail per supported branch; `USE_TMPFS`
   limited to `wrkdir` only if RAM allows, otherwise off (several past
   stable/14 failures were tied to `USE_TMPFS=all`).
 - `ccache` for `beryllium-devel` iteration; not for release builds, so the
   manifest reflects a clean build.
-- Expect many hours per full build on a workstation. The FreeBSD package
+- Expect a few hours per full build on the build host. The FreeBSD package
   cluster times out on `www/chromium` regularly; Beryllium's CI uses a
-  generous timeout and builds nightly rather than per commit.
+  generous timeout and builds nightly rather than per commit, plus an
+  immediate build when a Helium tag carries security fixes (RT-11).
 - Overlay use: `poudriere bulk -O beryllium-overlay www/beryllium` with the
   `freebsd/ports` directory as the overlay, so the port can be consumed before
   it is in the tree.
@@ -185,13 +214,18 @@ Wrapper script changes relative to `chrome.in`:
 
 `pkg-message`: update channel is `pkg`; kernel requirements (`COMPAT_FREEBSD11`
 until the sysctl work lands; the advisory preflight list); the sandbox status
-of this release in one paragraph; how to report bugs.
+of this release in one paragraph; Wayland recommended, with the X11
+limitation stated (RT-07); that Helium services are off and what that
+disables (charter D3); how to report bugs.
 
 ## 8. Phase 1 acceptance
 
 From the roadmap: package installs and removes cleanly; the browser starts on
-X11 and Wayland; onboarding appears as `helium://setup` with Beryllium
-branding; uBlock component present and active; the privacy capture baseline
-recorded; `BUILD-MANIFEST.json` present; the known-limitations list written.
+Wayland and X11; onboarding appears with Beryllium branding (at
+`beryllium://setup` if Q11 is decided that way); uBlock component present and
+active with its bundled lists; no request to any Helium endpoint in the
+privacy capture (charter D3); the privacy capture baseline recorded;
+`BUILD-MANIFEST.json` present with the hardening flags; the known-limitations
+list written.
 No sandbox claim is made in Phase 1 release notes beyond "same as
 `www/chromium`: none".

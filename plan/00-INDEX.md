@@ -1,9 +1,9 @@
 # Beryllium Planning Documents
 
-**Project:** Beryllium, a native FreeBSD port of the Helium browser with a FreeBSD security model (Capsicum renderer confinement, optional jails, resource controls, MAC study) and Helium's privacy features preserved.
-**Repository:** https://github.com/johnjanik/Beryllium (standalone platform repository; Helium is a pinned git submodule from https://github.com/imputnet/helium)
+**Project:** Beryllium, an independent privacy-focused browser built natively for FreeBSD from code derived from the Helium browser, with a FreeBSD security model (Capsicum renderer confinement, optional jails, resource controls, MAC module study) and the inherited privacy features preserved. Beryllium is not affiliated with Helium.
+**Repository:** https://github.com/johnjanik/Beryllium (standalone platform repository; the upstream code is a pinned git submodule from https://github.com/imputnet/helium, currently tag `0.20.3`, Chromium 156.0.8078.79)
 **Spec:** [helium-freebsd-security-port-spec.md](../helium-freebsd-security-port-spec.md) (the engineering specification these documents implement)
-**Snapshot date:** 18 October 2026. No code has been written; these are plans.
+**Snapshot date:** 18 October 2026, with facts re-checked and owner decisions recorded on 1 November 2026 (see document 12). No browser code has been written; these are plans.
 
 ## Reading order
 
@@ -26,14 +26,15 @@
 
 1. **FreeBSD Chromium has no sandbox.** `sandbox/policy/freebsd/sandbox_freebsd.cc` lowers `RLIMIT_DATA` and returns; there is no zygote, no seccomp, no `cap_enter`. The spec's warning is confirmed from source, and `chrome://sandbox` shows nothing on BSD.
 2. **A working analogue exists on OpenBSD** (pledge and unveil per process type, renderers confined to `/dev/null`) in the same patch lineage the FreeBSD port uses, and **a 2026 Capsicum prototype exists for FreeBSD** (Alex S, bug 269234, branch `chromium-sandbox`) with Casper services, interceptors and a re-enabled zygote. Phase 2 starts by evaluating it, not by writing policy code.
-3. **Versions line up unusually well right now.** Helium 0.19.4 and OpenBSD's port are both on Chromium 155.0.8059.84; FreeBSD's port is one major behind at 154. The BSD patch forward-port is mostly an OpenBSD import plus FreeBSD deltas.
+3. **Versions line up.** On 1 November 2026 the pin is Helium 0.20.3 on Chromium 156.0.8078.79 and FreeBSD's `www/chromium` is at 156.0.8078.47_1, so the first BSD import is a copy of the FreeBSD set plus point-release fixes. (At the 18 October snapshot the pin was 0.19.4 on 155 and FreeBSD was at 154.)
 4. **Helium's tooling already runs inside a FreeBSD port** (`www/ungoogled-chromium` proves it) but that port's hand-copied patch set and flags are why it lags three majors. Beryllium generates its GN arguments and imports the BSD set mechanically.
-5. **Upstream Helium will not carry a FreeBSD platform** (issue 773 closed as not planned) and rejects AI-assisted contributions; Beryllium is an independent downstream with hand-written upstream submissions only.
-6. **Two privacy differences are forced by the platform:** no in-app update checks (not compiled on BSD; `pkg` updates) and no crash uploads (Crashpad never starts on BSD). Everything else in Helium's privacy posture carries over unchanged.
+5. **Upstream Helium will not carry a FreeBSD platform** (issue 773 closed as not planned). The owner decided on 1 November 2026 that Beryllium is an independent project that does not associate itself with Helium: own name, no use of Helium's service endpoints, no upstream contributions planned.
+6. **Privacy differences:** no in-app update checks (not compiled on BSD; `pkg` updates), no crash uploads (Crashpad never starts on BSD), and the services switch off by default until Beryllium hosts its own services instance (document 07 section 3 lists the consequences). The rest of the inherited privacy posture carries over unchanged.
+7. **The red-team review (document 12) changed the design in several places:** machine identifiers readable in capability mode, kernel-attested sandbox status, environment scrubbing, no shared socket directories, allocator hardening, a reframed MAC study and a freshness target.
 
 ## Decisions that need the project owner
 
-Listed in [10-RISKS-AND-OPEN-QUESTIONS.md](10-RISKS-AND-OPEN-QUESTIONS.md) section 2. The two that affect Phase 1 work soonest: ship under the Beryllium name (recommended) or seek permission to use Helium's, and whether to keep upstream Helium services endpoints or self-host.
+Listed in [10-RISKS-AND-OPEN-QUESTIONS.md](10-RISKS-AND-OPEN-QUESTIONS.md) section 2. Decided on 1 November 2026: the name (Beryllium only), Helium services (not used), target branches and development host. Open and affecting Phase 1 soonest: hosting a Beryllium services instance, and whether user-visible `helium://` URLs are renamed to `beryllium://`.
 
 ## How these documents are meant to be used
 
