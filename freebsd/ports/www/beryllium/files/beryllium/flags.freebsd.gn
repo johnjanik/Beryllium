@@ -1,0 +1,52 @@
+# FreeBSD platform GN arguments for Beryllium.
+#
+# Appended to helium/flags.gn by freebsd/tools/gnargs-from-flags. Derived
+# from the GN_ARGS of FreeBSD ports www/chromium 156.0.8078.47 with two
+# kinds of key removed:
+#   - every key helium/flags.gn already sets (Helium's value wins; a
+#     duplicate is a build error), and
+#   - every privacy-tagged key in freebsd/privacy/gn-privacy-keys.json, in
+#     particular the port's google_api_key and
+#     enable_hangout_services_extension=true (plan/07 section 2).
+# Option-driven keys (audio backends, CUPS, Kerberos, codecs, LTO, debug)
+# are passed by the port Makefile with --arg, not listed here.
+#
+# @NAME@ placeholders are filled from --var NAME=value at configure time.
+
+# Toolchain and libc++
+is_clang=true
+use_lld=true
+use_sysroot=false
+use_custom_libcxx=true
+use_custom_libunwind=true
+fatal_linker_warnings=false
+extra_cxxflags="@CXXFLAGS@ -I@LOCALBASE@/include/libepoll-shim @PINCLUDES@"
+extra_ldflags="@LDFLAGS@"
+enable_rust=true
+rust_sysroot_absolute="@LOCALBASE@"
+v8_metagen_libclang_so="@LOCALBASE@/llvm@LLVM_DEFAULT@/lib/libclang.so"
+v8_metagen_libclang_bindings_dir="@LOCALBASE@/llvm@LLVM_DEFAULT@/lib/python@PYTHON_VER@/site-packages"
+use_typescript_go=false
+
+# UI toolkit
+use_aura=true
+toolkit_views=true
+use_qt5=true
+moc_qt5_path="@QT_TOOLDIR@/moc"
+optimize_webui=true
+
+# System libraries and platform facts
+icu_use_data_file=false
+use_system_freetype=false
+use_system_harfbuzz=true
+use_system_libffi=true
+use_system_libjpeg=true
+use_udev=false
+
+# Allocator hardening. Disabled to match www/chromium; this is a known gap
+# against Helium on Linux (plan/12 RT-09) and is reported in the build
+# manifest until it is closed.
+use_partition_alloc=true
+use_allocator_shim=false
+use_partition_alloc_as_malloc=false
+enable_backup_ref_ptr_support=false

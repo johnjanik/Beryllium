@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Beryllium
+GenericName=Web Browser
+Comment=%%COMMENT%%
+Icon=beryllium
+Exec=beryllium %U
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+StartupWMClass=beryllium

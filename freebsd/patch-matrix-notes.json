@@ -1,0 +1,53 @@
+{
+  "_comment": "Hand assessments merged into freebsd/PATCH-MATRIX.md by freebsd/tools/patch-matrix. Keys are Chromium paths. Keep entries for rows with behavioural risk; the tool fills the rest from a heuristic.",
+  "chrome/common/chrome_paths.h": {
+    "semantic_risk": "behavioural: BSD enables Linux path constants; Helium adds native-messaging host scanning of Chrome's directories",
+    "resolution": "both apply; Beryllium platform patch must point BSD's hard-coded /usr/local/share/chromium paths at /usr/local/share/beryllium",
+    "test": "functional: native messaging host and external extension directories resolve under the beryllium paths"
+  },
+  "chrome/common/chrome_paths.cc": {
+    "semantic_risk": "behavioural: BSD hard-codes /usr/local/share/chromium/extensions; Helium scans Chrome native-messaging directories",
+    "resolution": "Beryllium platform patch renames the BSD paths; review which foreign browser directories Helium's scan reaches on FreeBSD",
+    "test": "functional: as for chrome_paths.h"
+  },
+  "chrome/app/chrome_main_delegate.cc": {
+    "semantic_risk": "behavioural: BSD keeps Crashpad from starting; Helium adds version reporting nearby",
+    "resolution": "both apply; no crash handler process on FreeBSD (07 section 4 item 1)",
+    "test": "privacy: no crash handler process and no crash upload in the capture run; chrome://version shows the Beryllium version"
+  },
+  "net/base/features.cc": {
+    "semantic_risk": "behavioural: BSD enables Linux/Windows feature defaults; Helium splits the TLS ClientHello and ungoogled adds an IPv6 probing option",
+    "resolution": "both apply",
+    "test": "privacy: TLS fingerprint of a capture matches Helium on Linux for the same Chromium version"
+  },
+  "components/embedder_support/user_agent_utils.cc": {
+    "semantic_risk": "behavioural, privacy (RT-13): BSD reports Linux platform strings; Helium spoofs the Chrome brand; ungoogled reduces system info",
+    "resolution": "both apply; Beryllium adds the uname fallback fix (RT-13)",
+    "test": "privacy: fingerprint page shows Linux x86_64 everywhere (07 section 4a)"
+  },
+  "third_party/blink/renderer/core/execution_context/navigator_base.cc": {
+    "semantic_risk": "behavioural, privacy (RT-13): BSD returns Linux x86_64 for the reduced platform; Helium's noise changes hardwareConcurrency",
+    "resolution": "both apply",
+    "test": "privacy: fingerprint page in window and worker contexts"
+  },
+  "content/public/common/url_constants.h": {
+    "semantic_risk": "behavioural, security-review: display scheme value (beryllium://) set on top of Helium's override-chrome-protocol",
+    "resolution": "Beryllium patch depends on Helium's; expected overlap",
+    "test": "functional: beryllium://settings loads, web pages cannot navigate to beryllium:// (patches/branding/beryllium-webui-scheme.patch)"
+  },
+  "components/url_formatter/url_fixer.cc": {
+    "semantic_risk": "behavioural: second copy of the display scheme constant",
+    "resolution": "Beryllium patch depends on Helium's; expected overlap",
+    "test": "functional: typing beryllium://settings in the omnibox fixes up correctly"
+  },
+  "components/omnibox/browser/builtin_provider.cc": {
+    "semantic_risk": "UI: builtin suggestions show the display scheme",
+    "resolution": "Beryllium patch depends on Helium's; expected overlap",
+    "test": "functional: omnibox suggestions show beryllium://"
+  },
+  "chrome/browser/resources/tab_search/tab_search_item.ts": {
+    "semantic_risk": "UI: tab search shows the display scheme",
+    "resolution": "Beryllium patch depends on Helium's; expected overlap",
+    "test": "functional: tab search shows beryllium:// for internal pages"
+  }
+}

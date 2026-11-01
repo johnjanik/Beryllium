@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Build a small tree of Chromium files in their post-stage-4 state, so a
+new Beryllium patch can be written against exactly what it will meet,
+without a full 8 GB checkout.
+
+  patch-workbench --out <dir> path/in/chromium.cc [more paths...]
+
+For each path: fetch it at the Chromium version Helium pins (from
+chromium.googlesource.com), apply the imported BSD patch for it (stage 2,
+-p0), the hunks of every Helium series patch that touch it (stage 3, -p1),
+and the hunks of every Beryllium series patch that touch it (stage 4).
+Each stage must apply cleanly, or the tool stops and says which.
+
+Then copy <dir>/tree to <dir>/new, edit there, and make the patch with
+  (cd <dir> && diff -ru tree new | sed 's#^--- tree/#--- a/#;s#^+++ new/#+++ b/#')
+"""
+
+import argparse
+import base64
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+BSD_FILES = os.path.join(REPO, "freebsd", "ports", "www", "beryllium", "files")
+
+
+def chromium_version():
+    with open(os.path.join(REPO, "helium", "chromium_version.txt"), encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def fetch(path, version, cache):
+    dest = os.path.join(cache, version, path)
+    if not os.path.exists(dest):
+        url = (f"https://chromium.googlesource.com/chromium/src/+/refs/tags/"
+               f"{version}/{path}?format=TEXT")
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                data = base64.b64decode(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None  # not upstream: a later stage must create it
+            raise
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(data)
+    with open(dest, "rb") as f:
+        return f.read()
+
+
+def bsd_patch_name(path):
+    return "patch-" + path.replace("_", "__").replace("/", "_")
+
+
+def split_git_patch(text):
+    """Yield (path, section_text) for each file in a -p1 patch."""
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, l in enumerate(lines)
+              if l.startswith("--- ") and i + 1 < len(lines)
+              and lines[i + 1].startswith("+++ ")]
+    for n, i in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        new = lines[i + 1][4:].split("\t")[0].strip()
+        old = lines[i][4:].split("\t")[0].strip()
+        path = new if new != "/dev/null" else old
+        for prefix in ("a/", "b/"):
+            if path.startswith(prefix):
+                path = path[2:]
+        yield path, "".join(lines[i:end])
+
+
+def read_series(patch_dir):
+    series = os.path.join(patch_dir, "series")
+    if not os.path.exists(series):
+        return []
+    out = []
+    with open(series, encoding="utf-8") as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                out.append(line)
+    return out
+
+
+def run_patch(tree, text, strip, label):
+    p = subprocess.run(["patch", f"-p{strip}", "--forward", "--no-backup-if-mismatch",
+                        "-s", "-d", tree], input=text, text=True, capture_output=True)
+    if p.returncode != 0:
+        sys.exit(f"patch-workbench: {label} does not apply:\n{p.stdout}{p.stderr}")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--cache", default=os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "beryllium-workbench-cache"))
+    ap.add_argument("paths", nargs="+")
+    a = ap.parse_args(argv)
+
+    version = chromium_version()
+    tree = os.path.join(a.out, "tree")
+    os.makedirs(tree, exist_ok=True)
+    wanted = set(a.paths)
+    for path in a.paths:
+        dest = os.path.join(tree, path)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        data = fetch(path, version, a.cache)
+        if data is None:
+            print(f"{path}: not in Chromium {version}; expecting a patch to create it")
+            continue
+        with open(dest, "wb") as f:
+            f.write(data)
+        print(f"fetched {path} at {version}")
+
+    for path in a.paths:
+        bsd = os.path.join(BSD_FILES, bsd_patch_name(path))
+        if os.path.exists(bsd):
+            with open(bsd, encoding="utf-8") as f:
+                run_patch(tree, f.read(), 0, f"BSD {os.path.basename(bsd)}")
+            print(f"  stage 2: {os.path.basename(bsd)}")
+
+    for layer, patch_dir in (("Helium", os.path.join(REPO, "helium", "patches")),
+                             ("Beryllium", os.path.join(REPO, "patches"))):
+        for name in read_series(patch_dir):
+            with open(os.path.join(patch_dir, name), encoding="utf-8") as f:
+                text = f.read()
+            for path, section in split_git_patch(text):
+                if path in wanted:
+                    run_patch(tree, section, 1, f"{layer} {name} ({path})")
+                    print(f"  {layer}: {name} ({path})")
+    print(f"tree ready: {tree}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

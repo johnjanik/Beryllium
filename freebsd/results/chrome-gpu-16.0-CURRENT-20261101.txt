@@ -1,0 +1,106 @@
+# chrome://gpu, stock chromium 156.0.8078.47_1 on 16.0-CURRENT, 1 November 2026
+# Trimmed after 'Problems Detected' (ANGLE feature and Dawn toggle lists omitted).
+
+Graphics Feature Status
+=======================
+*   Canvas: Hardware accelerated
+*   Direct Rendering Display Compositor: Disabled
+*   Compositing: Hardware accelerated
+*   Multiple Raster Threads: Enabled
+*   OpenGL: Enabled
+*   Rasterization: Hardware accelerated
+*   Raw Draw: Disabled
+*   Skia Graphite: Disabled
+*   TreesInViz: Disabled
+*   Video Decode: Hardware accelerated
+*   Video Encode: Software only. Hardware acceleration disabled
+*   Vulkan: Disabled
+*   WebGL: Hardware accelerated
+*   WebGPU: Hardware accelerated
+*   WebGPU interop: Disabled
+*   WebNN: Disabled
+
+Version Information
+===================
+Data exported              : 2026-11-01T10:24:08.421Z
+Chrome version             : Chrome/156.0.8078.47
+Operating system           : FreeBSD 16.0-CURRENT
+Software rendering list URL: https://chromium.googlesource.com/chromium/src/+/1d17a2e2ee147bb7d6ae2ab6abdb3a2510c17775/gpu/config/software_rendering_list.json
+Driver bug list URL        : https://chromium.googlesource.com/chromium/src/+/1d17a2e2ee147bb7d6ae2ab6abdb3a2510c17775/gpu/config/gpu_driver_bug_list.json
+ANGLE commit id            : unknown hash
+2D graphics backend        : Skia/156 886e42fda11610a56dd1b22e8697e27f9d1e34f2
+Command Line               : /usr/local/share/chromium/chrome --ozone-platform=wayland --flag-switches-begin --flag-switches-end --render-node-override=/dev/dri/renderD128
+
+Driver Information
+==================
+Initialization time             : 198
+In-process GPU                  : false
+Skia Backend                    : GaneshGL
+Passthrough Command Decoder     : true
+Sandboxed                       : true
+GPU0                            : VENDOR= 0x0000 [Google Inc. (NVIDIA Corporation)], DEVICE=0x0000 [ANGLE (NVIDIA Corporation, NVIDIA GeForce RTX 5090 Laptop GPU/PCIe/SSE2, OpenGL ES 3.2 NVIDIA 595.99.02)], DRIVER_VENDOR=NVIDIA, DRIVER_VERSION=595.99.02 *ACTIVE*
+Optimus                         : false
+AMD switchable                  : false
+Pixel shader version            : 3.00
+Vertex shader version           : 3.00
+Max. MSAA samples               : 8
+Machine model name              : 
+Machine model version           : 
+GL implementation parts         : (gl=egl-angle,angle=opengl)
+Display type                    : ANGLE_OPENGL
+GL_VENDOR                       : Google Inc. (NVIDIA Corporation)
+GL_RENDERER                     : ANGLE (NVIDIA Corporation, NVIDIA GeForce RTX 5090 Laptop GPU/PCIe/SSE2, OpenGL ES 3.2 NVIDIA 595.99.02)
+GL_VERSION                      : OpenGL ES 3.0 (ANGLE 2.1 git hash: unknown hash)
+GL_EXTENSIONS                   : GL_AMD_performance_monitor GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_array GL_EXT_EGL_image_external_wrap_modes GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers_indexed GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_multisample_compatibility GL_EXT_multisampled_render_to_texture GL_EXT_multisampled_render_to_texture2 GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_shader_texture_lod GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_polygon_mode GL_NV_read_depth GL_NV_read_stencil GL_NV_robustness_video_memory_purge GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object
+Disabled Extensions             : GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent
+Disabled WebGL Extensions       : 
+Window system binding vendor    : Google Inc. (NVIDIA Corporation)
+Window system binding version   : 1.5 (ANGLE 2.1 git hash: unknown hash)
+Window system binding extensions: EGL_EXT_create_context_robustness EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_texture_3D_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANDROID_native_fence_sync EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_KHR_create_context_no_error EGL_EXT_image_dma_buf_import EGL_EXT_image_dma_buf_import_modifiers EGL_NV_robustness_video_memory_purge EGL_KHR_reusable_sync EGL_ANGLE_external_context_and_surface EGL_EXT_buffer_age EGL_ANGLE_context_virtualization EGL_ANGLE_memory_usage_report EGL_ANGLE_create_context_passthrough_shaders
+XDG_CURRENT_DESKTOP             : KDE
+XDG_SESSION_TYPE                : wayland
+Interfaces exposed by the Wayland compositor: wl_compositor:6 zwp_tablet_manager_v2:2 zwp_keyboard_shortcuts_inhibit_manager_v1:1 xdg_session_manager_v1:1 zxdg_decoration_manager_v1:2 wp_viewporter:1 wp_security_context_manager_v1:1 wp_fractional_scale_manager_v1:1 wl_shm:2 wl_seat:10 zwp_pointer_gestures_v1:3 zwp_pointer_constraints_v1:1 zwp_relative_pointer_manager_v1:1 wl_data_device_manager:3 ext_data_control_manager_v1:1 wp_cursor_shape_manager_v1:2 zwp_primary_selection_device_manager_v1:1 org_kde_kwin_idle:1 zwp_idle_inhibit_manager_v1:1 ext_idle_notifier_v1:2 org_kde_plasma_shell:8 org_kde_kwin_appmenu_manager:2 org_kde_kwin_server_decoration_palette_manager:1 org_kde_plasma_virtual_desktop_management:4 org_kde_kwin_shadow_manager:2 org_kde_kwin_dpms_manager:1 org_kde_kwin_server_decoration_manager:1 kde_output_management_v2:21 kde_output_device_registry_v2:23 zxdg_output_manager_v1:3 wl_subcompositor:1 zxdg_exporter_v2:1 zxdg_importer_v2:1 zwp_input_method_v1:1 xdg_activation_v1:1 wp_content_type_manager_v1:1 wp_tearing_control_manager_v1:1 xdg_toplevel_drag_manager_v1:1 xdg_toplevel_icon_manager_v1:1 kde_screen_edge_manager_v1:1 frog_color_management_factory_v1:1 wp_presentation:2 wp_color_manager_v1:2 xdg_wm_dialog_v1:1 kde_external_brightness_v1:3 wp_alpha_modifier_v1:1 wl_fixes:1 wp_fifo_manager_v1:1 wp_single_pixel_buffer_manager_v1:1 xdg_toplevel_tag_manager_v1:1 wp_color_representation_manager_v1:1 wp_pointer_warp_v1:1 ext_background_effect_manager_v1:1 zwp_input_panel_v1:1 xdg_wm_base:6 zwlr_layer_shell_v1:5 org_kde_kwin_keystate:5 wl_output:4 wp_drm_lease_device_v1:1 kde_output_order_v1:1 zwp_text_input_manager_v2:1 zwp_text_input_manager_v3:2 org_kde_kwin_slide_manager:1 xdg_system_bell_v1:1 wl_output:4 zwp_linux_dmabuf_v1:5
+Ozone platform                  : wayland
+Direct rendering version        : unknown
+Reset notification strategy     : 0x8252
+GPU process crash count         : 0
+
+Driver Bug Workarounds
+======================
+*   disable_rgb_to_yuv_conversion
+*   enable_webgl_timer_query_extensions
+*   exit_on_context_lost
+*   unpack_overlapping_rows_separately_unpack_buffer
+*   disabled_extension_GL_KHR_blend_equation_advanced
+*   disabled_extension_GL_KHR_blend_equation_advanced_coherent
+
+Problems Detected
+=================
+*   Accelerated video encode has been disabled, either via blocklist, about:flags or the command line.
+    Disabled Features: video_encode
+
+*   Disable webgpu on vk via gl interop:
+    (http://crbug.com/442791440), (http://crbug.com/475935650)
+    Disabled Features: webgpu_on_vk_via_gl_interop
+
+*   Unpacking overlapping rows from unpack buffers is unstable on NVIDIA GL driver:
+    (http://crbug.com/596774)
+    Applied Workarounds: unpack_overlapping_rows_separately_unpack_buffer
+
+*   Disable KHR_blend_equation_advanced until cc shaders are updated:
+    (http://crbug.com/661715)
+    Applied Workarounds: disable(GL_KHR_blend_equation_advanced),
+        disable(GL_KHR_blend_equation_advanced_coherent)
+
+*   Expose WebGL's disjoint_timer_query extensions on platforms with site isolation:
+    (http://crbug.com/808744), (http://crbug.com/870491)
+    Applied Workarounds: enable_webgl_timer_query_extensions
+
+*   Some drivers can't recover after OUT_OF_MEM and context lost:
+    (http://crbug.com/893177)
+    Applied Workarounds: exit_on_context_lost
+
+*   Disable RGB to YUV hardware conversion on NVIDIA Linux:
+    (http://crbug.com/447709687)
+    Applied Workarounds: disable_rgb_to_yuv_conversion
+

@@ -182,6 +182,7 @@ Severity is for the shipped design if the finding were left unaddressed.
 | RT-13 | Medium | OS fingerprint leaks and inconsistencies | "presents as Linux x86_64" invariant with tests; document TCP/IP stack signature | fingerprint test page in window and worker contexts |
 | RT-14 | Medium | Casper services are unconfined parsers reachable from confined processes | no Casper channel in renderers; fuzz `libnv` and `cap_net` request handling | fuzz target in CI |
 | RT-15 | Low | Fork and core-dump abuse from a renderer | `RLIMIT_NPROC=1`, `RLIMIT_CORE=0` at lockdown | oracle fork probe; attacker hook forks |
+| RT-17 | Medium | Chromium's own pages claim confinement FreeBSD does not enforce: `chrome://gpu` shows "Sandboxed: true" for a GPU process the kernel shows is not in capability mode | every "sandboxed" field Beryllium shows is driven by the kernel-attested status (RT-04); no upstream status string is shown on BSD without that check | functional test compares `chrome://gpu` and `chrome://sandbox` with `procstat` for each process |
 | RT-16 | Medium (opportunity) | W^X is not enforced by default (`kern.elf64.allow_wx=1`); a renderer can create write-and-execute memory | launcher sets `PROC_WX_MAPPINGS_DISALLOW_EXEC` between fork and exec so W^X is enforced in each child, if V8 works under it | oracle `hard.wxorx_after_exec`; V8 and WebAssembly test pages under enforcement |
 
 ### RT-01: machine identifiers survive capability mode
@@ -581,7 +582,20 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 | 3. Capsicum oracle and red-team probes | **run on 16.0-CURRENT** (section 10); version 2 fixes two probe bugs and adds `setpriority`, `dlopen` control and W^X-after-exec probes (89 probes) | `freebsd/tests/capsicum-standalone/`, `freebsd/results/` |
 | 3a. Oracle on 14.x and 15.x | ran on 14.5 and 15.1; results copy-back fixed so the JSON is uploaded as artifacts | `.github/workflows/freebsd-checks.yml` |
 | 4. GN args generator and privacy guard | done, 13 unit tests, passes against Helium 0.20.3 | `freebsd/tools/gnargs-from-flags`, `flags.freebsd.gn`, `freebsd/privacy/gn-privacy-keys.json` |
-| 5. Patch matrix | next | |
+| 5. Patch matrix | done: 168 shared files, 37 overlapping, 19 adjacent; every overlapping or adjacent security-path row has a resolution and a test | `freebsd/tools/patch-matrix`, `freebsd/PATCH-MATRIX.md`, `freebsd/patch-matrix-notes.json` |
+
+## 11. Sprint 2 status (1 November 2026)
+
+| Item | Status | Where |
+|---|---|---|
+| `beryllium://` scheme (Q11) | patch applies after Helium's series; not compiled yet | `patches/branding/beryllium-webui-scheme.patch` |
+| Name substitution | Helium's pass, then Helium's translations, then Beryllium's rename (Helium to Beryllium, `helium://` to `beryllium://`) | `freebsd/tools/beryllium-name-substitution` |
+| Own profile, branding, FreeBSD paths | `~/.config/beryllium`, `/usr/local/{share,etc}/beryllium`, Beryllium BRANDING; applies on the real post-stage-3 files | `patches/platform/beryllium-paths-and-branding.patch` |
+| BSD patch import | 1,696 patches from ports `6ad3e0c8`; 217 on security-review paths, review debt tracked | `freebsd/tools/import-bsd-patches`, `freebsd/ports/www/beryllium/BSD-PATCH-REVIEW.md` |
+| Port skeleton | written, **not yet built**; Google `-lite` tarball (04 section 2.1); one `distinfo` line (Helium archive) recorded by `make makesum` on the build host | `freebsd/ports/www/beryllium`, `freebsd/ports/README.md` |
+| Patch workbench | builds any file in its post-stage-4 state for writing new patches | `freebsd/tools/patch-workbench` |
+| Icons | still Helium's; replace before any package is shared | branding task |
+
 
 ## 10. First oracle results (1 November 2026)
 
@@ -647,12 +661,25 @@ not.
 
 ### 10.4 Facts about the owner's host
 
-- **Hybrid graphics**: Intel Arrow Lake integrated GPU (`i915kms`) plus an
-  RTX 5090 Laptop GPU (`nvidia-drm`). On most hybrid laptops the panel is
-  driven by the integrated GPU, so Chromium's GPU process may run on Mesa
-  and i915, an open driver whose ioctl set is known and which OpenBSD
-  already confines, rather than on NVIDIA. `chrome://gpu` decides which
-  policy comes first (correcting section 8 and charter D6).
+- **GPU actually used: the NVIDIA RTX 5090** (`chrome://gpu`, committed as
+  `freebsd/results/chrome-gpu-16.0-CURRENT-20261101.txt`): ANGLE on NVIDIA's
+  OpenGL ES 3.2 driver 595.99.02 through EGL, ozone Wayland,
+  `--render-node-override=/dev/dri/renderD128`, Vulkan off, WebGL and
+  WebGPU hardware-accelerated (Dawn on ANGLE GLES). The laptop also has an
+  Intel Arrow Lake GPU (`i915kms`), but Chromium does not use it here. So
+  the first GPU policy is the NVIDIA one after all (charter D6 stands),
+  with the closed driver's ioctl surface (R23) as its main residual risk.
+  WebGPU on this path is extra attack surface reachable from every page; a
+  hardened profile that disables it is cheap to offer.
+- **No Chromium process is confined today**, by observation: the per-process
+  baseline shows no capability-mode flag on the browser, GPU, network,
+  storage, audio, data-decoder or any renderer process
+  (`freebsd/results/baseline-16.0-CURRENT-20261101.md`). Yet `chrome://gpu`
+  reports "Sandboxed: true" (RT-17).
+- The baseline's descriptor, rlimit and environment columns are empty
+  because `security.bsd.unprivileged_proc_debug=0` stops `procstat` reading
+  even the user's own processes; the script now has a root mode
+  (`-u <user>`) for that case.
 - XWayland is running (`DISPLAY` is set alongside `WAYLAND_DISPLAY`), so X11
   clients exist in the session even under Wayland.
 - The host's own hardening sysctls blocked two attacks even outside
@@ -662,5 +689,6 @@ not.
 - Kernel `osreldate` 1600028; the chromium package was built for 1600029.
   Updating the base system to match the packages avoids ABI surprises on
   CURRENT.
-- The first baseline found no running Chromium processes (detection fixed);
-  the per-process baseline still has to be recorded.
+- Oracle version 2 on this host: 60 ok, 6 exposed (the RT-01 identifiers and
+  same-user `EVFILT_PROC`), 0 broken, 0 errors; W^X after exec works and
+  `setpriority` on other processes is refused.

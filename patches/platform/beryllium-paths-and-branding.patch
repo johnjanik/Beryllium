@@ -1,0 +1,152 @@
+Beryllium: own profile directory, branding and FreeBSD system paths
+
+Purpose: without this patch a Beryllium build would use ~/.config/chromium
+  and share a profile with the stock FreeBSD Chromium package, read
+  Chromium's system policy, extension and native-messaging directories, and
+  carry Helium's company and product names in BRANDING (owner decision Q1:
+  Beryllium does not present itself as Helium).
+  - Profile: ~/.config/beryllium; override with $BERYLLIUM_CONFIG_HOME
+    (was ~/.config/chromium and $CHROME_CONFIG_HOME).
+  - Desktop file name: beryllium.desktop; override with $BERYLLIUM_DESKTOP.
+  - BSD system paths (from the imported FreeBSD patches):
+    /usr/local/share/chromium/extensions -> /usr/local/share/beryllium/extensions,
+    /usr/local/etc/chromium/native-messaging-hosts -> /usr/local/etc/beryllium/native-messaging-hosts,
+    /usr/local/etc/chromium/policies -> /usr/local/etc/beryllium/policies,
+    ~/.cache/chromium (created by the FreeBSD sandbox stub) -> ~/.cache/beryllium.
+  - BRANDING: Beryllium names; the macOS-only identifiers are neutral.
+Stage: 4 (Beryllium series). Depends on: the imported BSD patches for
+  chrome_paths.cc, policy_paths.cc, channel_info_posix.cc and
+  sandbox_freebsd.cc (stage 2), and Helium's change-chromium-branding.patch
+  and scan-chrome-native-messaging-hosts.patch (stage 3).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8 (www/chromium 156.0.8078.47_1), using
+  freebsd/tools/patch-workbench.
+Test: freebsd/tests/functional (planned): a fresh start creates
+  ~/.config/beryllium and ~/.cache/beryllium and nothing under
+  ~/.config/chromium or ~/.cache/chromium; a policy file in
+  /usr/local/etc/beryllium/policies/managed is honoured and one in
+  /usr/local/etc/chromium/policies is not; chrome://version (shown as
+  beryllium://version) names Beryllium.
+security-review: required (changes where policy is read from)
+
+--- a/chrome/app/theme/chromium/BRANDING
++++ b/chrome/app/theme/chromium/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=The Helium Authors
+-COMPANY_SHORTNAME=The Helium Authors
+-PRODUCT_FULLNAME=Helium
+-PRODUCT_SHORTNAME=Helium
+-PRODUCT_INSTALLER_FULLNAME=Helium Installer
+-PRODUCT_INSTALLER_SHORTNAME=Helium Installer
+-COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Helium Authors. All rights reserved.
+-MAC_BUNDLE_ID=net.imput.helium
++COMPANY_FULLNAME=The Beryllium Authors
++COMPANY_SHORTNAME=The Beryllium Authors
++PRODUCT_FULLNAME=Beryllium
++PRODUCT_SHORTNAME=Beryllium
++PRODUCT_INSTALLER_FULLNAME=Beryllium Installer
++PRODUCT_INSTALLER_SHORTNAME=Beryllium Installer
++COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Beryllium Authors. All rights reserved.
++MAC_BUNDLE_ID=io.github.johnjanik.beryllium
+ MAC_CREATOR_CODE=Cr24
+-MAC_TEAM_ID=S4Q33XPHB4
++MAC_TEAM_ID=
+--- a/chrome/common/channel_info_posix.cc
++++ b/chrome/common/channel_info_posix.cc
+@@ -144,11 +144,11 @@
+   // Allow $CHROME_DESKTOP to override the built-in value, so that development
+   // versions can set themselves as the default without interfering with
+   // non-official, packaged versions using the built-in value.
+-  std::optional<std::string> name = env->GetVar("CHROME_DESKTOP");
++  std::optional<std::string> name = env->GetVar("BERYLLIUM_DESKTOP");
+   if (name.has_value() && !name.value().empty()) {
+     return name.value();
+   }
+-  return "chromium-browser.desktop";
++  return "beryllium.desktop";
+ #endif
+ }
+ #endif  // BUILDFLAG(IS_LINUX)
+--- a/chrome/common/chrome_paths.cc
++++ b/chrome/common/chrome_paths.cc
+@@ -53,9 +53,9 @@
+ // /usr/share seems like a good choice, see: http://www.pathname.com/fhs/
+ const base::FilePath::CharType kFilepathSinglePrefExtensions[] =
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+-    FILE_PATH_LITERAL("/usr/local/share/chromium/extensions");
++    FILE_PATH_LITERAL("/usr/local/share/beryllium/extensions");
+ #else
+-    FILE_PATH_LITERAL("/usr/local/share/chromium/extensions");
++    FILE_PATH_LITERAL("/usr/local/share/beryllium/extensions");
+ #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+ 
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+@@ -473,7 +473,7 @@
+           FILE_PATH_LITERAL("/etc/opt/chrome/native-messaging-hosts"));
+ #elif BUILDFLAG(IS_FREEBSD)
+       cur = base::FilePath(FILE_PATH_LITERAL(
+-          "/usr/local/etc/chromium/native-messaging-hosts"));
++          "/usr/local/etc/beryllium/native-messaging-hosts"));
+ #elif BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
+       cur = base::FilePath(FILE_PATH_LITERAL(
+           "/etc/opt/chrome_for_testing/native-messaging-hosts"));
+--- a/chrome/common/chrome_paths_linux.cc
++++ b/chrome/common/chrome_paths_linux.cc
+@@ -62,7 +62,7 @@
+ 
+ // This returns <config-home>/<product>, where
+ //   <config-home> is:
+-//     $CHROME_CONFIG_HOME if set
++//     $BERYLLIUM_CONFIG_HOME if set
+ //     otherwise $XDG_CONFIG_HOME if set
+ //     otherwise ~/.config
+ //   and <product> is:
+@@ -81,7 +81,7 @@
+   std::unique_ptr<base::Environment> env(base::Environment::Create());
+   base::FilePath config_dir;
+   std::optional<std::string> chrome_config_home_str =
+-      env->GetVar("CHROME_CONFIG_HOME");
++      env->GetVar("BERYLLIUM_CONFIG_HOME");
+   if (chrome_config_home_str.has_value() &&
+       base::IsStringUTF8(chrome_config_home_str.value())) {
+     config_dir = base::FilePath::FromUTF8Unsafe(chrome_config_home_str.value());
+@@ -95,7 +95,7 @@
+ #elif BUILDFLAG(GOOGLE_CHROME_BRANDING)
+   std::string data_dir_basename = "google-chrome";
+ #else
+-  std::string data_dir_basename = "chromium";
++  std::string data_dir_basename = "beryllium";
+ #endif
+   *result = config_dir.Append(data_dir_basename + GetChannelSuffixForDataDir());
+   return true;
+@@ -105,7 +105,7 @@
+   std::unique_ptr<base::Environment> env(base::Environment::Create());
+   base::FilePath config_dir;
+   std::optional<std::string> chrome_config_home_str =
+-      env->GetVar("CHROME_CONFIG_HOME");
++      env->GetVar("BERYLLIUM_CONFIG_HOME");
+ 
+   if (chrome_config_home_str && base::IsStringUTF8(*chrome_config_home_str)) {
+     config_dir = base::FilePath::FromUTF8Unsafe(*chrome_config_home_str);
+--- a/components/policy/core/common/policy_paths.cc
++++ b/components/policy/core/common/policy_paths.cc
+@@ -18,7 +18,7 @@
+ #elif BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
+ const char kPolicyPath[] = "/etc/opt/chrome_for_testing/policies";
+ #elif BUILDFLAG(IS_FREEBSD)
+-const char kPolicyPath[] = "/usr/local/etc/chromium/policies";
++const char kPolicyPath[] = "/usr/local/etc/beryllium/policies";
+ #else
+ const char kPolicyPath[] = "/etc/chromium/policies";
+ #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -118,7 +118,7 @@
+       base::PathService::Get(base::DIR_CACHE, &cache_directory);
+       base::PathService::Get(base::DIR_HOME, &local_directory);   
+ 
+-      cache_directory = cache_directory.AppendASCII("chromium");
++      cache_directory = cache_directory.AppendASCII("beryllium");
+       local_directory = local_directory.AppendASCII(".local").AppendASCII("share").AppendASCII("applications");
+ 
+       if (!base::CreateDirectory(cache_directory)) {

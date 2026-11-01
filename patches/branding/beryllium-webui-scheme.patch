@@ -1,0 +1,78 @@
+Beryllium: rename the user-visible WebUI scheme helium:// to beryllium://
+
+Purpose: Helium shows its WebUI pages under helium:// (helium://settings,
+  helium://setup). Beryllium shows them under beryllium:// (owner decision
+  Q11, 1 November 2026). Internally every page stays chrome://, exactly as
+  in Helium: helium/core/override-chrome-protocol.patch maps the display
+  scheme to chrome:// on navigation and chrome:// back to the display scheme
+  in the omnibox, status bubble, hover card, copied URLs and tab search.
+  This patch only changes the display scheme's value, so all of that
+  machinery, and every security registration Helium gives the scheme
+  (standard, secure, CORS, service worker, display-isolated, no javascript:
+  URLs, WebUI), now applies to "beryllium" instead of "helium".
+  helium:// is not kept as an alias: an alias would need a second set of
+  scheme registrations, and Beryllium has no existing helium:// bookmarks.
+  Typing helium:// behaves like any other unknown scheme.
+Stage: 4 (Beryllium series), applied after helium/patches/series.
+Depends on: helium/core/override-chrome-protocol.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca).
+Not covered here: user-visible strings in .grd/.xtb files, which
+  helium/utils/name_substitution.py rewrites from chrome:// to helium://.
+  Beryllium's string substitution step must map helium:// to beryllium://
+  after it runs.
+Test: freebsd/tests/functional (planned): beryllium://settings and
+  beryllium://setup load and the omnibox shows beryllium://; the address bar,
+  copied URL, hover card and tab search show beryllium://, never helium://;
+  typing chrome://settings still works and is displayed as beryllium://;
+  a web page cannot navigate to or embed beryllium://settings (blocked like
+  chrome://); helium://settings does not open a WebUI page.
+security-review: required (changes the value of a registered WebUI scheme)
+
+--- a/chrome/browser/resources/tab_search/tab_search_item.ts
++++ b/chrome/browser/resources/tab_search/tab_search_item.ts
+@@ -216,8 +216,8 @@
+ 
+     // Show chrome:// if it's a chrome internal url
+     const protocol = new URL(normalizeURL(data.tab.url)).protocol;
+-    if (protocol === 'chrome:' || protocol === 'helium:') {
+-      this.$.secondaryTextInner.prepend(document.createTextNode('helium://'));
++    if (protocol === 'chrome:' || protocol === 'beryllium:') {
++      this.$.secondaryTextInner.prepend(document.createTextNode('beryllium://'));
+     }
+   }
+ 
+--- a/components/omnibox/browser/builtin_provider.cc
++++ b/components/omnibox/browser/builtin_provider.cc
+@@ -74,7 +74,7 @@
+     for (const std::u16string& url :
+          client_->GetBuiltinsToProvideAsUserTypes()) {
+       DCHECK(url.starts_with(u"chrome://"));
+-      AddBuiltinMatch(std::u16string(url).replace(0, 6, u"helium"),
++      AddBuiltinMatch(std::u16string(url).replace(0, 6, u"beryllium"),
+                       std::u16string(), styles);
+     }
+   } else {
+--- a/components/url_formatter/url_fixer.cc
++++ b/components/url_formatter/url_fixer.cc
+@@ -39,7 +39,7 @@
+ 
+ // Hardcode these constants to avoid dependences on //chrome and //content.
+ const char kChromeUIScheme[] = "chrome";
+-const char kHeliumUIScheme[] = "helium";
++const char kHeliumUIScheme[] = "beryllium";  // Must match content::kHeliumUIScheme.
+ const char kDevToolsScheme[] = "devtools";
+ const char kChromeUIDefaultHost[] = "version";
+ const char kViewSourceScheme[] = "view-source";
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -19,7 +19,9 @@
+ inline constexpr char kChromeDevToolsScheme[] = "devtools";
+ inline constexpr char kChromeErrorScheme[] = "chrome-error";
+ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
+-inline constexpr char kHeliumUIScheme[] = "helium";  // also used for webuis :3
++// Beryllium: the user-visible WebUI scheme. The identifier keeps Helium's
++// name so the rest of Helium's series needs no change.
++inline constexpr char kHeliumUIScheme[] = "beryllium";
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";

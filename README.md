@@ -38,6 +38,11 @@ What exists so far:
 - [`freebsd/tools/gnargs-from-flags`](freebsd/tools/gnargs-from-flags) and
   [`flags.freebsd.gn`](flags.freebsd.gn): generated GN arguments with a
   privacy-key guard.
+- [`freebsd/ports/www/beryllium`](freebsd/ports/README.md): the Poudriere
+  port (untested skeleton) with the imported FreeBSD patch set and
+  Beryllium's first patches (`beryllium://`, own profile and paths).
+- [`freebsd/PATCH-MATRIX.md`](freebsd/PATCH-MATRIX.md): where the FreeBSD,
+  Helium and Beryllium patch layers touch the same files.
 
 The design is written up in [`plan/`](plan/00-INDEX.md). Start with the
 [index](plan/00-INDEX.md), then the [project charter](plan/01-PROJECT-CHARTER.md)

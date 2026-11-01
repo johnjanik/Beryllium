@@ -1,2 +1,4 @@
 .DS_Store
 freebsd/tests/capsicum-standalone/cap-oracle
+__pycache__/
+*.pyc
