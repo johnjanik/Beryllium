@@ -1,6 +1,6 @@
 {
-  "oracle_version": 1,
-  "run_at": "2026-11-01T08:18:26Z",
+  "oracle_version": 2,
+  "run_at": "2026-11-01T10:23:46Z",
   "kernel": {
     "kern.ostype": "FreeBSD",
     "kern.osrelease": "16.0-CURRENT",
@@ -73,6 +73,7 @@
     {"id": "proc.kevent_proc_init", "ref": "RT-02", "area": "processes", "capmode": true, "description": "kevent(EVFILT_PROC) on pid 1 (another user)", "expect": "deny", "outcome": "denied", "errno": "ESRCH", "detail": "", "verdict": "ok"},
     {"id": "proc.getpriority_user", "ref": "spec 6.1.6", "area": "processes", "capmode": true, "description": "getpriority(PRIO_USER)", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
     {"id": "proc.getpriority_other", "ref": "spec 6.1.6", "area": "processes", "capmode": true, "description": "getpriority(PRIO_PROCESS, other)", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
+    {"id": "proc.setpriority_other", "ref": "RT-02", "area": "processes", "capmode": true, "description": "setpriority(PRIO_PROCESS, other, nice+1)", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
     {"id": "proc.procctl", "ref": "06 2", "area": "processes", "capmode": true, "description": "procctl() inside capability mode", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
     {"id": "proc.fork", "ref": "RT-15", "area": "processes", "capmode": true, "description": "fork()", "expect": "record", "outcome": "allowed", "errno": "", "detail": "", "verdict": "info"},
     {"id": "proc.fork_nproc1", "ref": "RT-15", "area": "processes", "capmode": true, "description": "fork() with RLIMIT_NPROC=1", "expect": "deny", "outcome": "denied", "errno": "EAGAIN", "detail": "RLIMIT_NPROC=1 set in this process only before cap_enter", "verdict": "ok"},
@@ -80,6 +81,7 @@
     {"id": "proc.pdfork_pdkill", "ref": "02 3", "area": "processes", "capmode": true, "description": "pdfork() then pdkill() of own child", "expect": "record", "outcome": "allowed", "errno": "", "detail": "", "verdict": "info"},
     {"id": "proc.execve", "ref": "spec 3.1", "area": "processes", "capmode": true, "description": "execve(\"/bin/sh\")", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
     {"id": "proc.dlopen", "ref": "06 2", "area": "processes", "capmode": true, "description": "dlopen() of a library not yet loaded", "expect": "deny", "outcome": "denied", "errno": "0", "detail": "Shared object \"libz.so.6\" not found, required by \"cap-oracle\"", "verdict": "ok"},
+    {"id": "proc.dlopen_control", "ref": "06 2", "area": "processes", "capmode": false, "description": "same, outside capability mode (control)", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "library loads outside capability mode", "verdict": "ok"},
     {"id": "proc.posix_openpt", "ref": "RT-02", "area": "processes", "capmode": true, "description": "posix_openpt()", "expect": "deny", "outcome": "denied", "errno": "ECAPMODE", "detail": "", "verdict": "ok"},
     {"id": "mem.shm_anon", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "shm_open(SHM_ANON)", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "", "verdict": "ok"},
     {"id": "mem.memfd_seal", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "memfd_create() plus F_ADD_SEALS", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "", "verdict": "ok"},
@@ -88,7 +90,7 @@
     {"id": "mem.ro_twin_map_rw", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "map a rights-limited read-only twin writable", "expect": "deny", "outcome": "denied", "errno": "ENOTCAPABLE", "detail": "", "verdict": "ok"},
     {"id": "mem.ro_twin_mprotect", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "mprotect() a read-only twin mapping to writable", "expect": "deny", "outcome": "denied", "errno": "EACCES", "detail": "", "verdict": "ok"},
     {"id": "mem.ro_twin_map_exec", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "map a CAP_MMAP_R descriptor executable", "expect": "deny", "outcome": "denied", "errno": "ENOTCAPABLE", "detail": "", "verdict": "ok"},
-    {"id": "mem.ro_twin_introspect", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "F_GETFL and cap_rights_get() on a read-only twin", "expect": "record", "outcome": "allowed", "errno": "", "detail": "F_GETFL access=other cap_rights has CAP_MMAP_W=no", "verdict": "info"},
+    {"id": "mem.ro_twin_introspect", "ref": "06 3.3", "area": "memory", "capmode": true, "description": "F_GETFL and cap_rights_get() on a read-only twin", "expect": "record", "outcome": "allowed", "errno": "", "detail": "F_GETFL without CAP_FCNTL: ENOTCAPABLE; with CAP_FCNTL_GETFL: O_RDWR; CAP_MMAP_W present=no", "verdict": "info"},
     {"id": "mem.anon_jit", "ref": "06 2", "area": "memory", "capmode": true, "description": "anonymous RW mapping changed to RX", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "RW then RX, as V8 and WebAssembly need", "verdict": "ok"},
     {"id": "mem.anon_wx", "ref": "RT-09", "area": "memory", "capmode": true, "description": "anonymous mapping with write and execute at once", "expect": "record", "outcome": "allowed", "errno": "", "detail": "simultaneous write+execute mapping", "verdict": "info"},
     {"id": "fd.write_on_read_cap", "ref": "spec 6.1.3", "area": "descriptors", "capmode": true, "description": "write() on a CAP_READ-only descriptor", "expect": "deny", "outcome": "denied", "errno": "ENOTCAPABLE", "detail": "", "verdict": "ok"},
@@ -96,15 +98,16 @@
     {"id": "fd.ioctl_allowed", "ref": "spec 6.1.3", "area": "descriptors", "capmode": true, "description": "ioctl(FIONREAD) on the ioctl allowlist", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "", "verdict": "ok"},
     {"id": "fd.ioctl_outside_list", "ref": "spec 6.1.3", "area": "descriptors", "capmode": true, "description": "ioctl(FIONBIO) outside the ioctl allowlist", "expect": "deny", "outcome": "denied", "errno": "ENOTCAPABLE", "detail": "", "verdict": "ok"},
     {"id": "fd.fcntl_outside_list", "ref": "spec 6.1.3", "area": "descriptors", "capmode": true, "description": "fcntl(F_SETFL) outside the fcntl allowlist", "expect": "deny", "outcome": "denied", "errno": "ENOTCAPABLE", "detail": "", "verdict": "ok"},
-    {"id": "fd.closefrom", "ref": "06 4", "area": "descriptors", "capmode": true, "description": "closefrom() closes everything above a bound", "expect": "allow", "outcome": "exited", "errno": "", "detail": "", "verdict": "error"},
+    {"id": "fd.closefrom", "ref": "06 4", "area": "descriptors", "capmode": true, "description": "closefrom() closes everything above a bound", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "descriptors still open after closefrom=0", "verdict": "ok"},
     {"id": "fd.dev_fd_complete", "ref": "06 4", "area": "descriptors", "capmode": false, "description": "/dev/fd lists every open descriptor (upstream CloseSuperfluousFds relies on it)", "expect": "record", "outcome": "denied", "errno": "ENOENT", "detail": "/dev/fd filesystem=devfs; fd 60 listed=no", "verdict": "info"},
     {"id": "hard.trace_disable", "ref": "RT-03", "area": "hardening", "capmode": false, "description": "PROC_TRACE_CTL_DISABLE takes effect", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "PROC_TRACE_STATUS=-1 (-1 means disabled)", "verdict": "ok"},
     {"id": "hard.no_new_privs", "ref": "06 6", "area": "hardening", "capmode": false, "description": "PROC_NO_NEW_PRIVS_CTL", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "", "verdict": "ok"},
     {"id": "hard.trapcap", "ref": "06 2", "area": "hardening", "capmode": true, "description": "PROC_TRAPCAP_CTL delivers SIGTRAP/TRAP_CAP on a denied call", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "SIGTRAP si_code=4 (TRAP_CAP=4)", "verdict": "ok"},
     {"id": "hard.aslr_status", "ref": "RT-09", "area": "hardening", "capmode": false, "description": "ASLR active for this (oracle) binary", "expect": "record", "outcome": "allowed", "errno": "", "detail": "ASLR active for this binary=yes", "verdict": "info"},
-    {"id": "hard.wxmap_status", "ref": "RT-09", "area": "hardening", "capmode": false, "description": "W+X mappings permitted by default", "expect": "record", "outcome": "denied", "errno": "0", "detail": "W+X mappings permitted=no", "verdict": "info"},
-    {"id": "misc.localtime_uncached", "ref": "06 4.6", "area": "misc", "capmode": true, "description": "localtime() in capability mode without caching tzdata", "expect": "record", "outcome": "allowed", "errno": "", "detail": "local zone not loaded (UTC fallback); redacted on commit", "verdict": "info"},
-    {"id": "misc.localtime_cached", "ref": "06 4.6", "area": "misc", "capmode": true, "description": "localtime() after caph_cache_tzdata()", "expect": "record", "outcome": "allowed", "errno": "", "detail": "local zone loaded; zone redacted on commit", "verdict": "info"},
+    {"id": "hard.wxmap_status", "ref": "RT-16", "area": "hardening", "capmode": false, "description": "W^X enforced for this process by default", "expect": "record", "outcome": "denied", "errno": "0", "detail": "W^X enforced for this process=no (status=0x0)", "verdict": "info"},
+    {"id": "hard.wxorx_after_exec", "ref": "RT-16", "area": "hardening", "capmode": false, "description": "PROC_WX_MAPPINGS_DISALLOW_EXEC before exec enforces W^X and keeps RW-to-RX working", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "after exec with DISALLOW_EXEC: W+X mapping refused; RW then RX works", "verdict": "ok"},
+    {"id": "misc.localtime_uncached", "ref": "06 4.6", "area": "misc", "capmode": true, "description": "localtime() in capability mode without caching tzdata", "expect": "record", "outcome": "denied", "errno": "ENOENT", "detail": "local zone not loaded (UTC fallback)", "verdict": "info"},
+    {"id": "misc.localtime_cached", "ref": "06 4.6", "area": "misc", "capmode": true, "description": "localtime() after caph_cache_tzdata()", "expect": "record", "outcome": "allowed", "errno": "", "detail": "local zone loaded (zone not recorded)", "verdict": "info"},
     {"id": "misc.arc4random", "ref": "03 4.6", "area": "misc", "capmode": true, "description": "arc4random() needs no descriptor", "expect": "allow", "outcome": "allowed", "errno": "", "detail": "", "verdict": "ok"}
   ],
   "caprd_sysctls": {
@@ -237,7 +240,7 @@
       "p1003_1b.timer_max"
     ],
     "identifier_like": ["kern.hostname", "kern.hostid", "kern.domainname", "kern.hostuuid", "kern.boot_id"],
-    "summary": "#summary readable=126 ecapmode=17287 other=1"
+    "summary": "#summary readable=126 ecapmode=17287 eperm=0 other=1"
   },
-  "summary": {"ok": 56, "exposed": 6, "broken": 0, "info": 24, "error": 1}
+  "summary": {"ok": 60, "exposed": 6, "broken": 0, "info": 24, "error": 0}
 }

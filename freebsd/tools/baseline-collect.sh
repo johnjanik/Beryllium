@@ -15,6 +15,11 @@
 # Usage: start chromium, open one ordinary web page in one tab, then run
 #   sh freebsd/tools/baseline-collect.sh
 # as the same (non-root) user.
+#
+# If security.bsd.unprivileged_proc_debug=0 (a recommended hardening
+# setting), procstat cannot read descriptors, rlimits or environment even
+# of your own processes. Then run it as root for that user instead:
+#   doas sh freebsd/tools/baseline-collect.sh -u <user>
 
 set -u
 
@@ -26,16 +31,41 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
 	echo "baseline-collect.sh: run this on FreeBSD" >&2
 	exit 1
 fi
+target=""
+while getopts u: opt; do
+	case $opt in
+	u) target=$OPTARG ;;
+	*) echo "usage: baseline-collect.sh [-u user]" >&2; exit 2 ;;
+	esac
+done
+
 if [ "$(id -u)" -eq 0 ]; then
-	echo "baseline-collect.sh: run as the user who runs the browser, not root" >&2
-	exit 1
+	if [ -z "$target" ]; then
+		echo "baseline-collect.sh: as root, name the browser's user with -u" >&2
+		exit 1
+	fi
+	user=$target
+	uid=$(id -u "$user") || exit 1
+	home=$(pw usershow -n "$user" | cut -d: -f9)
+else
+	if [ -n "$target" ] && [ "$target" != "$(id -un)" ]; then
+		echo "baseline-collect.sh: -u needs root" >&2
+		exit 1
+	fi
+	user=$(id -un)
+	uid=$(id -u)
+	home=$HOME
+	if [ "$(sysctl -n security.bsd.unprivileged_proc_debug 2>/dev/null)" = 0 ]; then
+		echo "baseline-collect.sh: security.bsd.unprivileged_proc_debug=0, so" >&2
+		echo "  descriptors, rlimits and environment will be empty; for the full" >&2
+		echo "  baseline run: doas sh $0 -u $user" >&2
+	fi
 fi
 
 mkdir -p "$results"
 release=$(uname -r | tr -c 'A-Za-z0-9.\n-' '_')
 out="$results/baseline-$release-$(date -u +%Y%m%d).md"
 
-user=$(id -un)
 host=$(hostname)
 host_short=$(hostname -s 2>/dev/null || echo "$host")
 
@@ -43,7 +73,7 @@ redact() {
 	# The home directory first, then the bare names as whole words
 	# (FreeBSD sed word boundaries), so a short user name cannot mangle
 	# unrelated text.
-	sed -e "s#${HOME}#~#g" \
+	sed -e "s#${home}#~#g" \
 	    -e "s#[[:<:]]${user}[[:>:]]#<user>#g" \
 	    -e "s#[[:<:]]${host}[[:>:]]#<host>#g" \
 	    -e "s#[[:<:]]${host_short}[[:>:]]#<host>#g"
@@ -82,7 +112,11 @@ collect_machine() {
 	section "Graphics and display"
 	code sh -c 'pciconf -lv 2>/dev/null | grep -B1 -A4 "class *= display" || echo "pciconf: no display devices listed"'
 	code sh -c 'kldstat | awk "NR>1 {print \$5}" | grep -Ei "nvidia|drm|i915|amdgpu|radeon|linux" || echo "no graphics or linux modules loaded"'
-	code sh -c 'echo "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}"; [ -n "${WAYLAND_DISPLAY:-}" ] && echo "WAYLAND_DISPLAY set" || echo "WAYLAND_DISPLAY unset"; [ -n "${DISPLAY:-}" ] && echo "DISPLAY set" || echo "DISPLAY unset"'
+	if [ "$(id -u)" -ne 0 ]; then
+		code sh -c 'echo "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}"; [ -n "${WAYLAND_DISPLAY:-}" ] && echo "WAYLAND_DISPLAY set" || echo "WAYLAND_DISPLAY unset"; [ -n "${DISPLAY:-}" ] && echo "DISPLAY set" || echo "DISPLAY unset"'
+	else
+		printf 'Session variables: see the browser process environment below.\n'
+	fi
 	section "Filesystems relevant to the sandbox"
 	code sh -c 'mount -t fdescfs 2>/dev/null; mount | grep -c fdescfs | sed "s/^/fdescfs mounts: /"'
 }
@@ -94,8 +128,8 @@ collect_packages() {
 		code pkg info -D chromium
 	fi
 	section "Source revisions"
-	code git -C "$repo" rev-parse HEAD
-	code git -C "$repo" submodule status
+	code git -c safe.directory="$repo" -C "$repo" rev-parse HEAD
+	code git -c safe.directory='*' -C "$repo" submodule status
 	if [ -d /usr/ports/.git ]; then
 		# /usr/ports usually belongs to root; reading its HEAD is safe.
 		code git -c safe.directory=/usr/ports -C /usr/ports rev-parse HEAD
@@ -119,8 +153,8 @@ collect_processes() {
 	section "Running Chromium processes"
 	# The package installs /usr/local/share/chromium/chrome; match on the
 	# path and, as a fallback, on the process name.
-	pids=$( { pgrep -U "$(id -u)" -f 'chromium/chrome'
-	    pgrep -U "$(id -u)" -x chrome; } 2>/dev/null | sort -un)
+	pids=$( { pgrep -U "$uid" -f 'chromium/chrome'
+	    pgrep -U "$uid" -x chrome; } 2>/dev/null | sort -un)
 	if [ -z "$pids" ]; then
 		printf 'No chromium process found for this user. Start chromium, '
 		printf 'open one page, and run this script again to record the '
@@ -153,11 +187,14 @@ collect_processes() {
 		section "Process $p: $t"
 		printf 'Descriptors with capability rights (procstat -f -C):\n\n'
 		code procstat -f -C "$p"
-		printf '\nInherited environment variable names (values not recorded):\n\n'
+		printf '\nInherited environment variable names (values not recorded,\n'
+		printf 'except the non-sensitive XDG_SESSION_TYPE):\n\n'
 		printf '```text\n'
-		procstat -e "$p" 2>/dev/null | tail -n +2 | tr ' ' '\n' | \
+		env=$(procstat -e "$p" 2>/dev/null | tail -n +2 | tr ' ' '\n')
+		printf '%s\n' "$env" | \
 		    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u | tr '\n' ' '
-		printf '\n```\n'
+		printf '\n%s\n' "$(printf '%s\n' "$env" | grep '^XDG_SESSION_TYPE=' | head -1)"
+		printf '```\n'
 	done
 }
 

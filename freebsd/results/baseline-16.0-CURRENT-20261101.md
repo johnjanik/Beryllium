@@ -1,6 +1,6 @@
 # Beryllium Phase 0 baseline
 
-Collected 2026-11-01 08:18 UTC by freebsd/tools/baseline-collect.sh. Home directory, user name and host name are redacted.
+Collected 2026-11-01 10:23 UTC by freebsd/tools/baseline-collect.sh. Home directory, user name and host name are redacted.
 
 ## Machine and kernel
 
@@ -95,16 +95,13 @@ chromium-156.0.8078.47_1:
 ## Source revisions
 
 ```text
-d48855093718eb62019d19eff962e670eab132b2
+488a8f48aecb88b45e3ffc54fd5260de524edcdf
 ```
 ```text
  2f81b9cafa38a95071e20de3f9cd6b0aca6d3c65 helium (0.3.4-1301-g2f81b9ca)
 ```
 ```text
-fatal: detected dubious ownership in repository at '/usr/ports'
-To add an exception for this directory, call:
-
-	git config --global --add safe.directory /usr/ports
+d5ea2a453d6b696883ad145cceafa5811c630f8d
 ```
 ```text
 156.0.8078.47
@@ -113,4 +110,170 @@ To add an exception for this directory, call:
 
 ## Running Chromium processes
 
-No chromium process found for this user. Start chromium, open one page, and run this script again to record the per-process baseline.
+| pid | type | cred flags (C = capability mode) | fds | vnode | socket | pipe | shm | other | RLIMIT_DATA |
+|---|---|---|---|---|---|---|---|---|---|
+| 83691 | browser | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 84860 | gpu-process | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 85092 | utility (network.mojom.NetworkService) | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 85214 | utility (storage.mojom.StorageService) | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 85361 | renderer | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 95961 | renderer | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 96077 | renderer | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 96168 | utility (data_decoder.mojom.DataDecoderService) | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 96836 | renderer | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 96909 | renderer | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+| 97244 | utility (audio.mojom.AudioService) | - | 0 | 0 | 0 | 0 | 0 | 0 | ? |
+
+## Process 83691: browser
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 84860: gpu-process
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 85092: utility (network.mojom.NetworkService)
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 85214: utility (storage.mojom.StorageService)
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 85361: renderer
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 95961: renderer
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 96077: renderer
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 96168: utility (data_decoder.mojom.DataDecoderService)
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 96836: renderer
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 96909: renderer
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```
+
+## Process 97244: utility (audio.mojom.AudioService)
+
+Descriptors with capability rights (procstat -f -C):
+
+```text
+  PID COMM                FD T FLAGS    CAPABILITIES PRO NAME        
+```
+
+Inherited environment variable names (values not recorded):
+
+```text
+
+```

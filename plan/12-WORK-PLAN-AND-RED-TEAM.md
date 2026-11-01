@@ -182,6 +182,7 @@ Severity is for the shipped design if the finding were left unaddressed.
 | RT-13 | Medium | OS fingerprint leaks and inconsistencies | "presents as Linux x86_64" invariant with tests; document TCP/IP stack signature | fingerprint test page in window and worker contexts |
 | RT-14 | Medium | Casper services are unconfined parsers reachable from confined processes | no Casper channel in renderers; fuzz `libnv` and `cap_net` request handling | fuzz target in CI |
 | RT-15 | Low | Fork and core-dump abuse from a renderer | `RLIMIT_NPROC=1`, `RLIMIT_CORE=0` at lockdown | oracle fork probe; attacker hook forks |
+| RT-17 | Medium | Chromium's own pages claim confinement FreeBSD does not enforce: `chrome://gpu` shows "Sandboxed: true" for a GPU process the kernel shows is not in capability mode | every "sandboxed" field Beryllium shows is driven by the kernel-attested status (RT-04); no upstream status string is shown on BSD without that check | functional test compares `chrome://gpu` and `chrome://sandbox` with `procstat` for each process |
 | RT-16 | Medium (opportunity) | W^X is not enforced by default (`kern.elf64.allow_wx=1`); a renderer can create write-and-execute memory | launcher sets `PROC_WX_MAPPINGS_DISALLOW_EXEC` between fork and exec so W^X is enforced in each child, if V8 works under it | oracle `hard.wxorx_after_exec`; V8 and WebAssembly test pages under enforcement |
 
 ### RT-01: machine identifiers survive capability mode
@@ -647,12 +648,25 @@ not.
 
 ### 10.4 Facts about the owner's host
 
-- **Hybrid graphics**: Intel Arrow Lake integrated GPU (`i915kms`) plus an
-  RTX 5090 Laptop GPU (`nvidia-drm`). On most hybrid laptops the panel is
-  driven by the integrated GPU, so Chromium's GPU process may run on Mesa
-  and i915, an open driver whose ioctl set is known and which OpenBSD
-  already confines, rather than on NVIDIA. `chrome://gpu` decides which
-  policy comes first (correcting section 8 and charter D6).
+- **GPU actually used: the NVIDIA RTX 5090** (`chrome://gpu`, committed as
+  `freebsd/results/chrome-gpu-16.0-CURRENT-20261101.txt`): ANGLE on NVIDIA's
+  OpenGL ES 3.2 driver 595.99.02 through EGL, ozone Wayland,
+  `--render-node-override=/dev/dri/renderD128`, Vulkan off, WebGL and
+  WebGPU hardware-accelerated (Dawn on ANGLE GLES). The laptop also has an
+  Intel Arrow Lake GPU (`i915kms`), but Chromium does not use it here. So
+  the first GPU policy is the NVIDIA one after all (charter D6 stands),
+  with the closed driver's ioctl surface (R23) as its main residual risk.
+  WebGPU on this path is extra attack surface reachable from every page; a
+  hardened profile that disables it is cheap to offer.
+- **No Chromium process is confined today**, by observation: the per-process
+  baseline shows no capability-mode flag on the browser, GPU, network,
+  storage, audio, data-decoder or any renderer process
+  (`freebsd/results/baseline-16.0-CURRENT-20261101.md`). Yet `chrome://gpu`
+  reports "Sandboxed: true" (RT-17).
+- The baseline's descriptor, rlimit and environment columns are empty
+  because `security.bsd.unprivileged_proc_debug=0` stops `procstat` reading
+  even the user's own processes; the script now has a root mode
+  (`-u <user>`) for that case.
 - XWayland is running (`DISPLAY` is set alongside `WAYLAND_DISPLAY`), so X11
   clients exist in the session even under Wayland.
 - The host's own hardening sysctls blocked two attacks even outside
@@ -662,5 +676,6 @@ not.
 - Kernel `osreldate` 1600028; the chromium package was built for 1600029.
   Updating the base system to match the packages avoids ABI surprises on
   CURRENT.
-- The first baseline found no running Chromium processes (detection fixed);
-  the per-process baseline still has to be recorded.
+- Oracle version 2 on this host: 60 ok, 6 exposed (the RT-01 identifiers and
+  same-user `EVFILT_PROC`), 0 broken, 0 errors; W^X after exec works and
+  `setpriority` on other processes is refused.
