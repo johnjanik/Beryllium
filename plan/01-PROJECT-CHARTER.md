@@ -121,12 +121,17 @@ keeps the Beryllium patch layer small. Helium's own `name_substitution.py`
 step (Chromium to Helium) runs unchanged and the Beryllium branding patch
 replaces the user-visible results.
 
-Open sub-questions: whether the user-visible `helium://` scheme (for example
-`helium://setup` in the address bar) is renamed to `beryllium://` in the
-branding layer (Q11; recommended: rename user-visible schemes and strings,
-keep preference names internal), and whether the non-free search-engine icon
-pack can be redistributed in a FreeBSD package at all (if not, the port must
-set `RESTRICTED`/`NO_CDROM` or drop the pack).
+WebUI scheme (Q11, decided 1 November 2026): pages appear as `beryllium://`
+(for example `beryllium://settings`, `beryllium://setup`), implemented by
+`patches/branding/beryllium-webui-scheme.patch`, which changes the value of
+Helium's display scheme. Internally pages stay `chrome://`, as in Helium.
+`helium://` is not kept as an alias. Strings that `name_substitution.py`
+rewrites to `helium://` in `.grd`/`.xtb` files still need a Beryllium
+string-substitution step.
+
+Open sub-question: whether the non-free search-engine icon pack can be
+redistributed in a FreeBSD package at all (if not, the port must set
+`RESTRICTED`/`NO_CDROM` or drop the pack).
 
 ### D3. Helium services: not used; services off until Beryllium self-hosts (decided 1 November 2026)
 

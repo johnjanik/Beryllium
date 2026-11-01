@@ -52,7 +52,7 @@ plan already does; "trigger" is the signal that the risk has materialised.
 | Q8 | Is PGO (the port's profdata tarball) wanted, given Helium sets `chrome_pgo_phase=0`? | no PGO in Phase 1 | Phase 6 |
 | Q9 | Widevine via `foreign-cdm` as a default option or off? | same default as the port (`WIDEVINE` option off by default) | Phase 1 |
 | Q10 | Who hosts a Beryllium instance of `helium-services` (AGPL-3.0), under which domain, and with what privacy policy and logging? Needed for component updates (R13), the extension proxy, `!bangs`, filter-list updates and dictionaries (R24) | recommended: self-host before the first public release; until then services off | before first public release |
-| Q11 | Rename the user-visible `helium://` scheme (for example `helium://setup` in the address bar) and other visible strings to `beryllium://`? | recommended: rename user-visible schemes and strings in the branding layer; keep internal preference names (`helium.services.*`) and component ids | before Phase 1 branding work |
+| Q11 | Rename the user-visible `helium://` scheme (for example `helium://setup` in the address bar) to `beryllium://`? | **Decided 1 November 2026:** yes; `patches/branding/beryllium-webui-scheme.patch` changes the display scheme, internal pages stay `chrome://`, preference names (`helium.services.*`) and component ids unchanged, no `helium://` alias; `.grd`/`.xtb` strings still need a Beryllium substitution step | decided |
 
 ## 3. Facts to re-verify on day one
 

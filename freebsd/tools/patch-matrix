@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Produce the patch conflict matrix (plan/05 section 6).
+
+Finds every Chromium file touched by more than one patch layer:
+
+  bsd        FreeBSD ports www/chromium files/patch-*  (-p0, "path.orig")
+  helium     helium/patches/series                     (-p1, a/ b/)
+  beryllium  patches/series                            (-p1, a/ b/)
+
+and classifies how close their hunks are, using the "old file" line ranges
+from the hunk headers:
+
+  overlapping  hunk ranges intersect: textual conflict is likely
+  adjacent     ranges within ADJACENT_LINES of each other: patch(1) context
+               lines may collide, so application can fail or fuzz
+  separate     same file, hunks far apart: textual application is fine,
+               but the layers may still interact semantically
+
+Line numbers are approximate: each layer was made against a slightly
+different tree (BSD against its Chromium version, Helium against its own,
+each on top of its own earlier patches). The matrix is a review aid, not a
+proof; `semantic risk` comes from a hand-maintained notes file and a
+path-based heuristic, and rows with behavioural risk need a test (plan/05).
+
+Usage:
+  patch-matrix --bsd-files <ports>/www/chromium/files [--repo .] \\
+      [--notes freebsd/patch-matrix-notes.json] [--format md|json]
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+ADJACENT_LINES = 6
+
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+# Paths whose changes affect process creation, IPC, descriptors, shared
+# memory, the network service, the GPU process, crash handling or sandbox
+# setup: security-review territory (plan/05 rule 3, plan/12 RT-10).
+SECURITY_PREFIXES = (
+    "sandbox/",
+    "base/process/",
+    "base/memory/",
+    "base/files/",
+    "base/posix/",
+    "mojo/",
+    "ipc/",
+    "content/browser/child_process",
+    "content/browser/renderer_host/",
+    "content/browser/zygote_host/",
+    "content/zygote/",
+    "content/common/zygote/",
+    "content/browser/sandbox",
+    "content/utility/",
+    "content/gpu/",
+    "content/renderer/renderer_main",
+    "services/network/",
+    "net/",
+    "third_party/boringssl/",
+    "components/crash/",
+    "chrome/app/chrome_main",
+    "chrome/common/chrome_paths",
+    "chrome/browser/process_singleton",
+    "gpu/",
+    "media/gpu/",
+)
+
+
+def is_security_path(path):
+    return any(path.startswith(p) for p in SECURITY_PREFIXES)
+
+
+def heuristic_risk(path):
+    if is_security_path(path):
+        return "review (security path)"
+    base = os.path.basename(path)
+    if base in ("BUILD.gn", "DEPS") or path.endswith((".gni", ".gn", ".py")):
+        return "build-only (likely)"
+    if path.endswith((".grd", ".grdp", ".xtb", ".json", ".html", ".css", ".ts", ".js")):
+        return "resources (likely)"
+    return "unassessed"
+
+
+def parse_patch(text):
+    """Return {path: {"hunks": [(start, length)], "new": bool}}."""
+    files = {}
+    cur = None
+    old_path = None
+    for line in text.splitlines():
+        if line.startswith("--- "):
+            old_path = line[4:].split("\t")[0].strip()
+            continue
+        if line.startswith("+++ ") and old_path is not None:
+            new_path = line[4:].split("\t")[0].strip()
+            path = new_path
+            if path == "/dev/null":
+                path = old_path
+            for prefix in ("a/", "b/"):
+                if path.startswith(prefix):
+                    path = path[len(prefix):]
+                    break
+            if path.endswith(".orig"):
+                path = path[: -len(".orig")]
+            cur = files.setdefault(path, {"hunks": [], "new": False, "deleted": False})
+            if old_path == "/dev/null":
+                cur["new"] = True
+            if new_path == "/dev/null":
+                cur["deleted"] = True
+            old_path = None
+            continue
+        m = HUNK_RE.match(line)
+        if m and cur is not None:
+            start = int(m.group(1))
+            length = int(m.group(2)) if m.group(2) is not None else 1
+            if start == 0 and length == 0:
+                cur["new"] = True
+            cur["hunks"].append((start, length))
+    return files
+
+
+def read_series(series_path):
+    out = []
+    with open(series_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                out.append(line)
+    return out
+
+
+def load_bsd(files_dir):
+    layer = {}
+    names = sorted(n for n in os.listdir(files_dir) if n.startswith("patch-"))
+    for name in names:
+        with open(os.path.join(files_dir, name), encoding="utf-8",
+                  errors="replace") as f:
+            for path, info in parse_patch(f.read()).items():
+                layer.setdefault(path, []).append((name, info))
+    return layer, len(names)
+
+
+def load_series_layer(patch_dir):
+    series = os.path.join(patch_dir, "series")
+    layer = {}
+    if not os.path.exists(series):
+        return layer, 0, []
+    names = read_series(series)
+    missing = []
+    for name in names:
+        full = os.path.join(patch_dir, name)
+        if not os.path.exists(full):
+            missing.append(name)
+            continue
+        with open(full, encoding="utf-8", errors="replace") as f:
+            for path, info in parse_patch(f.read()).items():
+                layer.setdefault(path, []).append((name, info))
+    return layer, len(names), missing
+
+
+def ranges(entries):
+    out = []
+    for _, info in entries:
+        for start, length in info["hunks"]:
+            out.append((start, start + max(length, 1) - 1))
+    return out
+
+
+def classify(a_entries, b_entries):
+    """Closest relation between any hunk of a and any hunk of b."""
+    a_new = any(i["new"] for _, i in a_entries)
+    b_new = any(i["new"] for _, i in b_entries)
+    if a_new or b_new:
+        # One layer creates the file and the other edits it: the edit
+        # depends on the creation, which is the strongest coupling.
+        return "overlapping", 0
+    best = None
+    for a0, a1 in ranges(a_entries):
+        for b0, b1 in ranges(b_entries):
+            if a0 <= b1 and b0 <= a1:
+                return "overlapping", 0
+            gap = b0 - a1 if b0 > a1 else a0 - b1
+            best = gap if best is None else min(best, gap)
+    if best is not None and best <= ADJACENT_LINES:
+        return "adjacent", best
+    return "separate", best
+
+
+ORDER = {"overlapping": 0, "adjacent": 1, "separate": 2}
+
+
+def build(bsd_dir, repo, notes_path):
+    bsd, n_bsd = load_bsd(bsd_dir)
+    helium, n_helium, helium_missing = load_series_layer(
+        os.path.join(repo, "helium", "patches"))
+    beryllium, n_beryllium, beryllium_missing = load_series_layer(
+        os.path.join(repo, "patches"))
+    notes = {}
+    if notes_path and os.path.exists(notes_path):
+        with open(notes_path, encoding="utf-8") as f:
+            notes = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+
+    layers = {"bsd": bsd, "helium": helium, "beryllium": beryllium}
+    paths = sorted(set(bsd) | set(helium) | set(beryllium))
+    rows = []
+    for path in paths:
+        present = [n for n in ("bsd", "helium", "beryllium") if path in layers[n]]
+        if len(present) < 2:
+            continue
+        rel, gap = "separate", None
+        pairs = [(x, y) for i, x in enumerate(present) for y in present[i + 1:]]
+        for x, y in pairs:
+            r, g = classify(layers[x][path], layers[y][path])
+            if ORDER[r] < ORDER[rel] or (r == rel and g is not None and (gap is None or g < gap)):
+                rel, gap = r, g
+        note = notes.get(path, {})
+        rows.append({
+            "file": path,
+            "layers": present,
+            "relation": rel,
+            "closest_gap_lines": gap,
+            "security_path": is_security_path(path),
+            "semantic_risk": note.get("semantic_risk", heuristic_risk(path)),
+            "resolution": note.get("resolution", ""),
+            "test": note.get("test", ""),
+            "patches": {n: sorted({name for name, _ in layers[n][path]}) for n in present},
+        })
+    rows.sort(key=lambda r: (ORDER[r["relation"]], not r["security_path"], r["file"]))
+    summary = {
+        "bsd_patch_files": n_bsd,
+        "bsd_files_touched": len(bsd),
+        "helium_series_entries": n_helium,
+        "helium_files_touched": len(helium),
+        "helium_series_missing": helium_missing,
+        "beryllium_series_entries": n_beryllium,
+        "beryllium_files_touched": len(beryllium),
+        "beryllium_series_missing": beryllium_missing,
+        "shared_files": len(rows),
+        "overlapping": sum(r["relation"] == "overlapping" for r in rows),
+        "adjacent": sum(r["relation"] == "adjacent" for r in rows),
+        "separate": sum(r["relation"] == "separate" for r in rows),
+        "security_paths": sum(r["security_path"] for r in rows),
+        "needs_test": sum(1 for r in rows if r["relation"] != "separate"
+                          and r["security_path"] and not r["test"]),
+    }
+    return summary, rows
+
+
+def render_md(summary, rows, meta):
+    out = []
+    w = out.append
+    w("# Beryllium patch conflict matrix")
+    w("")
+    w("Generated by `freebsd/tools/patch-matrix`; do not edit by hand. Hand "
+      "assessments live in `freebsd/patch-matrix-notes.json` and are merged in.")
+    w("")
+    w("## Inputs")
+    w("")
+    for k, v in meta.items():
+        w(f"- {k}: {v}")
+    w("")
+    w("## Summary")
+    w("")
+    w("| Measure | Value |")
+    w("|---|---|")
+    w(f"| BSD patch files | {summary['bsd_patch_files']} (touching {summary['bsd_files_touched']} files) |")
+    w(f"| Helium series entries | {summary['helium_series_entries']} (touching {summary['helium_files_touched']} files) |")
+    w(f"| Beryllium series entries | {summary['beryllium_series_entries']} (touching {summary['beryllium_files_touched']} files) |")
+    w(f"| Files touched by more than one layer | {summary['shared_files']} |")
+    w(f"| Overlapping hunks (conflict likely) | {summary['overlapping']} |")
+    w(f"| Adjacent hunks (within {ADJACENT_LINES} lines) | {summary['adjacent']} |")
+    w(f"| Separate hunks | {summary['separate']} |")
+    w(f"| Shared files on security-review paths | {summary['security_paths']} |")
+    w(f"| Overlapping or adjacent security-path rows without a test | {summary['needs_test']} |")
+    if summary["helium_series_missing"] or summary["beryllium_series_missing"]:
+        w(f"| Series entries missing on disk | {summary['helium_series_missing'] + summary['beryllium_series_missing']} |")
+    w("")
+    w("Line numbers are approximate across layers (different base trees), so "
+      "`overlapping` means \"look first\", and `separate` does not mean "
+      "\"no interaction\".")
+    w("")
+    w("## Rows")
+    w("")
+    w("| File | Layers | Relation | Gap | Security path | Semantic risk | Resolution | Test | Patches |")
+    w("|---|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        patches = "; ".join(
+            f"{layer}: " + ", ".join(f"`{p}`" for p in names)
+            for layer, names in r["patches"].items())
+        gap = "" if r["closest_gap_lines"] is None else str(r["closest_gap_lines"])
+        w(f"| `{r['file']}` | {' + '.join(r['layers'])} | {r['relation']} | {gap} | "
+          f"{'yes' if r['security_path'] else ''} | {r['semantic_risk']} | "
+          f"{r['resolution']} | {r['test']} | {patches} |")
+    w("")
+    return "\n".join(out)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("--bsd-files", required=True,
+                   help="www/chromium/files directory of a ports checkout")
+    p.add_argument("--repo", default=os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    p.add_argument("--notes", default=None)
+    p.add_argument("--format", choices=("md", "json"), default="md")
+    p.add_argument("--meta", action="append", default=[],
+                   help="key=value lines for the Inputs section")
+    a = p.parse_args(argv)
+    notes = a.notes or os.path.join(a.repo, "freebsd", "patch-matrix-notes.json")
+    summary, rows = build(a.bsd_files, a.repo, notes)
+    if a.format == "json":
+        print(json.dumps({"summary": summary, "rows": rows}, indent=2))
+    else:
+        meta = dict(m.split("=", 1) for m in a.meta)
+        print(render_md(summary, rows, meta))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
