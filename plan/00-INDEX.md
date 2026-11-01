@@ -20,6 +20,7 @@
 | 09 | [Roadmap](09-ROADMAP.md) | Phases 0 to 6 with concrete work items, order dependencies, rough effort, and the first public release definition |
 | 10 | [Risks and open questions](10-RISKS-AND-OPEN-QUESTIONS.md) | 22 risks with triggers and mitigations, 9 decisions for the project owner, facts to re-verify on day one |
 | 11 | [Maintenance and release](11-MAINTENANCE-AND-RELEASE.md) | Cadence driven by three upstream clocks, roles, the per-release procedure, advisory checklist, package distribution, security policy, the handover test |
+| 12 | [Work plan and red-team review](12-WORK-PLAN-AND-RED-TEAM.md) | Facts re-checked on 1 November 2026, sprint plan split between cloud sessions and the FreeBSD machine, amendments to documents 01 to 11, 15 red-team findings with evidence and tests, the probe catalogue and attacker payload hook |
 
 ## The findings that shape everything else
 
