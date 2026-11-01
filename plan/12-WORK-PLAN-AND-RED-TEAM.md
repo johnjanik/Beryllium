@@ -582,7 +582,20 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 | 3. Capsicum oracle and red-team probes | **run on 16.0-CURRENT** (section 10); version 2 fixes two probe bugs and adds `setpriority`, `dlopen` control and W^X-after-exec probes (89 probes) | `freebsd/tests/capsicum-standalone/`, `freebsd/results/` |
 | 3a. Oracle on 14.x and 15.x | ran on 14.5 and 15.1; results copy-back fixed so the JSON is uploaded as artifacts | `.github/workflows/freebsd-checks.yml` |
 | 4. GN args generator and privacy guard | done, 13 unit tests, passes against Helium 0.20.3 | `freebsd/tools/gnargs-from-flags`, `flags.freebsd.gn`, `freebsd/privacy/gn-privacy-keys.json` |
-| 5. Patch matrix | next | |
+| 5. Patch matrix | done: 168 shared files, 37 overlapping, 19 adjacent; every overlapping or adjacent security-path row has a resolution and a test | `freebsd/tools/patch-matrix`, `freebsd/PATCH-MATRIX.md`, `freebsd/patch-matrix-notes.json` |
+
+## 11. Sprint 2 status (1 November 2026)
+
+| Item | Status | Where |
+|---|---|---|
+| `beryllium://` scheme (Q11) | patch applies after Helium's series; not compiled yet | `patches/branding/beryllium-webui-scheme.patch` |
+| Name substitution | Helium's pass, then Helium's translations, then Beryllium's rename (Helium to Beryllium, `helium://` to `beryllium://`) | `freebsd/tools/beryllium-name-substitution` |
+| Own profile, branding, FreeBSD paths | `~/.config/beryllium`, `/usr/local/{share,etc}/beryllium`, Beryllium BRANDING; applies on the real post-stage-3 files | `patches/platform/beryllium-paths-and-branding.patch` |
+| BSD patch import | 1,696 patches from ports `6ad3e0c8`; 217 on security-review paths, review debt tracked | `freebsd/tools/import-bsd-patches`, `freebsd/ports/www/beryllium/BSD-PATCH-REVIEW.md` |
+| Port skeleton | written, **not yet built**; Google `-lite` tarball (04 section 2.1); one `distinfo` line (Helium archive) recorded by `make makesum` on the build host | `freebsd/ports/www/beryllium`, `freebsd/ports/README.md` |
+| Patch workbench | builds any file in its post-stage-4 state for writing new patches | `freebsd/tools/patch-workbench` |
+| Icons | still Helium's; replace before any package is shared | branding task |
+
 
 ## 10. First oracle results (1 November 2026)
 

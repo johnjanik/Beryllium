@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Write BUILD-MANIFEST.json for a Beryllium package (plan/04 section 3,
+plan/08 section 2.6): what was built, from which inputs, with which GN
+arguments, including the hardening status (RT-09).
+
+  build-manifest --gnargs-json <file> --imported-from <files/IMPORTED-FROM>
+      --version <v> --chromium <v> --helium-commit <sha> --patches-dir <dir>
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import sys
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser()
+    p.add_argument("--gnargs-json", required=True)
+    p.add_argument("--imported-from", required=True)
+    p.add_argument("--version", required=True)
+    p.add_argument("--chromium", required=True)
+    p.add_argument("--helium-commit", required=True)
+    p.add_argument("--patches-dir", required=True)
+    a = p.parse_args(argv)
+
+    with open(a.gnargs_json, encoding="utf-8") as f:
+        gn = json.load(f)
+    provenance = {}
+    with open(a.imported_from, encoding="utf-8") as f:
+        for line in f:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                provenance[k.strip()] = v.strip()
+    patches = {}
+    series = os.path.join(a.patches_dir, "series")
+    with open(series, encoding="utf-8") as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                with open(os.path.join(a.patches_dir, line), "rb") as pf:
+                    patches[line] = hashlib.sha256(pf.read()).hexdigest()
+    json.dump({
+        "beryllium_version": a.version,
+        "chromium_version": a.chromium,
+        "helium_commit": a.helium_commit,
+        "bsd_patches": provenance,
+        "beryllium_patches": patches,
+        "gn_args": gn["args"],
+        "gn_arg_origin": gn["origin"],
+        "hardening": gn["hardening"],
+        "build_host": {"system": platform.system(), "release": platform.release(),
+                       "machine": platform.machine()},
+        "sandbox_status": "none: same as www/chromium (Phase 1, no sandbox claims)",
+    }, sys.stdout, indent=2, sort_keys=True)
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

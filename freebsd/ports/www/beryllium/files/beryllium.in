@@ -1,0 +1,30 @@
+#!/bin/sh
+# Beryllium launcher. It never adds sandbox or security switches
+# (plan/06 section 3.4); it only checks a kernel setting the X11 shared
+# memory path needs and sets the core-dump policy.
+
+SYSCTL=kern.ipc.shm_allow_removed
+if [ "`/sbin/sysctl -n $SYSCTL`" = 0 ] ; then
+	cat << EOMSG
+For correct operation, shared memory support has to be enabled
+in Beryllium by performing the following command as root :
+
+sysctl $SYSCTL=1
+
+To preserve this setting across reboots, append the following
+to /etc/sysctl.conf :
+
+$SYSCTL=1
+EOMSG
+	exit 1
+fi
+
+# Browser memory holds page content and cookies; do not write it to disk.
+ulimit -c 0
+
+# source foreign-cdm environment (WIDEVINE option)
+if [ -r %%PREFIX%%/share/foreign-cdm/fcdm-setup-env ] ; then
+	. %%PREFIX%%/share/foreign-cdm/fcdm-setup-env
+fi
+
+exec %%DATADIR%%/beryllium ${1+"$@"}

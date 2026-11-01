@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Generate Beryllium's GN arguments from helium/flags.gn plus the FreeBSD
+fragment, and enforce the privacy rules from plan/07 section 2.
+
+Never hand-copy flags into the port Makefile (risk R14). The port calls:
+
+    gnargs-from-flags gen --repo <beryllium checkout> \
+        --var LOCALBASE=/usr/local --var CXXFLAGS=... \
+        --arg use_sndio=true --arg proprietary_codecs=true ...
+
+Rules enforced on every run:
+  * A key may be set by exactly one source (helium/flags.gn, flags.freebsd.gn,
+    or a --arg). Helium's value is never overridden.
+  * Privacy-tagged keys (freebsd/privacy/gn-privacy-keys.json) may only come
+    from helium/flags.gn, and must have the values that file records.
+  * Every @NAME@ placeholder must be filled by --var.
+
+Subcommands:
+  gen     print the arguments (args.gn lines, a one-line --args string, or JSON)
+  check   verify helium/flags.gn against the privacy key file and that
+          flags.freebsd.gn parses and sets no forbidden key
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+HARDENING_KEYS = (
+    "use_partition_alloc",
+    "use_allocator_shim",
+    "use_partition_alloc_as_malloc",
+    "enable_backup_ref_ptr_support",
+    "is_cfi",
+    "use_cfi_icall",
+)
+
+_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PLACEHOLDER_RE = re.compile(r"@([A-Z][A-Z0-9_]*)@")
+
+
+class GnArgsError(Exception):
+    pass
+
+
+def _parse_value(text, where):
+    """Return (value, rest) for a GN value at the start of text."""
+    if text.startswith('"'):
+        i = 1
+        while i < len(text):
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text[i] == '"':
+                return text[: i + 1], text[i + 1 :]
+            i += 1
+        raise GnArgsError(f"{where}: unterminated string")
+    m = re.match(r"[^\s#]+", text)
+    if not m:
+        raise GnArgsError(f"{where}: missing value")
+    return m.group(0), text[m.end() :]
+
+
+def parse_gn(text, name):
+    """Parse simple 'key=value' GN args. Returns an ordered list of pairs."""
+    out = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        where = f"{name}:{lineno}"
+        if "=" not in line:
+            raise GnArgsError(f"{where}: expected key=value")
+        key, rest = line.split("=", 1)
+        key = key.strip()
+        if not _KEY_RE.match(key):
+            raise GnArgsError(f"{where}: bad key {key!r}")
+        value, tail = _parse_value(rest.strip(), where)
+        tail = tail.strip()
+        if tail and not tail.startswith("#"):
+            raise GnArgsError(f"{where}: trailing text {tail!r}")
+        out.append((key, value))
+    return out
+
+
+def _gn_escape(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+
+
+def substitute(value, variables, where):
+    def repl(m):
+        name = m.group(1)
+        if name not in variables:
+            raise GnArgsError(f"{where}: placeholder @{name}@ has no --var")
+        v = variables[name]
+        return _gn_escape(v) if value.startswith('"') else v
+
+    return _PLACEHOLDER_RE.sub(repl, value)
+
+
+def load_privacy_keys(path):
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def merge(sources, privacy, variables):
+    """sources: list of (source_name, [(key, value)], may_set_privacy).
+
+    Returns (args dict in order, origin dict)."""
+    args, origin = {}, {}
+    for src, pairs, may_set_privacy in sources:
+        seen_here = set()
+        for key, value in pairs:
+            if key in seen_here:
+                raise GnArgsError(f"{src}: {key} set twice")
+            seen_here.add(key)
+            if key in privacy and not may_set_privacy:
+                raise GnArgsError(
+                    f"{src}: {key} is privacy-tagged and may only be set by "
+                    f"helium/flags.gn (plan/07 section 2)")
+            if key in args:
+                raise GnArgsError(
+                    f"{src}: {key} already set by {origin[key]}; a key may "
+                    f"have only one source")
+            args[key] = substitute(value, variables, f"{src}: {key}")
+            origin[key] = src
+    for key, want in privacy.items():
+        got = args.get(key)
+        if got != want:
+            raise GnArgsError(
+                f"privacy key {key} is {got!r}, expected {want!r} "
+                f"(update freebsd/privacy/gn-privacy-keys.json only after review)")
+    return args, origin
+
+
+def collect(repo, extra_args, variables, fragment_path=None, helium_path=None,
+            privacy_path=None):
+    helium_path = helium_path or os.path.join(repo, "helium", "flags.gn")
+    fragment_path = fragment_path or os.path.join(repo, "flags.freebsd.gn")
+    privacy_path = privacy_path or os.path.join(
+        repo, "freebsd", "privacy", "gn-privacy-keys.json")
+    privacy = load_privacy_keys(privacy_path)
+    with open(helium_path, encoding="utf-8") as f:
+        helium = parse_gn(f.read(), "helium/flags.gn")
+    with open(fragment_path, encoding="utf-8") as f:
+        fragment = parse_gn(f.read(), "flags.freebsd.gn")
+    options = parse_gn("\n".join(extra_args), "--arg")
+    return merge(
+        [("helium/flags.gn", helium, True),
+         ("flags.freebsd.gn", fragment, False),
+         ("--arg", options, False)],
+        privacy, variables)
+
+
+def _kv(items, what):
+    out = {}
+    for item in items:
+        if "=" not in item:
+            raise GnArgsError(f"{what} {item!r}: expected NAME=value")
+        k, v = item.split("=", 1)
+        out[k] = v
+    return out
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("gen", "check"):
+        sp = sub.add_parser(name)
+        sp.add_argument("--repo", default=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+        sp.add_argument("--var", action="append", default=[],
+                        help="NAME=value for @NAME@ placeholders")
+        sp.add_argument("--arg", action="append", default=[],
+                        help="option-driven key=value")
+        sp.add_argument("--helium-flags", help="default: <repo>/helium/flags.gn")
+        sp.add_argument("--fragment", help="default: <repo>/flags.freebsd.gn")
+        sp.add_argument("--privacy-keys",
+                        help="default: <repo>/freebsd/privacy/gn-privacy-keys.json")
+        if name == "gen":
+            sp.add_argument("--format", choices=("args.gn", "cmdline", "json"),
+                            default="args.gn")
+    a = p.parse_args(argv)
+
+    try:
+        if a.cmd == "check":
+            # Placeholders are irrelevant to the policy check; fill them.
+            with open(a.fragment or os.path.join(a.repo, "flags.freebsd.gn"),
+                      encoding="utf-8") as f:
+                names = set(_PLACEHOLDER_RE.findall(f.read()))
+            variables = {n: "CHECK" for n in names}
+            variables.update(_kv(a.var, "--var"))
+            args, _ = collect(a.repo, a.arg, variables, a.fragment,
+                              a.helium_flags, a.privacy_keys)
+            print(f"gnargs-from-flags: OK ({len(args)} arguments, privacy keys "
+                  f"match freebsd/privacy/gn-privacy-keys.json)")
+            return 0
+
+        args, origin = collect(a.repo, a.arg, _kv(a.var, "--var"), a.fragment,
+                               a.helium_flags, a.privacy_keys)
+        if a.format == "args.gn":
+            for k, v in args.items():
+                print(f"{k}={v}")
+        elif a.format == "cmdline":
+            print(" ".join(f"{k}={v}" for k, v in args.items()))
+        else:
+            print(json.dumps({
+                "args": args,
+                "origin": origin,
+                "hardening": {k: args.get(k) for k in HARDENING_KEYS},
+            }, indent=2))
+        return 0
+    except (GnArgsError, OSError, json.JSONDecodeError) as e:
+        print(f"gnargs-from-flags: error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

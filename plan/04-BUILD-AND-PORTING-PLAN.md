@@ -25,6 +25,20 @@ iteration, and installs under a distinct package name with `CONFLICTS` set.
 
 ### 2.1 Chromium tree
 
+**Decision as built (1 November 2026):** the port uses Google's official
+`chromium-<ver>-lite.tar.xz` for the exact Chromium version Helium pins
+(156.0.8078.79, sha256 `d9e8b637...` from Google's published `.hashes`), not
+Helium's prepared tarball. Reasons: it is the tarball `www/chromium` and
+`www/ungoogled-chromium` are built around, so the BSD port's build steps
+apply unchanged; it removes a dependency on imput's tarball server
+(charter D8); and Google publishes it for every stable release. The cost
+is risk R1: Helium's pruning list targets Helium's tarball, so
+`freebsd/tools/prune-existing` prunes only entries that exist and reports
+the rest, and domain substitution already skips absent files. Helium
+patches that touch files missing from the `-lite` tarball will show up in
+the first builds. The text below is the original plan, kept for the
+reasoning.
+
 Primary: Helium's `chromium-<ver>-base.tar.zst`, because Helium's
 `pruning.list` and `domain_substitution.list` are regenerated against it in
 Helium CI, which removes the layout-mismatch risk (R1). Facts to design around:

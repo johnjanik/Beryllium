@@ -1,0 +1,8 @@
+Beryllium is a privacy-focused web browser for FreeBSD, built natively from
+the Chromium source with a privacy patch set derived from the GPL-3.0 code
+of the Helium browser and the ungoogled-chromium patches it includes.
+
+It keeps the bundled uBlock Origin fork, fingerprinting defences and the
+other privacy defaults of that patch set, and is being developed toward a
+FreeBSD-native process sandbox built on Capsicum. Beryllium is an
+independent project and is not affiliated with Helium or imput.

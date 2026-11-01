@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Beryllium's name substitution step (plan/05 stage 6).
+
+Runs Helium's helium/utils/name_substitution.py unchanged, with Beryllium's
+replacement rules swapped in. It runs after Helium's own pass
+(Chrome -> Helium) and after i18n_apply.py (Helium's translations, whose
+fingerprints assume Helium's text), so it is a pure rename of Helium's
+result: user-visible "Helium" (and any remaining "Chrome"/"Chromium")
+becomes "Beryllium", and "helium://" (or "chrome://") becomes
+"beryllium://", in .grd/.grdp strings and their .xtb translations, with
+the translation fingerprints recomputed the same way Helium does.
+
+Matches patches/branding/beryllium-webui-scheme.patch, which makes the
+display scheme "beryllium" (decision Q11, 1 November 2026). Internal
+identifiers (helium.services.* preference names, component ids) are not in
+.grd strings and are not touched.
+
+Usage (same arguments as Helium's script):
+  beryllium-name-substitution --sub -t <chromium tree> [--backup-path x.tar.gz]
+"""
+
+import multiprocessing
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# Repository layout by default; the port sets HELIUM_UTILS to the extracted
+# Helium distfile.
+HELIUM_UTILS = os.environ.get(
+    "HELIUM_UTILS", os.path.join(HERE, "..", "..", "helium", "utils"))
+
+BERYLLIUM_REGEXES_STR = [
+    # Names that must not change (same exceptions as Helium's).
+    (r'(\w+) Root Program', r'\1_unreplace Root Program'),
+    (r'(\w+) Web( S|s)tore', r'\1_unreplace Web Store'),
+    (r'(\w+) Remote Desktop', r'\1_unreplace Remote Desktop'),
+
+    # Schemes: both Chromium's and Helium's display scheme.
+    (r'(\b)(?:chrome|helium)://', r'\1beryllium://'),
+
+    # Product names.
+    (r'(?:Google )?Chrom(e|ium)(?!\w)', r'Beryllium'),
+    (r'(?<!\w)Helium(?!\w)', r'Beryllium'),
+
+    # Cleanup.
+    (r'((?:Google )?Chrom(e|ium))_unreplace', r'\1'),
+    (r'_unreplace', r''),
+]
+
+SANITY = [
+    ('chrome://about', 'beryllium://about'),
+    ('helium://setup', 'beryllium://setup'),
+    ('Chrome Root Program', 'Chrome Root Program'),
+    (' Chrome  ', ' Beryllium  '),
+    ('Chrome Web Store', 'Chrome Web Store'),
+    ('Chromium Web Store', 'Chromium Web Store'),
+    ('Chrome Remote Desktop', 'Chrome Remote Desktop'),
+    ('Google Chrome', 'Beryllium'),
+    ('Chrome Google Chrome Chrome Chromium', 'Beryllium Beryllium Beryllium Beryllium'),
+    ('Chromium', 'Beryllium'),
+    ('Helium', 'Beryllium'),
+    ('Helium services', 'Beryllium services'),
+    ('Heliumlike', 'Heliumlike'),
+]
+
+
+def install(util):
+    """Swap Beryllium's rules into Helium's utility module."""
+    util.REPLACEMENT_REGEXES_STR = BERYLLIUM_REGEXES_STR
+    util.REPLACEMENT_REGEXES = [(re.compile(a), b) for a, b in BERYLLIUM_REGEXES_STR]
+
+
+def sanity(util):
+    for source, expected in SANITY:
+        modified, match = util.replace_text(source)
+        if source == expected:
+            assert modified == expected, f"sanity: {source!r} became {modified!r}"
+            continue
+        assert match, f"sanity: {source!r} should match"
+        assert modified == expected, f"sanity: {modified!r} != {expected!r}"
+
+
+def main():
+    sys.path.insert(0, os.path.abspath(HELIUM_UTILS))
+    import name_substitution_utils as util  # pylint: disable=import-outside-toplevel
+    install(util)
+    import name_substitution as ns  # pylint: disable=import-outside-toplevel
+    ns.replacement_sanity = lambda: sanity(util)
+    # Worker processes must inherit the swapped rules, so fork rather than
+    # spawn a fresh interpreter (Python 3.14 defaults to forkserver).
+    multiprocessing.set_start_method("fork", force=True)
+    ns.main()
+
+
+if __name__ == "__main__":
+    main()
