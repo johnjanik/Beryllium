@@ -121,12 +121,17 @@ browser: ChildProcessLauncherHelper
    fork; in child: dup2 shuffle, then base::CloseSuperfluousFds (reads /dev/fd on
          FreeBSD: only lists 0-2 unless fdescfs is mounted, so Beryllium adds
          closefrom(2) after the shuffle as the authoritative step)
+   in child: procctl(PROC_WXMAP_CTL, PROC_WX_MAPPINGS_DISALLOW_EXEC) so the
+         exec'd renderer enforces W^X, if V8 works under it   <- RT-16
    exec beryllium --type=renderer ...
 
 renderer: ContentMainRunner -> RendererMain
    PreinitializeSandbox(kRenderer)
       warm: SysInfo values, tzset + ICU default timezone, fontconfig init,
             locale, arc4random, any dlopen'able library the renderer may need
+            (measured on 16-CURRENT: uname(), hw.physmem, vm.stats.*,
+            kern.proc.pid.<self> and localtime() all fail after cap_enter
+            unless cached; see 12 section 10.2)
    InitializeSandbox(kRenderer)
       IncreaseFdLimitTo(4096) as upstream does (RLIMIT_NOFILE before lockdown)
       verify every open fd is in the allowlist (kinfo_getfile(3) walk); abort on

@@ -46,6 +46,8 @@ jobs:
           release: ${{ matrix.release }}
           sync: rsync
           usesh: true
+          # The step must succeed for rsync to copy results back to the
+          # host, so the oracle's exit status is saved and checked below.
           run: |
             set -e
             freebsd-version -kru
@@ -53,8 +55,8 @@ jobs:
             chmod -R a+rwX freebsd
             rc=0
             su -m oracle -c 'sh freebsd/tests/capsicum-standalone/run-oracle.sh' || rc=$?
+            echo "$rc" > freebsd/results/oracle-exit-status
             ls -l freebsd/results
-            exit $rc
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -62,3 +64,8 @@ jobs:
           name: oracle-freebsd-${{ matrix.release }}
           path: freebsd/results/*.json
           if-no-files-found: warn
+      - name: Fail if any probe was broken or errored
+        run: |
+          rc=$(cat freebsd/results/oracle-exit-status 2>/dev/null || echo missing)
+          echo "oracle exit status: $rc"
+          test "$rc" = 0

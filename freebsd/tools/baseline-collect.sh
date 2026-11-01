@@ -97,7 +97,8 @@ collect_packages() {
 	code git -C "$repo" rev-parse HEAD
 	code git -C "$repo" submodule status
 	if [ -d /usr/ports/.git ]; then
-		code git -C /usr/ports rev-parse HEAD
+		# /usr/ports usually belongs to root; reading its HEAD is safe.
+		code git -c safe.directory=/usr/ports -C /usr/ports rev-parse HEAD
 		code make -C /usr/ports/www/chromium -V PORTVERSION -V PORTREVISION
 	else
 		printf 'No git checkout at /usr/ports.\n'
@@ -116,7 +117,10 @@ proc_type() {
 
 collect_processes() {
 	section "Running Chromium processes"
-	pids=$(pgrep -U "$(id -u)" -f '/chrome( |$)|chromium' 2>/dev/null)
+	# The package installs /usr/local/share/chromium/chrome; match on the
+	# path and, as a fallback, on the process name.
+	pids=$( { pgrep -U "$(id -u)" -f 'chromium/chrome'
+	    pgrep -U "$(id -u)" -x chrome; } 2>/dev/null | sort -un)
 	if [ -z "$pids" ]; then
 		printf 'No chromium process found for this user. Start chromium, '
 		printf 'open one page, and run this script again to record the '

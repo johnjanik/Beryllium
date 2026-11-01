@@ -66,7 +66,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define ORACLE_VERSION	1
+#define ORACLE_VERSION	2
 #define PROBE_TIMEOUT	10	/* seconds per probe child */
 
 /* ------------------------------------------------------------------ */
@@ -118,6 +118,7 @@ static struct {
 	pid_t	sleeper;		/* unrelated same-user process, stands in for the browser */
 	pid_t	sleeper_notrace;	/* same, with PROC_TRACE_CTL_DISABLE applied */
 	char	shm_name[64];
+	char	self_path[PATH_MAX];	/* this binary, for re-exec probes */
 } fx = { .dirfd = -1, .listen_unix = -1 };
 
 /* ------------------------------------------------------------------ */
@@ -550,10 +551,17 @@ p_netlink_getaddr(struct presult *r)
 		return;
 	}
 	while (!done && (n = recv(s, buf, sizeof(buf), 0)) > 0) {
-		struct nlmsghdr *h = (struct nlmsghdr *)buf;
-		u_int left = (u_int)n;
+		size_t off = 0;
 
-		for (; NLMSG_OK(h, left); h = NLMSG_NEXT(h, left)) {
+		/*
+		 * Walk the messages by hand: the NLMSG_OK/NLMSG_NEXT macros
+		 * change signedness between 14.x and 16 headers.
+		 */
+		while (off + sizeof(struct nlmsghdr) <= (size_t)n) {
+			struct nlmsghdr *h = (struct nlmsghdr *)(void *)(buf + off);
+
+			if (h->nlmsg_len < sizeof(*h) || off + h->nlmsg_len > (size_t)n)
+				break;
 			if (h->nlmsg_type == NLMSG_DONE ||
 			    h->nlmsg_type == NLMSG_ERROR) {
 				done = true;
@@ -561,6 +569,7 @@ p_netlink_getaddr(struct presult *r)
 			}
 			if (h->nlmsg_type == RTM_NEWADDR)
 				addrs++;
+			off += (h->nlmsg_len + 3u) & ~3u;
 		}
 	}
 	res(r, addrs > 0, EAGAIN, "address records received=%d", addrs);
@@ -699,7 +708,7 @@ p_sysctl_sweep(struct presult *r)
 {
 	int oid[CTL_MAXNAME], next[CTL_MAXNAME], q[CTL_MAXNAME + 2];
 	size_t len = 0, l;
-	int readable = 0, capdenied = 0, other = 0, visited = 0;
+	int readable = 0, capdenied = 0, eperm = 0, other = 0, visited = 0;
 	char name[1024], line[1100];
 	char *buf = NULL;
 	size_t bufsz = 0;
@@ -752,13 +761,16 @@ p_sysctl_sweep(struct presult *r)
 			(void)write(sweep_fd, line, strlen(line));
 		} else if (errno == ECAPMODE) {
 			capdenied++;
+		} else if (errno == EPERM) {
+			eperm++;
 		} else {
 			other++;
 		}
 	}
 	free(buf);
-	snprintf(line, sizeof(line), "#summary readable=%d ecapmode=%d other=%d\n",
-	    readable, capdenied, other);
+	snprintf(line, sizeof(line),
+	    "#summary readable=%d ecapmode=%d eperm=%d other=%d\n",
+	    readable, capdenied, eperm, other);
 	(void)write(sweep_fd, line, strlen(line));
 	res(r, readable > 0, 0, NULL);
 }
@@ -853,6 +865,29 @@ p_getpriority_other(struct presult *r)
 	rc = getpriority(PRIO_PROCESS, fx.sleeper);
 	e = errno;
 	res(r, !(rc == -1 && e != 0), e, NULL);
+}
+
+static int sleeper_nice;
+
+static int
+pre_sleeper_nice(struct presult *r)
+{
+	errno = 0;
+	sleeper_nice = getpriority(PRIO_PROCESS, fx.sleeper);
+	if (sleeper_nice == -1 && errno != 0) {
+		setup_error(r, "getpriority before cap_enter", errno);
+		return (1);
+	}
+	return (0);
+}
+
+static void
+p_setpriority_other(struct presult *r)
+{
+	int target = sleeper_nice < PRIO_MAX ? sleeper_nice + 1 : sleeper_nice;
+
+	/* Unprivileged users can only lower priority; this cannot harm the sleeper. */
+	res_rc(r, setpriority(PRIO_PROCESS, fx.sleeper, target));
 }
 
 static void
@@ -991,6 +1026,15 @@ p_dlopen(struct presult *r)
 }
 
 static void
+p_dlopen_control(struct presult *r)
+{
+	p_dlopen(r);
+	if (r->outcome == OUT_ALLOWED)
+		snprintf(r->detail, sizeof(r->detail),
+		    "library loads outside capability mode");
+}
+
+static void
 p_posix_openpt(struct presult *r)
 {
 	res_fd(r, posix_openpt(O_RDWR | O_NOCTTY));
@@ -1114,18 +1158,32 @@ static void
 p_ro_twin_introspect(struct presult *r)
 {
 	cap_rights_t rights;
-	int d = ro_twin(r, NULL), fl;
+	int fd = -1, d, d2, fl, fl2, e;
 
+	d = ro_twin(r, &fd);
 	if (d < 0)
 		return;
 	fl = fcntl(d, F_GETFL);
+	e = errno;
 	if (cap_rights_get(d, &rights) != 0) {
 		setup_error(r, "cap_rights_get", errno);
 		return;
 	}
-	res(r, true, 0, "F_GETFL access=%s cap_rights has CAP_MMAP_W=%s",
-	    (fl & O_ACCMODE) == O_RDWR ? "O_RDWR" :
-	    (fl & O_ACCMODE) == O_RDONLY ? "O_RDONLY" : "other",
+	/* Same twin, but with CAP_FCNTL limited to F_GETFL. */
+	cap_rights_init(&rights, CAP_READ, CAP_MMAP_R, CAP_FSTAT, CAP_SEEK, CAP_FCNTL);
+	d2 = limited_dup(fd, &rights);
+	if (d2 < 0 || cap_fcntls_limit(d2, CAP_FCNTL_GETFL) != 0) {
+		setup_error(r, "twin with CAP_FCNTL", errno);
+		return;
+	}
+	fl2 = fcntl(d2, F_GETFL);
+	(void)cap_rights_get(d, &rights);
+	res(r, true, 0,
+	    "F_GETFL without CAP_FCNTL: %s; with CAP_FCNTL_GETFL: %s; "
+	    "CAP_MMAP_W present=%s",
+	    fl == -1 ? errname(e) : (fl & O_ACCMODE) == O_RDWR ? "O_RDWR" : "other",
+	    fl2 == -1 ? "refused" : (fl2 & O_ACCMODE) == O_RDWR ? "O_RDWR" :
+	    (fl2 & O_ACCMODE) == O_RDONLY ? "O_RDONLY" : "other",
 	    cap_rights_is_set(&rights, CAP_MMAP_W) ? "yes" : "no");
 }
 
@@ -1248,18 +1306,21 @@ p_fcntl_outside_list(struct presult *r)
 static void
 p_closefrom(struct presult *r)
 {
-	int base, i, open_after = 0;
+	const int bound = 256;
+	int i, open_after = 0;
 
-	base = dup(0);
-	if (base < 0) {
-		setup_error(r, "dup", errno);
-		return;
-	}
-	for (i = 1; i < 5; i++)
-		(void)dup2(base, base + i);
-	closefrom(base);
+	/*
+	 * Duplicate onto high numbers so closefrom() cannot touch the
+	 * result pipe, which sits at a low descriptor.
+	 */
 	for (i = 0; i < 5; i++)
-		if (fcntl(base + i, F_GETFD) != -1)
+		if (fcntl(0, F_DUPFD, bound + i) != bound + i) {
+			setup_error(r, "F_DUPFD", errno);
+			return;
+		}
+	closefrom(bound);
+	for (i = 0; i < 5; i++)
+		if (fcntl(bound + i, F_GETFD) != -1)
 			open_after++;
 	res(r, open_after == 0, EBADF, "descriptors still open after closefrom=%d",
 	    open_after);
@@ -1355,9 +1416,75 @@ p_wxmap_status(struct presult *r)
 		res(r, false, errno, NULL);
 		return;
 	}
-	res(r, (status & PROC_WX_MAPPINGS_PERMIT) != 0, 0,
-	    "W+X mappings permitted=%s",
-	    (status & PROC_WX_MAPPINGS_PERMIT) ? "yes" : "no");
+	res(r, (status & PROC_WXORX_ENFORCE) != 0, 0,
+	    "W^X enforced for this process=%s (status=0x%x)",
+	    (status & PROC_WXORX_ENFORCE) ? "yes" : "no", (unsigned)status);
+}
+
+/*
+ * RT-16: can a launcher make W^X mandatory for a child it is about to exec?
+ * Sets PROC_WX_MAPPINGS_DISALLOW_EXEC, re-executes this binary in a helper
+ * mode that tries a W+X mapping and the RW-to-RX path a JIT uses, and
+ * reads two result bytes back.
+ */
+static void
+p_wxorx_after_exec(struct presult *r)
+{
+	int pfd[2], arg = PROC_WX_MAPPINGS_DISALLOW_EXEC, st;
+	char fdstr[16], out[2] = { '?', '?' };
+	pid_t p;
+
+	if (fx.self_path[0] == '\0') {
+		setup_error(r, "own executable path unknown", ENOENT);
+		return;
+	}
+	if (pipe(pfd) != 0) {
+		setup_error(r, "pipe", errno);
+		return;
+	}
+	p = fork();
+	if (p == 0) {
+		char *argv[] = { fx.self_path, "--wx-child", fdstr, NULL };
+
+		close(pfd[0]);
+		snprintf(fdstr, sizeof(fdstr), "%d", pfd[1]);
+		if (procctl(P_PID, getpid(), PROC_WXMAP_CTL, &arg) != 0)
+			_exit(2);
+		execv(fx.self_path, argv);
+		_exit(3);
+	}
+	if (p < 0) {
+		setup_error(r, "fork", errno);
+		return;
+	}
+	close(pfd[1]);
+	if (read(pfd[0], out, 2) != 2) {
+		(void)waitpid(p, &st, 0);
+		setup_error(r, "helper produced no result", EINVAL);
+		return;
+	}
+	(void)waitpid(p, &st, 0);
+	/* Allowed means W+X was refused while the JIT path still works. */
+	res(r, out[0] == 'D' && out[1] == 'A', EINVAL,
+	    "after exec with DISALLOW_EXEC: W+X mapping %s; RW then RX %s",
+	    out[0] == 'D' ? "refused" : "allowed",
+	    out[1] == 'A' ? "works" : "refused");
+}
+
+static int
+wx_child(int fd)
+{
+	char out[2];
+	void *p;
+
+	p = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+	    MAP_ANON | MAP_PRIVATE, -1, 0);
+	out[0] = p == MAP_FAILED ? 'D' : 'A';
+	p = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+	out[1] = p != MAP_FAILED && mprotect(p, 4096, PROT_READ | PROT_EXEC) == 0 ?
+	    'A' : 'D';
+	(void)write(fd, out, 2);
+	return (0);
 }
 
 static void
@@ -1392,12 +1519,21 @@ p_localtime_uncached(struct presult *r)
 {
 	time_t t = time(NULL);
 	struct tm tm;
+	bool fallback;
 
 	if (localtime_r(&t, &tm) == NULL) {
 		res(r, false, errno, NULL);
 		return;
 	}
-	res(r, true, 0, "tm_zone=%s gmtoff=%ld", tm.tm_zone, (long)tm.tm_gmtoff);
+	/*
+	 * Only whether the local zone was loaded is recorded, never the zone
+	 * itself: results files are committed to a public repository.
+	 */
+	fallback = tm.tm_zone == NULL || strcmp(tm.tm_zone, "-00") == 0 ||
+	    (strcmp(tm.tm_zone, "UTC") == 0 && tm.tm_gmtoff == 0);
+	res(r, !fallback, ENOENT, "%s", fallback ?
+	    "local zone not loaded (UTC fallback)" :
+	    "local zone loaded (zone not recorded)");
 }
 
 static int
@@ -1484,6 +1620,7 @@ static const struct probe probes[] = {
 	{ "proc.kevent_proc_init", "RT-02", "processes", "kevent(EVFILT_PROC) on pid 1 (another user)", EXP_DENY, CAP, NULL, p_kevent_proc_init },
 	{ "proc.getpriority_user", "spec 6.1.6", "processes", "getpriority(PRIO_USER)", EXP_DENY, CAP, NULL, p_getpriority_user },
 	{ "proc.getpriority_other", "spec 6.1.6", "processes", "getpriority(PRIO_PROCESS, other)", EXP_DENY, CAP, NULL, p_getpriority_other },
+	{ "proc.setpriority_other", "RT-02", "processes", "setpriority(PRIO_PROCESS, other, nice+1)", EXP_DENY, CAP, pre_sleeper_nice, p_setpriority_other },
 	{ "proc.procctl", "06 2", "processes", "procctl() inside capability mode", EXP_DENY, CAP, NULL, p_procctl_capmode },
 	{ "proc.fork", "RT-15", "processes", "fork()", EXP_RECORD, CAP, NULL, p_fork },
 	{ "proc.fork_nproc1", "RT-15", "processes", "fork() with RLIMIT_NPROC=1", EXP_DENY, CAP, pre_nproc_1, p_fork_nproc1 },
@@ -1491,6 +1628,7 @@ static const struct probe probes[] = {
 	{ "proc.pdfork_pdkill", "02 3", "processes", "pdfork() then pdkill() of own child", EXP_RECORD, CAP, NULL, p_pdfork_pdkill },
 	{ "proc.execve", "spec 3.1", "processes", "execve(\"/bin/sh\")", EXP_DENY, CAP, NULL, p_execve },
 	{ "proc.dlopen", "06 2", "processes", "dlopen() of a library not yet loaded", EXP_DENY, CAP, NULL, p_dlopen },
+	{ "proc.dlopen_control", "06 2", "processes", "same, outside capability mode (control)", EXP_ALLOW, NOCAP, NULL, p_dlopen_control },
 	{ "proc.posix_openpt", "RT-02", "processes", "posix_openpt()", EXP_DENY, CAP, NULL, p_posix_openpt },
 
 	/* Memory */
@@ -1519,7 +1657,8 @@ static const struct probe probes[] = {
 	{ "hard.no_new_privs", "06 6", "hardening", "PROC_NO_NEW_PRIVS_CTL", EXP_ALLOW, NOCAP, NULL, p_no_new_privs },
 	{ "hard.trapcap", "06 2", "hardening", "PROC_TRAPCAP_CTL delivers SIGTRAP/TRAP_CAP on a denied call", EXP_ALLOW, CAP, pre_trapcap, p_trapcap },
 	{ "hard.aslr_status", "RT-09", "hardening", "ASLR active for this (oracle) binary", EXP_RECORD, NOCAP, NULL, p_aslr_status },
-	{ "hard.wxmap_status", "RT-09", "hardening", "W+X mappings permitted by default", EXP_RECORD, NOCAP, NULL, p_wxmap_status },
+	{ "hard.wxmap_status", "RT-16", "hardening", "W^X enforced for this process by default", EXP_RECORD, NOCAP, NULL, p_wxmap_status },
+	{ "hard.wxorx_after_exec", "RT-16", "hardening", "PROC_WX_MAPPINGS_DISALLOW_EXEC before exec enforces W^X and keeps RW-to-RX working", EXP_ALLOW, NOCAP, NULL, p_wxorx_after_exec },
 	{ "misc.localtime_uncached", "06 4.6", "misc", "localtime() in capability mode without caching tzdata", EXP_RECORD, CAP, NULL, p_localtime_uncached },
 	{ "misc.localtime_cached", "06 4.6", "misc", "localtime() after caph_cache_tzdata()", EXP_RECORD, CAP, pre_tzcache, p_localtime_uncached },
 	{ "misc.arc4random", "03 4.6", "misc", "arc4random() needs no descriptor", EXP_ALLOW, CAP, NULL, p_arc4random },
@@ -1933,6 +2072,14 @@ fixture_setup(void)
 	snprintf(fx.shm_name, sizeof(fx.shm_name), "/beryllium-oracle-%d",
 	    (int)getpid());
 
+	{
+		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+		size_t len = sizeof(fx.self_path);
+
+		if (sysctl(mib, 4, fx.self_path, &len, NULL, 0) != 0)
+			fx.self_path[0] = '\0';
+	}
+
 	fx.sleeper = spawn_sleeper(false);
 	fx.sleeper_notrace = spawn_sleeper(true);
 	if (fx.sleeper < 0 || fx.sleeper_notrace < 0)
@@ -1996,6 +2143,9 @@ main(int argc, char **argv)
 	struct tm tm;
 	char date[32];
 	int ch;
+
+	if (argc == 3 && strcmp(argv[1], "--wx-child") == 0)
+		return (wx_child(atoi(argv[2])));
 
 	while ((ch = getopt(argc, argv, "lo:")) != -1) {
 		switch (ch) {
