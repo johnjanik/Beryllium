@@ -1,0 +1,5 @@
+ports_commit: 6ad3e0c82d8bada5971e0f83de2b4e9a796341d1
+port: www/chromium 156.0.8078.47_1
+imported: 2026-11-01
+patches: 1696 (added 1696, changed 0, removed 0)
+openbsd_ports_commit: none (FreeBSD set used directly)

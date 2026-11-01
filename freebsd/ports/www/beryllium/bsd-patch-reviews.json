@@ -1,0 +1,3 @@
+{
+  "_comment": "Reviews of imported BSD patches on security-review paths (plan/12 RT-10). Key: patch file name. Value: {\"sha256\": full digest of the reviewed content, \"reviewer\": name, \"date\": YYYY-MM-DD, \"notes\": what was checked}. A changed patch needs a new review. Checked by freebsd/tools/import-bsd-patches check."
+}
