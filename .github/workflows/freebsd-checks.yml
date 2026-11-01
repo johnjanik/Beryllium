@@ -1,0 +1,64 @@
+# Light checks that do not need a Chromium build (plan/08 section 4).
+#  - policy: GN argument generation and the privacy-key guard (Linux).
+#  - capsicum-oracle: runs the Capsicum oracle and red-team probes on the
+#    supported stable branches in a FreeBSD VM, as an unprivileged user,
+#    and uploads the JSON results. 16-CURRENT is covered on the
+#    maintainer's machine; the VM action does not offer it yet.
+#
+# Third-party actions are pinned by commit hash (plan/12 RT-10).
+name: freebsd-checks
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: true
+      - name: GN args tool tests
+        run: python3 -W error::ResourceWarning -m unittest discover -s freebsd/tools/tests -v
+      - name: Privacy key check against the pinned Helium flags
+        run: ./freebsd/tools/gnargs-from-flags check
+      - name: Shell syntax
+        run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
+
+  capsicum-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ["14", "15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run oracle in FreeBSD ${{ matrix.release }}
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc  # v1.5.9
+        with:
+          release: ${{ matrix.release }}
+          sync: rsync
+          usesh: true
+          run: |
+            set -e
+            freebsd-version -kru
+            pw useradd oracle -m -s /bin/sh
+            chmod -R a+rwX freebsd
+            rc=0
+            su -m oracle -c 'sh freebsd/tests/capsicum-standalone/run-oracle.sh' || rc=$?
+            ls -l freebsd/results
+            exit $rc
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: oracle-freebsd-${{ matrix.release }}
+          path: freebsd/results/*.json
+          if-no-files-found: warn

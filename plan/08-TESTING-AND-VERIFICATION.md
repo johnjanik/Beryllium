@@ -1,7 +1,7 @@
 # Beryllium: Testing and Verification Plan
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026 with the red-team probe catalogue and attacker payload hook ([12-WORK-PLAN-AND-RED-TEAM.md](12-WORK-PLAN-AND-RED-TEAM.md) section 6)
 **Implements:** spec section 13 (verification plan and acceptance criteria)
 
 ---
@@ -75,6 +75,36 @@ browser test, that record on the current kernel:
 - `getaddrinfo()` fails without `cap_dns`; `localtime()` works only if
   `/etc/localtime` was opened before entry (motivates timezone pre-caching).
 
+Red-team probes added on 1 November 2026 (document 12 section 6.2):
+
+- **Sysctl sweep (RT-01):** enumerate every node before `cap_enter` (the
+  `sysctl.next` and `sysctl.name` enumeration nodes are `CAPRD`), read each
+  one after, and record which succeed. Identifier nodes (`kern.hostuuid`,
+  `kern.hostid`, `kern.hostname`, `kern.boot_id`, serial-like `hw.*` nodes)
+  are flagged. The readable set is committed as
+  `freebsd/sandbox/caprd-sysctls.json`; a new readable node in a kernel update
+  fails the diff.
+- **Socket domains (RT-02):** `socket()` for `AF_INET`, `AF_INET6`,
+  `AF_UNIX`, `PF_ROUTE`, `AF_NETLINK`; `sendto` with an address; reading from
+  a routing socket.
+- **Process observation (RT-02):** `kevent(EVFILT_PROC)` on the parent, on
+  pid 1 and on a nonexistent pid (pid probing).
+- **`ptrace` per branch (RT-03):** `PT_ATTACH` to the parent and to an
+  unrelated same-user sleeper, with `security.bsd.allow_ptrace_in_cap_mode`
+  recorded; `pdfork` plus `pdptrace` on an own child.
+- **Fork limit (RT-15):** `fork` after `setrlimit(RLIMIT_NPROC, 1)` fails
+  while other processes of the user can still fork.
+- **Memory protection:** map a read-only-rights descriptor, then `mprotect`
+  to `PROT_WRITE` (expected to fail through the maximum protection derived
+  from `CAP_MMAP_*`).
+- **Other calls:** `kenv` read, `posix_openpt`, `thr_kill2` to another pid,
+  `setpriority(PRIO_USER)`, SysV `shmget`.
+- **Kernel attestation (RT-04):** a parent reads `KI_CRF_CAPABILITY_MODE` from
+  `kinfo_proc` of a child before and after the child's `cap_enter`.
+
+On the 16.0-CURRENT development host, the `sigqueue` probe is what confirms
+the `SA-26:28` fix, not the version string.
+
 Output is a JSON table per kernel. The sandbox suite loads the table for the
 running kernel and uses it as the expected-errno source, so a kernel behaviour
 change surfaces as an oracle diff rather than as a mysterious browser failure.
@@ -87,16 +117,19 @@ throwaway home directory seeded with canary files (`~/.ssh/id_canary`,
 
 Mechanisms:
 
-- A test-only renderer hook (compiled only into `beryllium-devel`) that, on a
-  command-line switch, performs a scripted list of forbidden operations after
-  sandbox initialisation and writes a structured result to a descriptor
-  provided at launch. The production build does not contain the hook; the
-  production build is tested by observation (below).
+- The attacker payload hook (compiled only into `beryllium-devel`): on a
+  command-line switch, after sandbox initialisation, it runs the full
+  probe catalogue from document 12 section 6.2, everything an attacker with
+  code execution would try first, and writes a structured result to a
+  descriptor provided at launch. It starts in the renderer and is extended to
+  each confined process type (GPU, audio, network, utilities) as their
+  policies land. A build test proves it is absent from production binaries;
+  the production build is tested by observation (below).
 - Observation from outside using `procstat -f` (descriptors per process),
   `procstat -S`/`-c`, `sockstat`, `procstat -v` (mappings) and `fstat`,
-  plus the kernel's capability-mode flag per process (`procstat -s` shows
-  `C` in the flags column for processes in capability mode on recent
-  branches; the exact field is confirmed in Phase 0).
+  plus the kernel's capability-mode flag per process (`KI_CRF_CAPABILITY_MODE`
+  in `kinfo_proc.ki_cr_flags`, shown by `procstat`; the exact column is
+  confirmed in Phase 0).
 
 Checks (each one is a named test with the spec requirement it covers):
 
@@ -119,6 +152,15 @@ Checks (each one is a named test with the spec requirement it covers):
 | Child of a renderer stays confined | 6.1.9 | devel hook forks and checks `cap_getmode` in the child |
 | New descriptor introduced by an update is caught | 6.2 | the allowlist diff test above, run in CI on every Chromium bump |
 | `chrome://sandbox` reports the real status | Phase 2 | page text compared with the observed state |
+| Browser refuses an unconfined renderer (RT-04) | Phase 2 | devel switch skips `cap_enter` in one renderer; assert the browser commits no navigation to it and terminates it |
+| Children carry no secrets in their environment (RT-05) | 6.1.2 | launch with a canary variable and `LD_PRELOAD` set; assert both absent from `procstat -e` of every child |
+| Browser process cannot be traced (RT-03) | 6.1.6 | `ptrace` attach to the production browser from a same-user process fails; `procctl` trace status read from outside |
+| No reach to shared socket directories (RT-06) | 7.1 | attacker hook in GPU and audio processes tries `ssh-agent`, D-Bus, `gpg-agent`, Wayland and the process-singleton socket paths |
+| No input injection or capture on X11 from the GPU process (RT-07) | 7.1 | attacker hook in the GPU process in an X11 test session sends XTEST events and reads another window; the result is recorded and published, pass or fail |
+| No persistence through caches (RT-08) | 6.1.9 | write a marker into every cache the GPU process can reach; assert it is gone or not loaded in the next session |
+| Escape-hatch switches absent (RT-12) | 6.1.8 | production switch table diffed against the committed list (`--renderer-cmd-prefix`, `--utility-cmd-prefix`, `--gpu-launcher`, `--js-flags`, `--disable-site-isolation-trials`, `--disable-web-security`) |
+| Machine identifiers (RT-01) | 6.1.4 | attacker hook reads `kern.hostuuid`; expected readable without the jail profile or MAC module, unreadable or randomised with them |
+| Fork denied, no core dumps (RT-15) | 6.1.6 | attacker hook calls `fork`; crash a renderer and assert no core file |
 
 ### 2.3 Privacy suite (`privacy/`)
 
@@ -137,6 +179,19 @@ Additional static checks:
 - The installed uBlock component is the Helium fork at the version in
   `deps.ini`, with Helium's filter defaults and CNAME uncloaking enabled
   (read from the component's manifest and settings on first run).
+
+Red-team additions:
+
+- **OS fingerprint page (RT-13):** a fixed local page records the user agent,
+  all client hints, `navigator.platform` in window and worker contexts, ICE
+  candidates and a font probe; the result must match the "presents as Linux
+  x86_64" invariant in 07 section 4a.
+- **Hostile services origin:** once a Beryllium services instance exists, a
+  mock origin serves stale, malformed or substituted extension packages and
+  filter lists; the browser must reject packages that fail CRX3 signature
+  checks and must not downgrade extensions.
+- **No Helium endpoints:** any request to a `*.helium.imput.net` or
+  `*.helium.computer` host in any scenario fails the suite (charter D3).
 
 ### 2.4 Functional suite (`functional/`)
 
@@ -198,13 +253,17 @@ checks):
 | Kernel advisories addressed | preflight script checks `freebsd-version -k` against the advisory list in `freebsd/ADVISORIES.md` |
 | Reproducible from clean source | Poudriere build from a clean jail succeeds |
 | Licences and attribution present | licence manifest check passes |
+| BSD import reviewed (RT-10) | every changed patch under the security-relevant paths of 05 section 5 has a review record |
+| Hardening status recorded (RT-09) | build manifest lists CFI and allocator flags; release status table rows present |
+| Component updates available (R13) | a Beryllium services origin or another source updates CRLSets, CT logs and the uBlock component (first public release only) |
+| Freshness (RT-11) | time from the Helium tag to the package is within the target in document 11, or the exception is documented |
 
 ## 4. Test infrastructure needed
 
 | Item | Purpose | Notes |
 |---|---|---|
-| Build host: amd64, 32 GB RAM or more, 100 GB free, fast SSD | Poudriere builds; the port asks for 8 GB minimum for Release and 16 GB for LTO, but Chromium links comfortably only with more | one host suffices for Phase 0 to 2 |
+| Build host: amd64, 32 GB RAM or more, 100 GB free, fast SSD | Poudriere builds; the port asks for 8 GB minimum for Release and 16 GB for LTO, but Chromium links comfortably only with more | decided 1 November 2026: the owner's FreeBSD 16.0-CURRENT machine (128 GB RAM, 24 cores, about 7 TB disk) is the build host and satisfies the dedicated-builder requirement from RT-11 |
 | Poudriere jails for each supported branch | clean builds | `-CURRENT` jail optional |
-| Test VM or bhyve guest per branch, with a desktop session (Xorg and a Wayland compositor) | sandbox and functional suites need a display | can be the same host under bhyve |
+| Test VM or bhyve guest per branch, with a desktop session (Xorg and a Wayland compositor) | sandbox and functional suites need a display | bhyve guests for 14.x and 15.x on the build host; 16-CURRENT runs natively (Wayland, NVIDIA RTX 5090, driver 595.99.02). GPU tests on NVIDIA need the host itself or PCI passthrough |
 | Capture jail pair (browser VNET jail plus logging jail) | privacy suite | |
 | A CI runner that can run Poudriere and bhyve | nightly builds and the per-update regression run | GitHub Actions cannot run FreeBSD natively; use a self-hosted runner or a FreeBSD VM action with a long timeout for the light checks only |

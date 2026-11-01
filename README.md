@@ -3,28 +3,41 @@
         title="Beryllium" alt="Beryllium logo" width="160" />
     <h1>Beryllium</h1>
     <p>
-        A FreeBSD fork of the <a href="https://github.com/imputnet/helium">Helium</a> browser.
+        A privacy-focused browser for FreeBSD.
         <br>
-        Helium's privacy, FreeBSD's security model.
+        Built natively, confined with FreeBSD's own security primitives.
     </p>
 </div>
 
 ## Goal
 
-**The goal of this project is to create Beryllium: a native FreeBSD fork of
-Helium.**
+**The goal of this project is to create Beryllium: a privacy-focused,
+Chromium-based browser built natively for FreeBSD.**
 
-Beryllium builds Helium from source as a native FreeBSD application and ships
-it as an ordinary `pkg` package. It keeps Helium's privacy features and
-replaces the missing Chromium sandbox on FreeBSD with one built on FreeBSD's
-own security primitives.
+Beryllium is built from source as a native FreeBSD application and ships as
+an ordinary `pkg` package. Its privacy patch set is derived from the GPL-3.0
+code of the Helium browser, and it replaces the missing Chromium sandbox on
+FreeBSD with one built on FreeBSD's own security primitives. Beryllium is an
+independent project; see [Origin and independence](#origin-and-independence).
 
 ## Status
 
 > [!WARNING]
-> Beryllium is in the **planning stage**. There is no FreeBSD build, no
-> package, and no sandbox code yet. Nothing in this repository should be
-> used as a browser on FreeBSD today.
+> Beryllium is in **Phase 0**. There is no browser build, no package, and
+> no sandbox code yet. Nothing in this repository should be used as a
+> browser on FreeBSD today.
+
+What exists so far:
+
+- [`freebsd/tests/capsicum-standalone/`](freebsd/tests/capsicum-standalone/README.md):
+  a Capsicum kernel oracle and red-team probe set. Run
+  `sh freebsd/tests/capsicum-standalone/run-oracle.sh` as an ordinary user.
+- [`freebsd/tools/baseline-collect.sh`](freebsd/tools/baseline-collect.sh):
+  records the machine, kernel and a running stock Chromium for the Phase 0
+  baseline.
+- [`freebsd/tools/gnargs-from-flags`](freebsd/tools/gnargs-from-flags) and
+  [`flags.freebsd.gn`](flags.freebsd.gn): generated GN arguments with a
+  privacy-key guard.
 
 The design is written up in [`plan/`](plan/00-INDEX.md). Start with the
 [index](plan/00-INDEX.md), then the [project charter](plan/01-PROJECT-CHARTER.md)
@@ -39,24 +52,30 @@ lowers one memory limit and returns. There is no zygote, no seccomp
 equivalent and no Capsicum. A compromised renderer has the same access to
 files, sockets and processes as the user who started the browser.
 
-Helium does not support FreeBSD, and its maintainers have said they do not
-have the bandwidth to do so. Beryllium is an independent downstream project
-that fills that gap.
+No privacy-focused Chromium derivative offers a FreeBSD build. Beryllium is
+an independent project that fills that gap.
 
-## What Beryllium keeps from Helium
+## Privacy features from the code base
 
-- Helium's patch set, defaults and build flags, including the
-  ungoogled-chromium base.
-- The bundled Helium fork of uBlock Origin, its filter defaults and CNAME
-  uncloaking.
-- Native `!bangs`, onboarding at `helium://setup`, fingerprinting noise,
-  and the rest of Helium's privacy customizations.
-- Helium services for extension proxying, bangs, filter lists and
-  dictionaries, controlled by the same user preferences.
+Beryllium's code base is derived from Helium's open-source patch set. From it,
+Beryllium keeps:
 
-Two things differ because of the platform. Browser updates arrive through
-`pkg`, not an in-app updater. Crash reports are not uploaded, because the
-crash handler does not run on FreeBSD.
+- The patch set, defaults and build flags, including the ungoogled-chromium
+  base.
+- The bundled uBlock Origin fork, its filter defaults and CNAME uncloaking.
+- Native `!bangs`, the onboarding page, fingerprinting noise, and the rest of
+  the privacy customizations.
+
+Things that differ:
+
+- Beryllium does not use Helium's service endpoints. The services switch
+  (extension proxy, `!bangs` list, filter-list updates, dictionaries,
+  component updates) is off by default until Beryllium hosts its own instance
+  of the open-source services. The consequences per feature are listed in
+  [the privacy invariants plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
+- Browser updates arrive through `pkg`, not an in-app updater.
+- Crash reports are not uploaded, because the crash handler does not run on
+  FreeBSD.
 
 ## What Beryllium adds
 
@@ -67,7 +86,8 @@ crash handler does not run on FreeBSD.
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
 | **Resource profiles** | Measured `rctl` rule sets for jail deployments. |
-| **MAC study** | A documented decision on whether a MAC policy addresses any remaining risk. Not required for a first release. |
+| **Kernel-attested status** | The sandbox status page reports what the kernel says about each process, which users can check themselves with `procstat`. |
+| **MAC module study** | An optional, administrator-loaded policy that narrows what sandboxed processes can reach in the kernel (sockets, sysctls, process visibility). Not required for a first release. |
 
 Every release will publish a table stating what is enforced and tested, what
 is configured but untested, and what is planned.
@@ -77,11 +97,11 @@ is configured but untested, and what is planned.
 | Phase | Outcome |
 |---|---|
 | 0. Baseline | Reproduce the current FreeBSD Chromium build and record what is actually sandboxed |
-| 1. Native build | `www/beryllium` builds and runs on FreeBSD with Helium's behaviour preserved and no sandbox claims |
+| 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour preserved and no sandbox claims |
 | 2. Capsicum renderer | Renderers confined in capability mode and verified by tests |
 | 3. Other processes | Utility, audio, network and GPU policies |
 | 4. Jail and resources | Optional jail profile and measured resource limits |
-| 5. MAC study | Decision memo |
+| 5. MAC module study | Decision memo, prototype if justified |
 | 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow |
 
 Details, effort estimates and the first-release definition are in the
@@ -90,24 +110,25 @@ Details, effort estimates and the first-release definition are in the
 ## Targets
 
 - FreeBSD `amd64` on the supported stable branches (currently 14.x and 15.x),
-  with kernels patched for FreeBSD-SA-26:28.capsicum.
-- X11 and Wayland.
+  with kernels patched for FreeBSD-SA-26:28.capsicum. Development happens on
+  16.0-CURRENT; stable branches are built in Poudriere jails and tested in
+  bhyve guests.
+- Wayland (recommended) and X11. On X11 any client can read input from and
+  inject input into other windows, which weakens every sandbox layer.
 - `aarch64` later, once CI covers it.
 
 ## Repository layout
 
-Beryllium is a platform repository, the FreeBSD counterpart of Helium's own
-[helium-linux](https://github.com/imputnet/helium-linux),
-[helium-macos](https://github.com/imputnet/helium-macos) and
-[helium-windows](https://github.com/imputnet/helium-windows). Helium is
-included as a git submodule pinned at a release tag. Nothing inside it is
-edited, so updating Helium never causes merge conflicts.
+Beryllium is structured as a platform repository around a pinned copy of
+the upstream patch set it is derived from. That code is included as a git
+submodule pinned at a release tag. Nothing inside it is edited, so moving the
+pin never causes merge conflicts.
 
 | Path | Contents |
 |---|---|
-| `helium/` | Submodule: [imputnet/helium](https://github.com/imputnet/helium) at release tag `0.19.4` (Chromium 155.0.8059.84) |
-| `patches/` | Beryllium patches for FreeBSD platform, branding and security, applied after Helium's (planned) |
-| `flags.freebsd.gn` | FreeBSD build flags appended to Helium's `flags.gn` (planned) |
+| `helium/` | Submodule: [imputnet/helium](https://github.com/imputnet/helium) at release tag `0.20.3`, commit `2f81b9ca` (Chromium 156.0.8078.79) |
+| `patches/` | Beryllium patches for FreeBSD platform, branding and security, applied after the upstream series (planned) |
+| `flags.freebsd.gn` | FreeBSD build flags appended to the upstream `flags.gn`, combined by `freebsd/tools/gnargs-from-flags` |
 | `freebsd/` | FreeBSD port, sandbox policies, test suites, tooling and branding |
 | `plan/` | Planning documents |
 
@@ -117,18 +138,14 @@ Clone with the submodule:
 git clone --recurse-submodules https://github.com/johnjanik/Beryllium.git
 ```
 
-## Relationship to Helium
+## Origin and independence
 
-Beryllium is not affiliated with or endorsed by Helium or imput. Problems with
-Beryllium should be reported here, not to the Helium project. Helium's own
-README, downloads and documentation are at
-[github.com/imputnet/helium](https://github.com/imputnet/helium) and
-[helium.computer](https://helium.computer/).
-
-Platform-neutral fixes that would benefit Helium may be offered upstream.
-Any such contribution follows Helium's
-[CONTRIBUTING.md](https://github.com/imputnet/helium/blob/main/CONTRIBUTING.md),
-which requires that contributions be written by people, not generated by AI.
+Beryllium is an independent project. It is derived from the GPL-3.0 source
+code of the Helium browser by imput, as the licence permits, but it is not
+affiliated with, endorsed by, or operated together with Helium or imput, and
+it does not use Helium's names, logos or online services. Report problems
+with Beryllium here, not to the Helium project. Beryllium does not plan to
+send changes upstream.
 
 ## Contributing
 
@@ -139,20 +156,19 @@ review before merging.
 
 ## Credits
 
-- **[Helium](https://github.com/imputnet/helium)** by imput, which Beryllium
-  is forked from and depends on for everything that makes the browser what
-  it is.
+- **[Helium](https://github.com/imputnet/helium)** by imput, whose GPL-3.0
+  patch set and tooling Beryllium's code is derived from.
 - **[The Chromium Project](https://www.chromium.org/)**, at the core of
   Helium and Beryllium.
 - **[ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium)**,
   which Helium is based on.
-- **Other Chromium browsers** whose patches Helium includes:
+- **Other Chromium browsers** whose patches the upstream set includes:
   [Inox patchset](https://github.com/gcarq/inox-patchset),
   [Debian](https://tracker.debian.org/pkg/chromium-browser),
   [Bromite](https://github.com/bromite/bromite),
   [Iridium Browser](https://iridiumbrowser.de/) and
   [Brave](https://github.com/brave/brave-core).
-  Helium's patches are sorted by vendor in [helium/patches/](https://github.com/imputnet/helium/tree/main/patches).
+  These patches are sorted by vendor in [helium/patches/](https://github.com/imputnet/helium/tree/main/patches).
 - **The FreeBSD and OpenBSD Chromium ports**, maintained at
   `chromium@FreeBSD.org` and in OpenBSD ports, whose BSD patch set makes a
   FreeBSD build possible.

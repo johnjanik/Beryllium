@@ -1,7 +1,7 @@
 # Beryllium: Maintenance Cadence and Release Process
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026 (RT-10, RT-11, owner decisions)
 **Implements:** spec sections 11.3, 12 (Phase 6) and 14
 
 ---
@@ -13,8 +13,8 @@ Three upstream clocks tick independently:
 | Clock | Typical rhythm | Beryllium response |
 |---|---|---|
 | Chromium stable releases | a major every four weeks, security point releases weekly or faster | Helium tracks these; Beryllium follows Helium |
-| Helium releases | follows Chromium, a few days behind (exact lag to be measured over Phase 0 from the releases page) | merge the release tag, run the update procedure |
-| FreeBSD and OpenBSD `www/chromium` updates | FreeBSD was one major behind Helium at the snapshot; OpenBSD was level | determines how much BSD forward-porting Beryllium does itself |
+| Helium releases | follows Chromium, a few days behind (exact lag to be measured over Phase 0 from the releases page); three tags and a Chromium major between 18 October and 1 November 2026 | move the submodule to the release tag, run the update procedure |
+| FreeBSD and OpenBSD `www/chromium` updates | FreeBSD was one major behind Helium at the snapshot and on the same major (156) on 1 November; OpenBSD was level at the snapshot | determines how much BSD forward-porting Beryllium does itself |
 | FreeBSD security advisories | irregular | a Capsicum or kernel advisory triggers the advisory checklist below |
 
 The realistic steady-state commitment is one Beryllium release per Helium
@@ -22,6 +22,22 @@ release, plus out-of-band builds when a Chromium security fix is rated high
 and Helium has not yet shipped it. Measuring the time between a Chromium stable
 security release and a Beryllium package being published is the project's
 primary health metric and is recorded in every release note.
+
+Freshness is a security property (RT-11): a sandboxed browser on an old V8 can
+be less safe than an unsandboxed current one. Therefore:
+
+- **Turnaround target:** a package within 72 hours of a Helium tag that
+  carries security fixes. Missing it is a release-gate failure that needs a
+  written exception in the release notes.
+- **Builder:** the owner's FreeBSD 16.0-CURRENT host (128 GB RAM, 24 cores,
+  about 7 TB) is the dedicated builder; packages for users are built in
+  14.x and 15.x Poudriere jails on it. A security tag triggers an immediate
+  build rather than waiting for the nightly run.
+- **Build-age warning:** Chromium's outdated-build detection is adapted to
+  key on the build date and tell the user to run `pkg upgrade`, so stale
+  installs warn their users even when the repository is not configured.
+- **Fast path:** the hand forward-port path for when the BSD ports lag the pin
+  (05 section 7, step 3) is rehearsed before it is needed.
 
 ## 2. Roles
 
@@ -42,7 +58,10 @@ meaningful:
    `helium/` is edited, so there is nothing to merge; Beryllium patches that
    no longer apply are refreshed in step 3.
 2. Run `freebsd/tools/import-bsd-patches` for the new Chromium version;
-   record the FreeBSD and OpenBSD ports commits.
+   record the FreeBSD and OpenBSD ports commits; review the diff of every
+   patch under the security-relevant paths and commit a review record for each
+   (RT-10, 05 section 5). Once per Chromium version, cross-check the base
+   tarball against an independent source.
 3. Run stages 0 to 6 locally; refresh failing patches with quilt.
 4. Regenerate the patch matrix and the flag diff; review.
 5. Build in Poudriere for every supported branch.
@@ -75,9 +94,10 @@ stack (the June 2026 `SA-26:28.capsicum` `sigqueue` case is the model):
 
 ## 5. Package distribution
 
-- Packages are built in Poudriere from a clean jail by an unprivileged build
-  account and published to a repository signed with a key kept off the build
-  host (`pkg` repository signing with `signing_command`).
+- Packages are built in Poudriere from a clean 14.x or 15.x jail on the
+  owner's build host by an unprivileged build account and published to a
+  repository signed with a key kept off the build host (`pkg` repository
+  signing with `signing_command`).
 - No SUID binaries, no world-writable directories, no in-browser updater.
   The `pkg-message` tells users that updates arrive through `pkg upgrade`.
 - `beryllium` (production) and `beryllium-devel` (debug switches retained,
@@ -97,8 +117,10 @@ stack (the June 2026 `SA-26:28.capsicum` `sigqueue` case is the model):
 - Supported versions: the latest Beryllium release only, on the FreeBSD
   branches listed in the release notes.
 - Reporting channel: a dedicated email with a published PGP key, and the
-  policy that Chromium or Helium engine bugs are redirected to those projects
-  while sandbox, packaging and FreeBSD-specific issues are handled here.
+  policy that Chromium engine bugs are redirected to Chromium, while bugs in
+  the inherited privacy patch set, sandbox, packaging and FreeBSD-specific
+  issues are handled here (Beryllium does not forward reports to Helium,
+  charter D8).
 - Response targets: acknowledgement in 3 days, assessment in 7, fix or
   mitigation timeline communicated after assessment.
 - The sandbox status table (what is enforced, what is configured but not

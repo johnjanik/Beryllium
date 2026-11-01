@@ -1,7 +1,7 @@
 # Beryllium: Source Layering and Patch Strategy
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026
 **Depends on:** [01-PROJECT-CHARTER.md](01-PROJECT-CHARTER.md) decisions D1 and D4
 
 ---
@@ -15,8 +15,8 @@ clean FreeBSD port build:
 | Source | Form | Applied by | Count at snapshot |
 |---|---|---|---|
 | Helium product patches (includes ungoogled-chromium, Inox, Iridium, Bromite, Debian, Brave patches) | quilt-style unified diffs listed in `helium/patches/series`, `-p1` | `utils/patches.py apply` | 347 files, 370-line series |
-| FreeBSD BSD adaptations | `files/patch-<path with _ for />` unified diffs, `-p0` style (`--- file.orig` / `+++ file`) | FreeBSD ports framework `do-patch` | 1,659 files for Chromium 154 |
-| OpenBSD BSD adaptations (origin of most of the above) | OpenBSD ports `patches/patch-*` | OpenBSD ports framework | tracks Chromium 155 |
+| FreeBSD BSD adaptations | `files/patch-<path with _ for />` unified diffs, `-p0` style (`--- file.orig` / `+++ file`) | FreeBSD ports framework `do-patch` | 1,659 files for Chromium 154 at the 18 Oct snapshot; the port is at 156.0.8078.47 on 1 Nov (count to be re-measured by the import tool) |
+| OpenBSD BSD adaptations (origin of most of the above) | OpenBSD ports `patches/patch-*` | OpenBSD ports framework | tracked Chromium 155 at the snapshot; needed only when FreeBSD lags the pin |
 | Beryllium security and platform patches | new, quilt-style, listed in `patches/series` | `helium/utils/patches.py apply` (second patch directory) | none yet |
 
 Plus two tree rewrites that are not patches: Helium's binary pruning
@@ -126,7 +126,8 @@ Beryllium/
       beryllium.in, beryllium.desktop.in
     files/IMPORTED-FROM               # FreeBSD ports commit + OpenBSD ports commit + date
   freebsd/tools/
-    import-bsd-patches                # sync files/patch-* from a ports checkout, record provenance
+    import-bsd-patches                # sync files/patch-* from a ports checkout, record provenance,
+                                      # emit the security-path review diff (RT-10)
     gnargs-from-flags                 # emit GN args from helium/flags.gn + flags.freebsd.gn
     patch-matrix                      # produce the conflict matrix (section 6)
     build-manifest                    # emit the per-build provenance manifest
@@ -154,8 +155,14 @@ Rules:
 The FreeBSD port's `files/` and the OpenBSD port's `patches/` are the same
 lineage; FreeBSD's copies carry the OpenBSD `.orig` timestamps, and the files
 `patch-sandbox_policy_openbsd_sandbox__openbsd.{cc,h}` are present in the
-FreeBSD port unchanged. At the snapshot OpenBSD is at Chromium 155 and FreeBSD
-at 154, so the first import for Beryllium will combine:
+FreeBSD port unchanged.
+
+On 1 November 2026 FreeBSD's port is at 156.0.8078.47 and the pin at
+156.0.8078.79, so the first import is a copy of the FreeBSD set plus fixes
+for any patch the point-release difference breaks; the OpenBSD step is not
+needed. The procedure below is kept for the case where FreeBSD lags a major
+again. At the 18 October snapshot (OpenBSD at 155, FreeBSD at 154) it would
+have combined:
 
 - the OpenBSD 155 set, converted to FreeBSD naming
   (`patch-path_with_underscores`) and `-p0` form, as the base, and
@@ -167,7 +174,17 @@ at 154, so the first import for Beryllium will combine:
 
 The import tool records the two source commits and produces three lists:
 applied cleanly, applied with fuzz, failed. Fuzzed and failed patches are
-reviewed by hand and the result is committed with the provenance file. From
+reviewed by hand and the result is committed with the provenance file.
+
+"Never hand-edited" must not mean "never read" (RT-10). The import tool also
+emits the diff, against the previous import, of every patch that touches a
+security-relevant path: `sandbox/`, `base/process/`, `base/memory/`,
+`mojo/`, `ipc/`, `content/browser/child_process_*`,
+`content/browser/renderer_host/`, `services/network/`,
+`third_party/boringssl/`. CI refuses the import until a review record
+(reviewer, date, notes) exists for each changed patch in that set. Every
+upstream reference (ports commits, Helium tag) is pinned by commit hash, since
+tags can be moved. From
 then on the FreeBSD port's own catch-up to 155 (which will happen on its own
 schedule) is diffed against Beryllium's import and reconciled.
 
@@ -216,7 +233,9 @@ Expected hot spots, from the file inventories collected at the snapshot:
 3. Re-import the BSD set for the new version (section 5). If neither BSD port
    has reached the version yet, Beryllium waits unless a security advisory
    forces the update, in which case the maintainer forward-ports the failing
-   BSD patches by hand and tags the build as `prerelease`.
+   BSD patches by hand and tags the build as `prerelease`. This fast path is
+   rehearsed before it is needed, since the turnaround target for security
+   releases (document 11, RT-11) depends on it.
 4. Apply stage 3 and 4 with `utils/patches.py apply`; refresh failed patches
    with quilt as Helium's CONTRIBUTING guide describes.
 5. Regenerate the matrix and `flags` diff; review both.
@@ -231,5 +250,5 @@ Expected hot spots, from the file inventories collected at the snapshot:
 |---|---|
 | Generic FreeBSD build or runtime fix | FreeBSD ports `www/chromium` (and OpenBSD when relevant), via `chromium@FreeBSD.org` |
 | Capsicum sandbox implementation | Beryllium first; offered to FreeBSD ports once stable, since `www/chromium` would benefit directly. Chromium upstream acceptance is unlikely without a Chromium-side owner and is not planned. |
-| Helium feature adaptations that are platform-neutral | Pull request to `imputnet/helium` following its CONTRIBUTING rules (issue first for non-trivial changes) |
+| Helium feature adaptations that are platform-neutral | Stay in Beryllium; no upstream contributions are planned (charter D8, decided 1 November 2026) |
 | Beryllium branding and policy defaults | Stay in Beryllium |

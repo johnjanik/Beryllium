@@ -1,1 +1,2 @@
 .DS_Store
+freebsd/tests/capsicum-standalone/cap-oracle

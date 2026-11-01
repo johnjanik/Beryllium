@@ -1,7 +1,7 @@
 # Beryllium: Roadmap
 
 **Status:** Draft plan, no code written
-**Date:** 18 October 2026
+**Date:** 18 October 2026; amended 1 November 2026 (owner decisions, red-team review in [12-WORK-PLAN-AND-RED-TEAM.md](12-WORK-PLAN-AND-RED-TEAM.md), whose section 3.2 orders the near-term work as sprints)
 **Implements:** spec section 12, refined with the research snapshot
 
 ---
@@ -38,10 +38,11 @@ Work items:
 
 1. Fact collection on the build machine (spec section 15 commands), committed
    as `freebsd/BASELINE.md`.
-2. Move the `helium` submodule to the latest Helium release tag (pinned at
-   `0.19.4` on 18 October 2026); record Chromium version, Helium commit,
-   FreeBSD ports commit, OpenBSD ports commit.
-3. Build and run stock `www/chromium` 154 from ports on the machine
+2. Move the `helium` submodule to the latest Helium release tag (done on
+   1 November 2026: `0.20.3`, commit `2f81b9ca`, Chromium 156.0.8078.79;
+   pinned at `0.19.4` on 18 October); record Chromium version, Helium
+   commit, FreeBSD ports commit, OpenBSD ports commit if used.
+3. Build and run stock `www/chromium` (156.0.8078.47 on 1 November) from ports on the machine
    (Poudriere). Record: process tree, per-process descriptors from `procstat -f`,
    `chrome://version`, `chrome://sandbox` text, `chrome://gpu`, loaded
    libraries, startup log, network endpoints at first launch.
@@ -52,10 +53,15 @@ Work items:
    process is in capability mode. Write `freebsd/SANDBOX-BASELINE.md` with a
    per-process-type table.
 5. Build the import tool and produce the first BSD patch import for Chromium
-   155 (OpenBSD 155 set plus FreeBSD 154 deltas); produce
-   `freebsd/PATCH-MATRIX.md` for the three layers.
-6. Run the Capsicum standalone oracle on each target branch and commit the
-   JSON tables.
+   156: a copy of the FreeBSD 156.0.8078.47 set plus fixes for the
+   point-release difference (the 18 October plan needed OpenBSD 155 plus
+   FreeBSD 154 deltas); include the security-path review gate (RT-10);
+   produce `freebsd/PATCH-MATRIX.md` for the three layers.
+6. Run the Capsicum standalone oracle, including the red-team probes from
+   08 section 2.1, on the 16.0-CURRENT development host and on 14.x and 15.x
+   bhyve guests, and commit the JSON tables. The `ptrace` result per branch
+   (RT-03) and the capability-mode-readable sysctl list (RT-01) are the first
+   results to review.
 7. Decide the tarball source for Phase 1 (section 3 below) by extracting both
    candidates and diffing their file lists against `pruning.list` and
    `domain_substitution.list`.
@@ -88,8 +94,12 @@ Work items:
    resources (`utils/generate_resources.py`, `replace_resources.py`), i18n
    application (`utils/i18n_apply.py`), and the uBlock component setup
    (`ublock-install-as-component`), all wired into `post-patch`/`pre-configure`.
-5. Beryllium branding layer (charter D2) and the FreeBSD platform patches for
-   crash upload default, update check default, profile directory name.
+5. Beryllium branding layer (charter D2: Beryllium only, user-visible
+   `helium://` renamed if Q11 says so) and the FreeBSD platform patches for
+   crash upload default, update check default, profile directory name,
+   services default off with no origin (charter D3), onboarding text that
+   explains the disabled services, and the `navigator.platform` and OS-CPU
+   string fixes (RT-13).
 6. First full build; fix build breaks; classify each fix as BSD-import,
    Helium-conflict, or Beryllium-platform and file it in the right layer.
 7. Launch as a normal user on X11 and Wayland; run the functional smoke list.
@@ -129,8 +139,8 @@ Work items, in order:
    to whichever base is chosen; the prototype's known gaps (`LOCAL_PEERCRED`
    handling, a `localtime_r` deadlock bypass, no Wayland policy, the broker
    left `#if 0`) go straight into the Phase 2 work list. Coordinate on the
-   bugs rather than forking silently, and remember charter D8 when writing to
-   the list.
+   bugs rather than forking silently; messages to the FreeBSD lists and bug
+   tracker are written by the maintainer personally.
 
 1. **Instrumented inventory.** In `beryllium-devel`, log every descriptor
    present at the renderer's sandbox initialisation point and every later
@@ -187,6 +197,24 @@ Work items, in order:
     (what the Mojo channel to the browser allows it to ask for), known gaps,
     and the test evidence.
 
+Red-team additions (document 12), folded into the items above:
+
+- Before item 1: build the devel-only attacker payload hook (08 section 2.2)
+  so every policy change is measured against the same attacks, and score the
+  shkhln prototype (item 0) against the probe list, not only against "pages
+  load".
+- Item 5: environment allowlist and `LD_*` removal for children (RT-05).
+- Item 6: no Casper channel in renderers (RT-14).
+- Item 7: `RLIMIT_NPROC=1` and `RLIMIT_CORE=0` in confined children (RT-15);
+  trace-disable in the production browser process (RT-03).
+- Item 8: the browser reads `KI_CRF_CAPABILITY_MODE` from the kernel for
+  every child and refuses navigation commits to an unconfined renderer
+  (RT-04).
+- Item 9: the production switch allowlist from 06 section 3.4 (RT-12).
+- Hardening (RT-09): allocator shim, PartitionAlloc-as-malloc, BackupRefPtr
+  in `beryllium-devel`, then CFI, tracked as rows of the release status
+  table (04 section 4).
+
 Exit criteria: spec 12 Phase 2.
 
 ## 5. Phase 3: broaden process-specific policies
@@ -213,10 +241,18 @@ Order of attack, chosen by risk times feasibility:
    `cap_net`/`cap_dns` casper services only after measuring, and audit every
    Mojo interface a renderer can reach that results in a network request.
 4. **GPU process**: follow OpenBSD's shape (device nodes under `/dev/dri`,
-   Mesa cache directory, Vulkan ICDs, the pre-sandbox library preload that the
-   BSD `GpuPreSandboxHook` already does). Capability mode with an ioctl
+   a per-session shader cache directory owned by the browser (RT-08), Vulkan
+   ICDs, the pre-sandbox library preload that the BSD `GpuPreSandboxHook`
+   already does), with the display socket connected before entry instead of
+   a socket-directory capability (RT-06). Capability mode with an ioctl
    allowlist on the DRM descriptor is the target; the driver surface that
-   remains is documented as residual risk.
+   remains is documented as residual risk. The first target is the owner's
+   hardware: NVIDIA proprietary driver 595.99.02 on Wayland through
+   `nvidia-drm` (RTX 5090), whose large closed ioctl interface is measured
+   with ktrace before any allowlist is attempted; the software-rendering
+   hardened option is the fallback. On X11, measure whether the GPU process
+   can present without its own X connection; otherwise publish the X11
+   limitation (RT-07).
 5. **CDM (Widevine via foreign-cdm)**: policy modelled on OpenBSD's
    `unveil.cdm`, or documented as unsandboxed opt-in.
 
@@ -228,7 +264,9 @@ Exit criteria: spec 12 Phase 3, with the per-process authority matrix in
 1. An administrator-managed example jail configuration (`jail.conf` fragment,
    a `ZFS` dataset layout, `devfs` ruleset exposing only `/dev/dri` and the
    chosen audio device, a VNET or shared-stack choice, Wayland socket or
-   X11 socket mapping with the trade-offs written down).
+   X11 socket mapping with the trade-offs written down, and random per-jail
+   `host.hostuuid` and `host.hostname` so confined processes cannot read the
+   real machine identifiers, RT-01).
 2. Three resource profiles (`desktop`, `constrained`, `jail`) with measured
    baselines from the resource suite, delivered as documented `rctl` rule sets
    and `login.conf` classes, never applied by the package.
@@ -238,14 +276,19 @@ Exit criteria: spec 12 Phase 3, with the per-process authority matrix in
 
 Exit criteria: spec 12 Phase 4.
 
-## 7. Phase 5: MAC feasibility study
+## 7. Phase 5: MAC feasibility study (reframed by RT-02)
 
-A written decision, not necessarily code: which residual threat from the
-Phase 2 and 3 reviews a MAC module would address, whether `mac_mls` labels
-on the profile and downloads directories give a confidentiality property that
-Capsicum plus jail do not, the cost of labelling a user's home directory, and
-a prototype on a disposable system only if the answer is yes. The default
-expectation is "not for the first release".
+A written decision, not necessarily code. The first candidate is an optional
+module for capability-mode credentials only (`mac_beryllium.ko`, 06 section
+9): sockets limited to `AF_UNIX`, a sysctl allowlist that hides machine
+identifiers, other processes invisible. The memo covers which residual
+threats from the Phase 2 and 3 reviews and the oracle results it closes, the
+maintenance cost across kernel versions, kernel-side review, and rollback.
+`mac_mls` labels on the profile and downloads directories remain a secondary
+question. A prototype on a disposable system follows only if the answer is
+yes. Kernel fuzzing with syzkaller and a capability-mode executor
+(document 12 section 6.3) feeds the memo. The default expectation is "not
+for the first release".
 
 ## 8. Phase 6: release engineering and maintenance
 
@@ -261,6 +304,14 @@ The first release that is announced beyond the project's own testers requires:
   with the audio, network, GPU and CDM classes either done or listed in the
   known-limitations page as unsandboxed with their risk statements.
 - Phase 6 CI running and the handover test passed.
-- The sandbox status table published.
+- The sandbox status table published, including the hardening rows (RT-09)
+  and the X11 limitation (RT-07).
+- Component updates (CRLSets, certificate transparency logs, the uBlock
+  component) working through a Beryllium-hosted services origin or another
+  update source, since Helium endpoints are not used and stale security
+  components are not acceptable for public users (charter D3, R13).
+- The freshness target from document 11 met for the preceding month of
+  Helium security tags (RT-11).
+- No request to any Helium endpoint in the privacy capture.
 
 Phases 4 and 5 are not required for the first release.

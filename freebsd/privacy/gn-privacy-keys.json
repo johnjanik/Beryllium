@@ -1,0 +1,16 @@
+{
+  "_comment": "Privacy-relevant GN keys (plan/07 section 2). Values are what Beryllium requires. Only helium/flags.gn may set these; flags.freebsd.gn and port options may not. gnargs-from-flags check fails if helium/flags.gn changes any of them, so a Helium update that touches privacy flags needs a reviewed change to this file.",
+  "chrome_pgo_phase": "0",
+  "disable_fieldtrial_testing_config": "true",
+  "enable_hangout_services_extension": "false",
+  "enable_mdns": "false",
+  "enable_remoting": "false",
+  "enable_reporting": "false",
+  "enable_service_discovery": "false",
+  "google_api_key": "\"\"",
+  "google_default_client_id": "\"\"",
+  "google_default_client_secret": "\"\"",
+  "safe_browsing_mode": "0",
+  "use_official_google_api_keys": "false",
+  "use_unofficial_version_number": "false"
+}
