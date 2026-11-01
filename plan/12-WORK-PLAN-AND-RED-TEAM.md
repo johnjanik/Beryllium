@@ -182,6 +182,7 @@ Severity is for the shipped design if the finding were left unaddressed.
 | RT-13 | Medium | OS fingerprint leaks and inconsistencies | "presents as Linux x86_64" invariant with tests; document TCP/IP stack signature | fingerprint test page in window and worker contexts |
 | RT-14 | Medium | Casper services are unconfined parsers reachable from confined processes | no Casper channel in renderers; fuzz `libnv` and `cap_net` request handling | fuzz target in CI |
 | RT-15 | Low | Fork and core-dump abuse from a renderer | `RLIMIT_NPROC=1`, `RLIMIT_CORE=0` at lockdown | oracle fork probe; attacker hook forks |
+| RT-16 | Medium (opportunity) | W^X is not enforced by default (`kern.elf64.allow_wx=1`); a renderer can create write-and-execute memory | launcher sets `PROC_WX_MAPPINGS_DISALLOW_EXEC` between fork and exec so W^X is enforced in each child, if V8 works under it | oracle `hard.wxorx_after_exec`; V8 and WebAssembly test pages under enforcement |
 
 ### RT-01: machine identifiers survive capability mode
 
@@ -460,6 +461,25 @@ lockdown together with `RLIMIT_CORE=0` (renderer memory holds page content
 and cookies). `PROC_TRACE_CTL_DISABLE` also suppresses core dumps; the
 explicit limit documents the intent.
 
+### RT-16: enforce W^X in children (added after the first oracle run)
+
+The first oracle run showed `kern.elf64.allow_wx=1` and an anonymous mapping
+with write and execute permission at once succeeding inside capability
+mode. W+X memory is what an exploit wants for shellcode. FreeBSD can switch
+this off per process: `procctl(PROC_WXMAP_CTL, PROC_WX_MAPPINGS_DISALLOW_EXEC)`
+makes the address space created by the next `execve` refuse W+X mappings.
+The browser's launcher can set it in the child between `fork` and `exec`,
+so every renderer and utility starts with W^X enforced, with no kernel
+change and no system setting. Linux has no per-process equivalent without
+an LSM policy.
+
+V8 changes code pages between RW and RX rather than mapping them W+X on
+most paths, but WebAssembly code space and some JIT tiers may still ask for
+W+X. Phase 2 measures it: the oracle probe `hard.wxorx_after_exec` checks
+the kernel side (W+X refused, RW-to-RX still allowed); test pages with
+JavaScript and WebAssembly check V8. If V8 needs W+X, the V8 flags that
+avoid it are evaluated before giving up.
+
 ## 6. Red-team test programme
 
 ### 6.1 The attacker payload hook
@@ -557,8 +577,85 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 | Item | Status | Where |
 |---|---|---|
 | 1. Submodule to 0.20.3 | done | `helium` at `2f81b9ca`, Chromium 156.0.8078.79 |
-| 2. Baseline collection | written, **to be run on the 16-CURRENT host** against the official `chromium` 156.0.8078.47_1 package (`FreeBSD:16:amd64/latest`; a host ports build failed in `www/node24`, see 09 Phase 0 item 3) | `freebsd/tools/baseline-collect.sh` |
-| 3. Capsicum oracle and red-team probes | written (86 probes plus kernel attestation and a sysctl sweep); compiled and linked against a 16.0-CURRENT sysroot with `-Werror`; **not yet run** | `freebsd/tests/capsicum-standalone/` |
-| 3a. Oracle on 14.x and 15.x | CI job runs it in FreeBSD VMs and uploads JSON | `.github/workflows/freebsd-checks.yml` |
+| 2. Baseline collection | machine part recorded (`freebsd/results/baseline-16.0-CURRENT-20261101.md`); **per-process part still to run with Chromium open**, against the official `chromium` 156.0.8078.47_1 package (`FreeBSD:16:amd64/latest`; a host ports build failed in `www/node24`, see 09 Phase 0 item 3) | `freebsd/tools/baseline-collect.sh` |
+| 3. Capsicum oracle and red-team probes | **run on 16.0-CURRENT** (section 10); version 2 fixes two probe bugs and adds `setpriority`, `dlopen` control and W^X-after-exec probes (89 probes) | `freebsd/tests/capsicum-standalone/`, `freebsd/results/` |
+| 3a. Oracle on 14.x and 15.x | ran on 14.5 and 15.1; results copy-back fixed so the JSON is uploaded as artifacts | `.github/workflows/freebsd-checks.yml` |
 | 4. GN args generator and privacy guard | done, 13 unit tests, passes against Helium 0.20.3 | `freebsd/tools/gnargs-from-flags`, `flags.freebsd.gn`, `freebsd/privacy/gn-privacy-keys.json` |
 | 5. Patch matrix | next | |
+
+## 10. First oracle results (1 November 2026)
+
+Sources: the owner's 16.0-CURRENT host (`main-n290153-617c700abae7`,
+`freebsd/results/oracle-16.0-CURRENT-20261101.json`), and FreeBSD
+14.5-RELEASE and 15.1-RELEASE-p3 in the CI VMs, read from the job logs
+(their JSON was lost to a copy-back bug, now fixed). The owner's host has
+already set `security.bsd.see_other_uids=0`, `see_other_gids=0` and
+`unprivileged_proc_debug=0`; the VMs use defaults.
+
+### 10.1 Red-team predictions against measurements
+
+| Finding | 16.0-CURRENT | 14.5 and 15.1 | Verdict |
+|---|---|---|---|
+| RT-01 `kern.hostuuid`, `hostid`, `hostname`, `domainname`, `boot_id` readable | readable | readable | **confirmed** |
+| RT-02 `PF_ROUTE` and `AF_NETLINK` sockets, `getifaddrs()` | refused (`ECAPMODE`) | refused | **prediction wrong, good news**: local addresses are not readable from capability mode |
+| RT-02 `socket()` for `AF_INET`, `AF_INET6`, `AF_UNIX` | allowed | allowed | confirmed (protocol code reachable, but `connect`, `bind` and `sendto` with an address refused) |
+| RT-02 `kevent(EVFILT_PROC)` on a same-user process | allowed | allowed | **confirmed** |
+| RT-02 `kevent(EVFILT_PROC)` on another user's process | refused (`ESRCH`, because of `see_other_uids=0`) | allowed | confirmed; the host setting closes it |
+| `getpriority()` on other processes or the whole user | refused | **allowed** | **new**: the capability-mode check in `kern_resource.c` on `main` is not in 14.5 or 15.1; `proc.setpriority_other` added to see whether a renderer can also lower other processes' priority there |
+| RT-03 `ptrace` from capability mode | refused (`ECAPMODE`) | refused | safe on all three; the browser trace-disable stays as defence in depth |
+| RT-04 kernel-attested capability mode | works | works | **confirmed**: the browser can verify children without trusting them |
+| RT-15 `RLIMIT_NPROC=1` blocks `fork` | `EAGAIN` | refused | **confirmed** (corrects the original plan) |
+| `FreeBSD-SA-26:28` (`sigqueue`) | refused | refused | fixed on all three |
+| Read-only shared-memory twin | writable mapping refused, `mprotect` upgrade refused, exec mapping refused | same | **confirmed**; but see 10.2 |
+| `/dev/fd` lists every descriptor | no (devfs, `fdescfs` not mounted) | not recorded | **confirmed**: upstream `CloseSuperfluousFds` does nothing useful; `closefrom` is required |
+
+### 10.2 What Phase 2 has to handle (measured, not predicted)
+
+A renderer that calls any of these after `cap_enter()` fails, so each one is
+cached in `PreinitializeSandbox` or its caller is patched:
+
+- `uname()` fails with `ECAPMODE`, because `kern.version` is not readable in
+  capability mode. Callers include Blink's `navigator.platform` fallback
+  (RT-13) and `base::SysInfo`.
+- `hw.physmem`, `vm.stats.vm.v_page_count` (the 2023 attempt's failure
+  point) and `kern.proc.pid.<self>` are refused: physical memory, memory
+  pressure and Chromium's own process metrics.
+- `localtime()` falls back to UTC unless `caph_cache_tzdata()` runs first:
+  pages would see the wrong local time.
+- `dlopen()` of anything not already loaded fails.
+- Shared memory: `fcntl(F_GETFL)` on the rights-limited read-only twin is
+  refused without `CAP_FCNTL`. Chromium's permission check on handles uses
+  `F_GETFL`, so the twin is created with `CAP_FCNTL` limited to
+  `CAP_FCNTL_GETFL`, or the check uses `cap_rights_get()` (06 section 3.3).
+
+Readable and harmless: `hw.ncpu`, `hw.pagesize`, `kern.osrelease`,
+`kern.arandom`.
+
+### 10.3 Fingerprinting surface after a renderer compromise
+
+The sweep found 126 readable sysctl leaves on 16.0-CURRENT (113 on 14.5, 115
+on 15.1). Besides the five identifiers of RT-01: about 70 `kern.features.*`
+booleans (kernel configuration), `hw.model` (exact CPU model) and
+`kern.build_id` (identifies the kernel build). Low severity on their own;
+the `mac_beryllium` sysctl filter (RT-02) would cover them, and a jail does
+not.
+
+### 10.4 Facts about the owner's host
+
+- **Hybrid graphics**: Intel Arrow Lake integrated GPU (`i915kms`) plus an
+  RTX 5090 Laptop GPU (`nvidia-drm`). On most hybrid laptops the panel is
+  driven by the integrated GPU, so Chromium's GPU process may run on Mesa
+  and i915, an open driver whose ioctl set is known and which OpenBSD
+  already confines, rather than on NVIDIA. `chrome://gpu` decides which
+  policy comes first (correcting section 8 and charter D6).
+- XWayland is running (`DISPLAY` is set alongside `WAYLAND_DISPLAY`), so X11
+  clients exist in the session even under Wayland.
+- The host's own hardening sysctls blocked two attacks even outside
+  capability mode. They go into `pkg-message` as optional hardening, noting
+  that `unprivileged_proc_debug=0` stops users debugging their own
+  programs.
+- Kernel `osreldate` 1600028; the chromium package was built for 1600029.
+  Updating the base system to match the packages avoids ABI surprises on
+  CURRENT.
+- The first baseline found no running Chromium processes (detection fixed);
+  the per-process baseline still has to be recorded.
