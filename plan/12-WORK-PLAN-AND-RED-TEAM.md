@@ -587,8 +587,9 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 
 Sources: the owner's 16.0-CURRENT host (`main-n290153-617c700abae7`,
 `freebsd/results/oracle-16.0-CURRENT-20261101.json`), and FreeBSD
-14.5-RELEASE and 15.1-RELEASE-p3 in the CI VMs, read from the job logs
-(their JSON was lost to a copy-back bug, now fixed). The owner's host has
+14.5-RELEASE and 15.1-RELEASE-p3 in the CI VMs (oracle version 2,
+`freebsd/results/oracle-14.5-RELEASE-20261101.json` and
+`oracle-15.1-RELEASE-p3-20261101.json`). The owner's host has
 already set `security.bsd.see_other_uids=0`, `see_other_gids=0` and
 `unprivileged_proc_debug=0`; the VMs use defaults.
 
@@ -601,13 +602,16 @@ already set `security.bsd.see_other_uids=0`, `see_other_gids=0` and
 | RT-02 `socket()` for `AF_INET`, `AF_INET6`, `AF_UNIX` | allowed | allowed | confirmed (protocol code reachable, but `connect`, `bind` and `sendto` with an address refused) |
 | RT-02 `kevent(EVFILT_PROC)` on a same-user process | allowed | allowed | **confirmed** |
 | RT-02 `kevent(EVFILT_PROC)` on another user's process | refused (`ESRCH`, because of `see_other_uids=0`) | allowed | confirmed; the host setting closes it |
-| `getpriority()` on other processes or the whole user | refused | **allowed** | **new**: the capability-mode check in `kern_resource.c` on `main` is not in 14.5 or 15.1; `proc.setpriority_other` added to see whether a renderer can also lower other processes' priority there |
+| `getpriority()` on other processes or the whole user | refused | **allowed** | **new**: the capability-mode check in `kern_resource.c` on `main` is not in 14.5 or 15.1 |
+| `setpriority()` on another same-user process | not run (v1) | **allowed** | **new**: on the release targets a compromised renderer can push any of the user's processes, the browser included, to the lowest priority (availability, not confidentiality). Mitigations: the `mac_beryllium` scheduling hook, or the fix reaching 14.x and 15.x (an upstream report for the owner to file) |
+| RT-16 W^X enforced after exec with `PROC_WX_MAPPINGS_DISALLOW_EXEC` | not run (v1) | **works**: W+X mapping refused, RW then RX still allowed | **confirmed** on the kernel side; V8 compatibility is the open part |
 | RT-03 `ptrace` from capability mode | refused (`ECAPMODE`) | refused | safe on all three; the browser trace-disable stays as defence in depth |
 | RT-04 kernel-attested capability mode | works | works | **confirmed**: the browser can verify children without trusting them |
 | RT-15 `RLIMIT_NPROC=1` blocks `fork` | `EAGAIN` | refused | **confirmed** (corrects the original plan) |
 | `FreeBSD-SA-26:28` (`sigqueue`) | refused | refused | fixed on all three |
 | Read-only shared-memory twin | writable mapping refused, `mprotect` upgrade refused, exec mapping refused | same | **confirmed**; but see 10.2 |
-| `/dev/fd` lists every descriptor | no (devfs, `fdescfs` not mounted) | not recorded | **confirmed**: upstream `CloseSuperfluousFds` does nothing useful; `closefrom` is required |
+| `/dev/fd` lists every descriptor | no (devfs, `fdescfs` not mounted) | no | **confirmed**: upstream `CloseSuperfluousFds` does nothing useful; `closefrom` is required (and works, `fd.closefrom`) |
+| Errno for a refused sysctl or `uname()` | `ECAPMODE` | `EPERM` | the kind of difference the oracle exists for: policy code and tests must not assume one errno across branches |
 
 ### 10.2 What Phase 2 has to handle (measured, not predicted)
 
@@ -624,9 +628,10 @@ cached in `PreinitializeSandbox` or its caller is patched:
   pages would see the wrong local time.
 - `dlopen()` of anything not already loaded fails.
 - Shared memory: `fcntl(F_GETFL)` on the rights-limited read-only twin is
-  refused without `CAP_FCNTL`. Chromium's permission check on handles uses
-  `F_GETFL`, so the twin is created with `CAP_FCNTL` limited to
-  `CAP_FCNTL_GETFL`, or the check uses `cap_rights_get()` (06 section 3.3).
+  refused without `CAP_FCNTL`, and with `CAP_FCNTL_GETFL` it reports
+  `O_RDWR` even though the twin cannot be mapped writable. Chromium's
+  permission check on handles therefore has to use `cap_rights_get()` on
+  FreeBSD; `F_GETFL` gives the wrong answer (06 section 3.3).
 
 Readable and harmless: `hw.ncpu`, `hw.pagesize`, `kern.osrelease`,
 `kern.arandom`.
