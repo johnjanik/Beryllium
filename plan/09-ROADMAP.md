@@ -42,8 +42,16 @@ Work items:
    1 November 2026: `0.20.3`, commit `2f81b9ca`, Chromium 156.0.8078.79;
    pinned at `0.19.4` on 18 October); record Chromium version, Helium
    commit, FreeBSD ports commit, OpenBSD ports commit if used.
-3. Build and run stock `www/chromium` (156.0.8078.47 on 1 November) from ports on the machine
-   (Poudriere). Record: process tree, per-process descriptors from `procstat -f`,
+3. Install and run the official `chromium` package as the reference build:
+   156.0.8078.47_1 from `pkg.FreeBSD.org/FreeBSD:16:amd64/latest`, built by
+   the FreeBSD package cluster on 29 October 2026 from ports commit
+   `f5734661` for `FreeBSD_version` 1600029 (16-CURRENT has no quarterly
+   repository). An unmodified official package is a better reference than a
+   local build. Local builds of any port happen only in Poudriere, never
+   with `make install` on the host, and take dependencies (node, rust,
+   LLVM) from official packages rather than compiling them (a host build of
+   `www/chromium` on 1 November failed in the `www/node24` dependency).
+   Record: process tree, per-process descriptors from `procstat -f`,
    `chrome://version`, `chrome://sandbox` text, `chrome://gpu`, loaded
    libraries, startup log, network endpoints at first launch.
 4. Confirm by observation what the research already shows from source: BSD

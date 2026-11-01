@@ -557,7 +557,7 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 | Item | Status | Where |
 |---|---|---|
 | 1. Submodule to 0.20.3 | done | `helium` at `2f81b9ca`, Chromium 156.0.8078.79 |
-| 2. Baseline collection | written, **to be run on the 16-CURRENT host** | `freebsd/tools/baseline-collect.sh` |
+| 2. Baseline collection | written, **to be run on the 16-CURRENT host** against the official `chromium` 156.0.8078.47_1 package (`FreeBSD:16:amd64/latest`; a host ports build failed in `www/node24`, see 09 Phase 0 item 3) | `freebsd/tools/baseline-collect.sh` |
 | 3. Capsicum oracle and red-team probes | written (86 probes plus kernel attestation and a sysctl sweep); compiled and linked against a 16.0-CURRENT sysroot with `-Werror`; **not yet run** | `freebsd/tests/capsicum-standalone/` |
 | 3a. Oracle on 14.x and 15.x | CI job runs it in FreeBSD VMs and uploads JSON | `.github/workflows/freebsd-checks.yml` |
 | 4. GN args generator and privacy guard | done, 13 unit tests, passes against Helium 0.20.3 | `freebsd/tools/gnargs-from-flags`, `flags.freebsd.gn`, `freebsd/privacy/gn-privacy-keys.json` |
