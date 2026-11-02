@@ -15,7 +15,9 @@ stays the single source of truth.
 import argparse
 import configparser
 import filecmp
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -73,6 +75,38 @@ def series_files():
     return out
 
 
+REFRESH = os.path.join(REPO, "patches", "helium-refresh")
+ORIGINAL_RE = re.compile(r"^Original sha256: ([0-9a-f]{64})$", re.M)
+
+
+def refresh_files():
+    """Beryllium's refreshed copies of Helium patches (relative paths)."""
+    out = []
+    for root, _, files in os.walk(REFRESH):
+        for name in files:
+            out.append(os.path.relpath(os.path.join(root, name), REFRESH))
+    return sorted(out)
+
+
+def stale_refreshes():
+    """Refreshes whose Helium original changed since they were written."""
+    problems = []
+    for rel in refresh_files():
+        with open(os.path.join(REFRESH, rel), encoding="utf-8") as f:
+            m = ORIGINAL_RE.search(f.read())
+        original = os.path.join(REPO, "helium", "patches", rel)
+        if not os.path.exists(original):
+            problems.append(f"{rel}: no longer in Helium's patches")
+            continue
+        with open(original, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        if not m:
+            problems.append(f"{rel}: missing 'Original sha256:' header")
+        elif m.group(1) != digest:
+            problems.append(f"{rel}: Helium changed this patch; redo the refresh")
+    return problems
+
+
 def plan():
     """Return {dest_relpath: (source_abspath or None, content or None)}."""
     items = {}
@@ -80,6 +114,8 @@ def plan():
         items[dst] = (os.path.join(REPO, src), None)
     for rel in series_files():
         items[os.path.join("patches", rel)] = (os.path.join(REPO, "patches", rel), None)
+    for rel in refresh_files():
+        items[os.path.join("helium-refresh", rel)] = (os.path.join(REFRESH, rel), None)
     return items
 
 
@@ -87,6 +123,13 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--check", action="store_true")
     a = p.parse_args(argv)
+
+    problems = stale_refreshes()
+    if problems:
+        print("sync-port: Beryllium refreshes of Helium patches need attention:")
+        for msg in problems:
+            print(f"  {msg}")
+        return 1
 
     items = plan()
     mk = makefile_helium()

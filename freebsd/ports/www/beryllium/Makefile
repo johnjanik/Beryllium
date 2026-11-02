@@ -308,9 +308,17 @@ post-patch:
 	# from www/chromium
 	patch -d ${WRKSRC}/typescript/tsc/internal/bundled/libs -Ep2 < \
 		${WRKSRC}/third_party/typescript/linux-amd64/3pp/patches/typescript_native_preview.patch
-	# Stages 3 and 4: Helium's series, then Beryllium's
+	# Stages 3 and 4: Helium's series, then Beryllium's. Helium patches
+	# that conflict with the BSD set are replaced by Beryllium's refreshed
+	# copies (files/beryllium/helium-refresh, same relative paths); the
+	# Helium distfile itself is never modified.
+	${RM} -r ${WRKDIR}/helium-patches
+	${CP} -R ${WRKSRC_helium}/patches ${WRKDIR}/helium-patches
+	if [ -d ${BERYLLIUM_FILES}/helium-refresh ]; then \
+		${CP} -R ${BERYLLIUM_FILES}/helium-refresh/ ${WRKDIR}/helium-patches/; \
+	fi
 	cd ${WRKSRC_helium} && ${SETENV} PATCH_BIN=gpatch ${PYTHON_CMD} \
-		utils/patches.py apply ${WRKSRC} ${WRKSRC_helium}/patches \
+		utils/patches.py apply ${WRKSRC} ${WRKDIR}/helium-patches \
 		${BERYLLIUM_FILES}/patches
 	# Stage 5: domain substitution
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/domain_substitution.py apply \

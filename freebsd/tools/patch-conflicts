@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Find, and where possible fix, Helium patch hunks that fail on top of the
+BSD set, without a full Chromium checkout or a Poudriere run.
+
+For each Chromium file touched by the BSD layer and by Helium or Beryllium
+(the multi-layer rows of the patch matrix), this replays the port's order
+twice in parallel:
+
+  plain  the file at the pinned Chromium version, then Helium's sections
+  bsd    the same file with the imported BSD patch (stage 2) first
+
+applying every Helium and Beryllium series section for the file with the
+options Helium's utils/patches.py uses (GNU patch -p1, --ignore-whitespace,
+--forward, default fuzz).
+
+When a Helium section applies to `plain` but not to `bsd`, the two layers
+changed nearby lines. The tool then does a three-way merge (git merge-file):
+base = plain before the section, theirs = plain after it, ours = bsd before
+it. A clean merge gives the refreshed section mechanically: the diff from
+ours to the merged result. With --write-refresh, every Helium patch with a
+refreshed section is written to patches/helium-refresh/<same path> with an
+"Original sha256:" header, which freebsd/tools/sync-port verifies and the
+port applies in place of Helium's copy. Merges with real conflicts are
+reported for a hand merge.
+
+  patch-conflicts [--only path ...] [--report out.md] [--write-refresh]
+
+Exit status: 0 nothing failed (or everything was refreshed), 1 otherwise.
+"""
+
+import argparse
+import datetime
+import hashlib
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+HELIUM_PATCHES = os.path.join(REPO, "helium", "patches")
+
+
+def load(name, filename):
+    loader = importlib.machinery.SourceFileLoader(name, os.path.join(HERE, filename))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+wb = load("workbench", "patch-workbench")
+pm = load("patchmatrix", "patch-matrix")
+
+
+class Work:
+    """A scratch directory holding one file under its Chromium path."""
+
+    def __init__(self, root, path):
+        self.root = root
+        self.path = path
+        self.file = os.path.join(root, path)
+        os.makedirs(os.path.dirname(self.file), exist_ok=True)
+
+    def read(self):
+        if not os.path.exists(self.file):
+            return None
+        with open(self.file, "rb") as f:
+            return f.read()
+
+    def write(self, data):
+        if data is None:
+            if os.path.exists(self.file):
+                os.unlink(self.file)
+            return
+        with open(self.file, "wb") as f:
+            f.write(data)
+
+    def patch(self, text, strip, extra=()):
+        p = subprocess.run(["patch", f"-p{strip}", "--forward", "--no-backup-if-mismatch",
+                            *extra, "-d", self.root], input=text, text=True,
+                           capture_output=True)
+        rej = self.file + ".rej"
+        rejtext = ""
+        if os.path.exists(rej):
+            with open(rej, encoding="utf-8", errors="replace") as f:
+                rejtext = f.read()
+            os.unlink(rej)
+        return p.returncode, p.stdout + p.stderr + rejtext
+
+
+def merge3(ours, base, theirs):
+    """git merge-file; returns (merged bytes, number of conflicts)."""
+    with tempfile.TemporaryDirectory() as d:
+        paths = []
+        for name, data in (("ours", ours), ("base", base), ("theirs", theirs)):
+            p = os.path.join(d, name)
+            with open(p, "wb") as f:
+                f.write(data or b"")
+            paths.append(p)
+        r = subprocess.run(["git", "merge-file", "-p", *paths], capture_output=True)
+        if r.returncode < 0:
+            raise RuntimeError(r.stderr.decode())
+        return r.stdout, r.returncode
+
+
+def unified(path, before, after):
+    """A -p1 section from before to after, labelled like Helium's patches."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = os.path.join(d, "a"), os.path.join(d, "b")
+        with open(a, "wb") as f:
+            f.write(before or b"")
+        with open(b, "wb") as f:
+            f.write(after or b"")
+        r = subprocess.run(["diff", "-u", "--label", f"a/{path}", "--label", f"b/{path}",
+                            a, b], capture_output=True, text=True)
+        return r.stdout
+
+
+def shared_files():
+    _, rows = pm.build(wb.BSD_FILES, REPO, None)
+    return [r["file"] for r in rows if "bsd" in r["layers"]]
+
+
+def series_sections():
+    """{path: [(layer, patch_name, section_text)]} in application order."""
+    out = {}
+    for layer, d in (("helium", HELIUM_PATCHES), ("beryllium", os.path.join(REPO, "patches"))):
+        for name in wb.read_series(d):
+            if layer == "helium":
+                text = wb.helium_patch_text(name)
+            else:
+                with open(os.path.join(d, name), encoding="utf-8") as f:
+                    text = f.read()
+            for path, section in wb.split_git_patch(text):
+                out.setdefault(path, []).append((layer, name, section))
+    return out
+
+
+def write_refresh(name, new_sections, version):
+    """Write patches/helium-refresh/<name> from Helium's original, replacing
+    the sections for the given paths."""
+    original_path = os.path.join(HELIUM_PATCHES, name)
+    with open(original_path, encoding="utf-8") as f:
+        original = f.read()
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    # Start from the current text the port would apply (an existing refresh
+    # may already carry other refreshed sections).
+    current = wb.helium_patch_text(name)
+    lines = current.splitlines(keepends=True)
+    first = next((i for i, l in enumerate(lines)
+                  if l.startswith("--- ") and i + 1 < len(lines)
+                  and lines[i + 1].startswith("+++ ")), len(lines))
+    body = []
+    for path, section in wb.split_git_patch(current):
+        body.append(new_sections.get(path, section))
+    preamble = [l for l in lines[:first]
+                if not l.startswith(("Beryllium refresh of ", "Original sha256: ",
+                                     "Refreshed: ", "Reason: "))]
+    header = (
+        f"Beryllium refresh of helium/patches/{name}\n"
+        f"Original sha256: {digest}\n"
+        f"Refreshed: {datetime.date.today().isoformat()} against Chromium {version} "
+        f"with the imported BSD set, by freebsd/tools/patch-conflicts\n"
+        "Reason: the BSD set changes lines this patch uses as context; the\n"
+        "  refreshed sections are three-way merges and make the same change.\n"
+    )
+    dest = os.path.join(REPO, "patches", "helium-refresh", name)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write(header + "".join(preamble) + "".join(body))
+    return dest
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--only", nargs="*", help="limit to these Chromium paths")
+    ap.add_argument("--report", help="write a Markdown report here")
+    ap.add_argument("--write-refresh", action="store_true",
+                    help="write refreshed Helium patches to patches/helium-refresh")
+    ap.add_argument("--cache", default=os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "beryllium-workbench-cache"))
+    a = ap.parse_args(argv)
+
+    version = wb.chromium_version()
+    files = a.only or shared_files()
+    sections = series_sections()
+    applied, refreshed, manual, broken = 0, [], [], []
+    new_sections = {}  # patch name -> {path: refreshed section}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for path in files:
+            plain = Work(os.path.join(tmp, "plain"), path)
+            bsd = Work(os.path.join(tmp, "bsd"), path)
+            data = wb.fetch(path, version, a.cache)
+            plain.write(data)
+            bsd.write(data)
+            bsd_patch = os.path.join(wb.BSD_FILES, wb.bsd_patch_name(path))
+            if os.path.exists(bsd_patch):
+                with open(bsd_patch, encoding="utf-8") as f:
+                    rc, out = bsd.patch(f.read(), 0)
+                if rc != 0:
+                    broken.append((path, "bsd", os.path.basename(bsd_patch), out))
+                    continue
+            for layer, name, section in sections.get(path, []):
+                if layer == "beryllium":
+                    # Beryllium's patches are written against the BSD tree.
+                    rc, out = bsd.patch(section, 1, ("--ignore-whitespace",))
+                    if rc == 0:
+                        applied += 1
+                    else:
+                        manual.append((path, layer, name, out))
+                    continue
+                base, ours = plain.read(), bsd.read()
+                rc_plain, out_plain = plain.patch(section, 1, ("--ignore-whitespace",))
+                if rc_plain != 0:
+                    # Fails without the BSD set too: not a layering conflict.
+                    broken.append((path, layer, name, out_plain))
+                    bsd.patch(section, 1, ("--ignore-whitespace",))
+                    continue
+                rc, out = bsd.patch(section, 1, ("--ignore-whitespace",))
+                if rc == 0:
+                    applied += 1
+                    continue
+                bsd.write(ours)  # undo any partial application
+                merged, conflicts = merge3(ours, base, plain.read())
+                if conflicts == 0 and layer == "helium":
+                    bsd.write(merged)
+                    new_sections.setdefault(name, {})[path] = unified(path, ours, merged)
+                    refreshed.append((path, name))
+                else:
+                    manual.append((path, layer, name, out))
+                    bsd.write(merged if conflicts == 0 else ours)
+
+    print(f"patch-conflicts: {len(files)} files, {applied} sections applied, "
+          f"{len(refreshed)} refreshable by three-way merge, "
+          f"{len(manual)} need a hand merge, {len(broken)} fail without the BSD set")
+    for path, name in refreshed:
+        print(f"  REFRESH helium: {name} on {path}")
+    for path, layer, name, _ in manual:
+        print(f"  MANUAL  {layer}: {name} on {path}")
+    for path, layer, name, _ in broken:
+        print(f"  BROKEN  {layer}: {name} on {path}")
+
+    if a.write_refresh:
+        for name, secs in sorted(new_sections.items()):
+            print(f"  wrote {os.path.relpath(write_refresh(name, secs, version), REPO)}")
+    if a.report:
+        with open(a.report, "w", encoding="utf-8") as f:
+            f.write(f"# Patch conflicts on Chromium {version}\n\n")
+            for path, name in refreshed:
+                f.write(f"## refreshable: `{name}` on `{path}`\n\n```diff\n"
+                        f"{new_sections[name][path]}```\n\n")
+            for path, layer, name, out in manual + broken:
+                f.write(f"## {layer}: `{name}` on `{path}`\n\n```\n{out}\n```\n\n")
+    if manual or broken:
+        return 1
+    return 0 if (a.write_refresh or not refreshed) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
