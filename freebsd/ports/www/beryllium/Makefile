@@ -55,12 +55,16 @@ ONLY_FOR_ARCHS_REASON=	only amd64 is built and tested (plan/01 D6)
 
 CONFLICTS_INSTALL?=	beryllium-devel
 
-PATCH_DEPENDS=	gpatch:devel/patch
+# The patch stage runs Helium's Python tools (prune, patches, substitution,
+# translations, resources), so Python and Pillow must exist before it;
+# build dependencies are installed only after the patch stage.
+PATCH_DEPENDS=	gpatch:devel/patch \
+		${PYTHON_VERSION}:lang/python${PYTHON_SUFFIX} \
+		${PYTHON_PKGNAMEPREFIX}pillow>0:graphics/py-pillow@${PY_FLAVOR}
 
 BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
-		${PYTHON_PKGNAMEPREFIX}pillow>0:graphics/py-pillow@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
 		esbuild:devel/esbuild \
 		gperf:devel/gperf \
