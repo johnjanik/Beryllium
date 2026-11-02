@@ -3,8 +3,8 @@
 """Make freebsd/ports/www/beryllium self-contained for Poudriere.
 
 A Poudriere overlay port sees only its own directory, not the rest of this
-repository. This copies Beryllium's build inputs into the port's
-files/beryllium/ and writes Makefile.helium (the Helium commit, versions
+repository. This copies Beryllium's build inputs (tools, patches, refreshes and
+branding) into the port's files/beryllium/ and writes Makefile.helium (the Helium commit, versions
 and dependency pins, read from the helium submodule), so the submodule
 stays the single source of truth.
 
@@ -107,9 +107,30 @@ def stale_refreshes():
     return problems
 
 
+BRANDING = os.path.join(REPO, "branding")
+
+
+def branding_files():
+    """{port path: source}: generated Chromium branding and desktop icons."""
+    out = {}
+    chromium = os.path.join(BRANDING, "chromium")
+    for root, _, files in os.walk(chromium):
+        for name in files:
+            src = os.path.join(root, name)
+            out[os.path.join("branding", os.path.relpath(src, chromium))] = src
+    hicolor = os.path.join(BRANDING, "kit", "desktop", "hicolor")
+    for root, _, files in os.walk(hicolor):
+        for name in files:
+            src = os.path.join(root, name)
+            out[os.path.join("branding", "hicolor", os.path.relpath(src, hicolor))] = src
+    return out
+
+
 def plan():
     """Return {dest_relpath: (source_abspath or None, content or None)}."""
     items = {}
+    for dst, src in branding_files().items():
+        items[dst] = (src, None)
     for src, dst in COPIES.items():
         items[dst] = (os.path.join(REPO, src), None)
     for rel in series_files():

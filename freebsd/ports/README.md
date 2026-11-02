@@ -222,5 +222,6 @@ does not touch a stock `chromium` installation or its profile.
 - **Packing list.** Helium adds components (for example the uBlock Origin
   fork) that may install files `pkg-plist` does not list yet. `stage-qa`
   and `check-plist` will name them.
-- **Icons.** The build currently installs Helium's icons; replacing them with
-  Beryllium's is a branding task before any package is shared.
+- **Branding.** The build installs Beryllium's icons and logos from
+  `branding/` (see `branding/README.md`); Helium's generic page favicons are
+  kept.

@@ -141,6 +141,7 @@ USE_QT=		buildtools:build
 WRKSRC=		${WRKDIR}/chromium-${CHROMIUM_VERSION}
 BERYLLIUM_FILES=	${FILESDIR}/beryllium
 HELIUM_ENV=	HELIUM_UTILS=${WRKSRC_helium}/utils
+BERYLLIUM_ICON_SIZES=	16 22 24 32 48 64 128 256
 
 MAKE_ARGS=	-C out/${BUILDTYPE}
 ALL_TARGET=	chrome
@@ -334,12 +335,15 @@ post-patch:
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/helium_version.py \
 		--tree ${WRKSRC_helium} --platform-tree ${BERYLLIUM_FILES} \
 		--chromium-tree ${WRKSRC}
-	# TODO(branding): these are Helium's icons; replace with Beryllium's
-	# before any package is distributed (plan/01 D2).
+	# Helium's resources (its favicons are kept), then Beryllium's branding
+	# over every Helium logo (branding/, generated from the branding kit)
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/generate_resources.py \
 		resources/generate_resources.txt resources
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/replace_resources.py \
 		resources/helium_resources.txt resources ${WRKSRC}
+	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/replace_resources.py \
+		${BERYLLIUM_FILES}/branding/beryllium_resources.txt \
+		${BERYLLIUM_FILES}/branding ${WRKSRC}
 
 pre-configure:
 	# from www/chromium, minus the PGO profile merge (Helium sets
@@ -404,10 +408,10 @@ do-install:
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
 	@${SED} -i "" -e 's,\@\@PACKAGE\@\@,beryllium,g;s,\@\@MENUNAME\@\@,Beryllium,g' \
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
-	${CP} ${WRKSRC}/chrome/app/theme/chromium/product_logo_22_mono.png ${WRKSRC}/chrome/app/theme/chromium/product_logo_22.png
-.for s in 22 24 48 64 128 256
+	# Desktop icons: the branding kit's hicolor set, unchanged
+.for s in ${BERYLLIUM_ICON_SIZES}
 	@${MKDIR} ${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps
-	${INSTALL_DATA} ${WRKSRC}/chrome/app/theme/chromium/product_logo_${s}.png \
+	${INSTALL_DATA} ${BERYLLIUM_FILES}/branding/hicolor/${s}x${s}/apps/beryllium.png \
 		${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps/beryllium.png
 .endfor
 	${INSTALL_DATA} ${WRKSRC}/out/${BUILDTYPE}/*.png ${STAGEDIR}${DATADIR}

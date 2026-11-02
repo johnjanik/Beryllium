@@ -1,0 +1,53 @@
+{
+  "project": "Beryllium Browser",
+  "kit_version": "1.0",
+  "source_artwork": "transparent emblem derived from supplied Beryllium logo artwork",
+  "assets": {
+    "master": [
+      "master/beryllium-emblem-master-2048.png",
+      "master/beryllium-emblem-monochrome-2048.png"
+    ],
+    "svg": [
+      "source/beryllium-emblem.svg",
+      "source/beryllium-wordmark.svg"
+    ],
+    "application_png_sizes": [
+      16,
+      22,
+      24,
+      32,
+      48,
+      64,
+      128,
+      180,
+      192,
+      256,
+      512,
+      1024
+    ],
+    "desktop_hicolor_sizes": [
+      16,
+      22,
+      24,
+      32,
+      48,
+      64,
+      128,
+      256
+    ],
+    "web": [
+      "web/favicon.ico",
+      "web/favicon-16.png",
+      "web/favicon-32.png",
+      "web/favicon-48.png",
+      "web/apple-touch-icon.png",
+      "web/pwa-192.png",
+      "web/pwa-512.png"
+    ]
+  },
+  "limitations": [
+    "Emblem SVG embeds raster PNG; it is not a true vector trace.",
+    "Small-size icon simplification has not yet been custom redrawn.",
+    "Chromium-specific branding destinations must be mapped to the target source revision."
+  ]
+}
