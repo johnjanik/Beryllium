@@ -180,19 +180,23 @@ repository, so only Beryllium itself is compiled. Expect several hours.
 
 Check: the summary at the end says `Built: 1` (success) or `Failed: 1`.
 
-If it failed, find the log:
+Poudriere keeps one log directory per run; `latest` always points at the
+current or most recent one. Progress of a running build (the newest
+`[NN% step/total]` line):
 
 ```sh
-find /usr/local/poudriere/data/logs/bulk -name 'beryllium-*.log' | tail -1
+doas tail -1 /usr/local/poudriere/data/logs/bulk/151amd64-default/latest/logs/beryllium-0.20.3.1.log
 ```
 
-and send the part from the first `Error`, `FAILED` or `***` line back to
-the start of that build phase (the phases are marked `=======<phase: ...>`).
+`doas poudriere status` summarises the running build. If the build failed,
+send that log file, or the part from the first `Error`, `FAILED` or `***`
+line back to the start of that build phase (the phases are marked
+`=======<phase: ...>`).
 
 ### Step 11 (root): install and run
 
 ```sh
-doas pkg add "$(find /usr/local/poudriere/data/packages -name 'beryllium-*.pkg' | tail -1)"
+doas pkg add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
 ```
 
 Then, as you:
