@@ -66,10 +66,33 @@ SANITY = [
 ]
 
 
+XML_DECLARATION_RE = re.compile(r"^<\?xml[^>]*\?>\s*")
+
+
 def install(util):
-    """Swap Beryllium's rules into Helium's utility module."""
+    """Swap Beryllium's rules into Helium's utility module.
+
+    Also makes a rewritten .grd/.grdp keep or omit the XML declaration
+    exactly as the original did. Helium's replace_grit_tree always writes
+    one; Helium's own pass never rewrites files that contain only "Helium"
+    (such as components/helium_onboarding/helium_onboarding_strings.grdp),
+    but this pass does, and the onboarding generator (generate-i18n.mts)
+    requires <grit-part> to be the first node. Without this, the build
+    fails with "expected <grit-part> root element" (2 November 2026).
+    """
     util.REPLACEMENT_REGEXES_STR = BERYLLIUM_REGEXES_STR
     util.REPLACEMENT_REGEXES = [(re.compile(a), b) for a, b in BERYLLIUM_REGEXES_STR]
+    original = getattr(util, "_beryllium_original_replace_grit_tree",
+                       util.replace_grit_tree)
+    util._beryllium_original_replace_grit_tree = original
+
+    def replace_grit_tree(text):
+        out, fp_map = original(text)
+        if not text.lstrip().startswith("<?xml"):
+            out = XML_DECLARATION_RE.sub("", out, count=1)
+        return out, fp_map
+
+    util.replace_grit_tree = replace_grit_tree
 
 
 def sanity(util):

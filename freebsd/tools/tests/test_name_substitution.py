@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Tests for freebsd/tools/beryllium-name-substitution (regex layer only)."""
 
+import hashlib
 import importlib.machinery
 import importlib.util
 import os
 import sys
+import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,12 +27,46 @@ class SubstitutionTests(unittest.TestCase):
         sys.path.insert(0, UTILS)
         import name_substitution_utils as util
         self.util = util
-        self.saved = (util.REPLACEMENT_REGEXES_STR, util.REPLACEMENT_REGEXES)
+        self.saved = (util.REPLACEMENT_REGEXES_STR, util.REPLACEMENT_REGEXES,
+                      util.replace_grit_tree)
         berysub.install(util)
+        # compute_fp imports grit from a Chromium tree; a stand-in is enough
+        # to exercise the rewrite.
+        tclib = types.ModuleType("grit.extern.tclib")
+        tclib.GenerateMessageId = lambda text, meaning="": hashlib.sha1(
+            (text + meaning).encode()).hexdigest()
+        self.saved_modules = {k: sys.modules.get(k) for k in
+                              ("grit", "grit.extern", "grit.extern.tclib")}
+        grit, extern = types.ModuleType("grit"), types.ModuleType("grit.extern")
+        grit.extern, extern.tclib = extern, tclib
+        sys.modules.update({"grit": grit, "grit.extern": extern,
+                            "grit.extern.tclib": tclib})
 
     def tearDown(self):
-        self.util.REPLACEMENT_REGEXES_STR, self.util.REPLACEMENT_REGEXES = self.saved
+        (self.util.REPLACEMENT_REGEXES_STR, self.util.REPLACEMENT_REGEXES,
+         self.util.replace_grit_tree) = self.saved
+        for k, v in self.saved_modules.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
         sys.path.remove(UTILS)
+
+    def test_grdp_without_declaration_stays_without(self):
+        # The onboarding strings file: no XML declaration, only "Helium".
+        text = ('<grit-part>\n<message name="IDS_HELIUM_ONBOARDING_PAGE_TITLE" '
+                'desc="x">\n  Helium Setup\n</message>\n</grit-part>\n')
+        out, fp_map = self.util.replace_grit_tree(text)
+        self.assertTrue(out.startswith("<grit-part>"), out[:60])
+        self.assertIn("Beryllium Setup", out)
+        self.assertEqual(len(fp_map), 1)
+
+    def test_grd_with_declaration_keeps_it(self):
+        text = ('<?xml version="1.0" encoding="UTF-8"?>\n<grit-part>\n'
+                '<message name="IDS_X" desc="x">Google Chrome</message>\n</grit-part>\n')
+        out, _ = self.util.replace_grit_tree(text)
+        self.assertTrue(out.startswith("<?xml"), out[:60])
+        self.assertIn(">Beryllium<", out)
 
     def test_sanity_table(self):
         berysub.sanity(self.util)
