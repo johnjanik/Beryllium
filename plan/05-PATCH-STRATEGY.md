@@ -275,6 +275,21 @@ sections in 10 Helium patches, all refreshed mechanically, 4 by the
 "Helium's version wins" rule (each checked by hand: Helium removes the same
 `#if` guards on Linux), 0 hand merges; 449 sections then apply.
 
+The second kind of conflict does not fail at patch time. Code that Helium
+*adds* is written for Linux, Windows and macOS, so its
+`BUILDFLAG(IS_LINUX)` conditions are false on FreeBSD and the code takes
+the Windows/macOS branch, while GN (`is_linux` true on BSD) still compiles
+the Linux source files. The fourth build stopped at 89% on exactly this
+(Helium's importer called `GetArcUserDataFolder()`, which exists only on
+Windows and macOS). `patches/platform/beryllium-bsd-helium-linux-conditions.patch`
+adds `|| BUILDFLAG(IS_BSD)` to every such condition, as the FreeBSD port
+does for Chromium's own code, and `freebsd/tools/helium-linux-conditions`
+(run in CI) fails when a Helium update adds or changes one, until it is
+reviewed in `freebsd/helium-linux-conditions.json` (`bsd-like-linux`,
+checked against the patch, or `linux-only` with a reason). GN's and grit's
+`is_linux` need no change: GN's is true on BSD, and the BSD set already
+patches grit's.
+
 ## 8. Upstreaming policy
 
 | Change type | Destination |

@@ -3,3 +3,4 @@
 # Paths are relative to this directory. See plan/05-PATCH-STRATEGY.md.
 branding/beryllium-webui-scheme.patch
 platform/beryllium-paths-and-branding.patch
+platform/beryllium-bsd-helium-linux-conditions.patch

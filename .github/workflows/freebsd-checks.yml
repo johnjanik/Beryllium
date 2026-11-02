@@ -30,6 +30,8 @@ jobs:
         run: ./freebsd/tools/gnargs-from-flags check
       - name: Port inputs in sync with the repository
         run: ./freebsd/tools/sync-port --check
+      - name: Helium IS_LINUX conditions reviewed for FreeBSD
+        run: ./freebsd/tools/helium-linux-conditions
       - name: Privacy key check on the port's own copy
         run: >
           ./freebsd/tools/gnargs-from-flags check

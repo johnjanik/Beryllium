@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Guard against Helium code that takes the wrong branch on FreeBSD.
+
+Helium's patches add code with BUILDFLAG(IS_LINUX) conditions. On FreeBSD
+that macro is false (GN's is_linux and grit's is_linux are true, so they are
+not a problem), and such code falls into the Windows/macOS branch unless
+Beryllium adds "|| BUILDFLAG(IS_BSD)"
+(patches/platform/beryllium-bsd-helium-linux-conditions.patch).
+
+Every line Helium's series adds that mentions IS_LINUX or OS_LINUX is
+listed in freebsd/helium-linux-conditions.json with a decision:
+
+  bsd-like-linux  the Beryllium patch changes this line; the check verifies
+                  that the patch really removes it from that file
+  linux-only      the code is Linux specific and BSD keeps the other
+                  branch; needs a "reason"
+  unreviewed      added by --write for a new line; fails the check
+
+The check also fails when Helium's set of lines differs from the list, so a
+Helium update that adds or changes such a condition is reviewed instead of
+silently miscompiling or misbehaving on BSD (fourth Poudriere build,
+2 November 2026: GetArcUserDataFolder undeclared).
+
+  helium-linux-conditions          check (exit 1 on any problem)
+  helium-linux-conditions --write  update the list, keeping decisions;
+                                   new lines are "unreviewed"
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+DEFAULT_PATCHES = os.path.join(REPO, "helium", "patches")
+DEFAULT_REVIEWED = os.path.join(REPO, "freebsd", "helium-linux-conditions.json")
+DEFAULT_FIX = os.path.join(
+    REPO, "patches", "platform", "beryllium-bsd-helium-linux-conditions.patch")
+LINUX_RE = re.compile(r"\b(IS_LINUX|OS_LINUX)\b")
+DECISIONS = ("bsd-like-linux", "linux-only", "unreviewed")
+COMMENT = ("Lines Helium's patches add that mention IS_LINUX or OS_LINUX, "
+           "reviewed for FreeBSD. See freebsd/tools/helium-linux-conditions "
+           "for the meaning of each decision.")
+
+
+def patch_lines(path, sign):
+    """Yield (file, stripped line) for each line with the given sign."""
+    current = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("+++ "):
+                current = line[4:].strip().split("\t")[0]
+                if current.startswith("b/"):
+                    current = current[2:]
+            elif line.startswith("--- "):
+                continue
+            elif line.startswith(sign) and current:
+                yield current, line[1:].strip()
+
+
+def helium_lines(patches_dir):
+    out = []
+    with open(os.path.join(patches_dir, "series"), encoding="utf-8") as f:
+        series = [l.split("#", 1)[0].strip() for l in f]
+    for name in filter(None, series):
+        for path, text in patch_lines(os.path.join(patches_dir, name), "+"):
+            if LINUX_RE.search(text):
+                out.append({"patch": name, "file": path, "line": text})
+    return out
+
+
+def key(e):
+    return (e["patch"], e["file"], e["line"])
+
+
+def check(now, reviewed, fix_patch):
+    problems = []
+    now_keys = set(map(key, now))
+    rev_keys = {key(e): e for e in reviewed}
+    for k in sorted(now_keys - set(rev_keys)):
+        problems.append("new line from Helium, not reviewed: %s :: %s :: %s" % k)
+    for k in sorted(set(rev_keys) - now_keys):
+        problems.append("reviewed line no longer added by Helium: %s :: %s :: %s" % k)
+    removed = set(patch_lines(fix_patch, "-")) if os.path.exists(fix_patch) else set()
+    for k, e in sorted(rev_keys.items()):
+        d = e.get("decision")
+        if d not in DECISIONS:
+            problems.append(f"bad decision {d!r}: %s :: %s :: %s" % k)
+        elif d == "unreviewed":
+            problems.append("unreviewed: %s :: %s :: %s" % k)
+        elif d == "linux-only" and not e.get("reason"):
+            problems.append("linux-only needs a reason: %s :: %s :: %s" % k)
+        elif d == "bsd-like-linux" and (e["file"], e["line"]) not in removed:
+            problems.append("bsd-like-linux but %s does not change it: %s :: %s :: %s"
+                            % ((os.path.basename(fix_patch),) + k))
+    return problems
+
+
+def write(now, reviewed, path):
+    old = {key(e): e for e in reviewed}
+    lines = []
+    for e in now:
+        prev = old.get(key(e), {})
+        entry = dict(e, decision=prev.get("decision", "unreviewed"))
+        if prev.get("reason"):
+            entry["reason"] = prev["reason"]
+        lines.append(entry)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"_comment": COMMENT, "lines": lines}, f, indent=2)
+        f.write("\n")
+    return lines
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--write", action="store_true")
+    ap.add_argument("--patches", default=DEFAULT_PATCHES)
+    ap.add_argument("--reviewed", default=DEFAULT_REVIEWED)
+    ap.add_argument("--fix-patch", default=DEFAULT_FIX)
+    a = ap.parse_args(argv)
+    now = helium_lines(a.patches)
+    reviewed = []
+    if os.path.exists(a.reviewed):
+        with open(a.reviewed, encoding="utf-8") as f:
+            reviewed = json.load(f)["lines"]
+    if a.write:
+        lines = write(now, reviewed, a.reviewed)
+        new = sum(1 for e in lines if e["decision"] == "unreviewed")
+        print(f"helium-linux-conditions: recorded {len(lines)} lines, {new} unreviewed")
+        return 0
+    problems = check(now, reviewed, a.fix_patch)
+    if not problems:
+        print(f"helium-linux-conditions: OK ({len(now)} reviewed lines)")
+        return 0
+    print("helium-linux-conditions: Helium's IS_LINUX conditions need review "
+          "for FreeBSD (see freebsd/tools/helium-linux-conditions):")
+    for p in problems:
+        print("  " + p)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

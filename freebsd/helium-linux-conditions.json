@@ -1,0 +1,71 @@
+{
+  "_comment": "Lines Helium's patches add that mention IS_LINUX or OS_LINUX, reviewed for FreeBSD. See freebsd/tools/helium-linux-conditions for the meaning of each decision.",
+  "lines": [
+    {
+      "patch": "brave/chrome-importer-files.patch",
+      "file": "chrome/browser/importer/chrome_importer_list.cc",
+      "line": "#if !BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "brave/chrome-importer-files.patch",
+      "file": "chrome/browser/importer/chrome_importer_list.cc",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "brave/chrome-importer-files.patch",
+      "file": "chrome/common/importer/chrome_importer_utils.h",
+      "line": "#if !BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "brave/chrome-importer-files.patch",
+      "file": "chrome/common/importer/chrome_importer_utils.h",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/core/custom-keyboard-shortcuts.patch",
+      "file": "chrome/browser/ui/browser_shortcuts/browser_shortcut_serialization.cc",
+      "line": "#elif BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/frame/layout/browser_view_layout_impl.cc",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/frame/layout/browser_view_layout_impl.cc",
+      "line": "#endif  // BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc",
+      "line": "#endif  // BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/location_bar/location_bar_view.cc",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    },
+    {
+      "patch": "helium/ui/layout/zen-mode.patch",
+      "file": "chrome/browser/ui/views/toolbar/toolbar_icon_container_view.cc",
+      "line": "#if BUILDFLAG(IS_LINUX)",
+      "decision": "bsd-like-linux"
+    }
+  ]
+}

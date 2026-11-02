@@ -1,0 +1,140 @@
+Beryllium: treat FreeBSD like Linux in Helium's added code
+
+Purpose: Helium's patches add code with BUILDFLAG(IS_LINUX) conditions,
+  written for Linux, Windows and macOS only. On FreeBSD that macro is false
+  (GN's is_linux is true, so the Linux source files are compiled), and the
+  code falls into the Windows/macOS branch. The FreeBSD port fixes the same
+  problem in Chromium's own code by adding "|| BUILDFLAG(IS_BSD)"; this
+  patch does the same for every IS_LINUX condition Helium adds (9
+  conditions and 2 matching #endif comments, 7 files):
+  - importer (brave/chrome-importer-files.patch): BSD compiles
+    chrome_importer_utils_linux.cc, so it must also take the Linux branch
+    of the declarations and profile list; otherwise it calls
+    GetArcUserDataFolder(), which exists only on Windows and macOS. This was
+    the compile error at 89% of the fourth Poudriere build (2 November 2026).
+  - keyboard shortcuts (helium/core/custom-keyboard-shortcuts.patch): the
+    Super key label.
+  - zen mode (helium/ui/layout/zen-mode.patch): Linux desktop window
+    decoration fixes, which apply to the same X11/Wayland desktop on BSD.
+Stage: 4 (Beryllium series). Depends on those three Helium patches.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench.
+Guard: freebsd/tools/helium-linux-conditions compares Helium's IS_LINUX
+  conditions with the reviewed list in freebsd/helium-linux-conditions.json
+  and fails CI when Helium adds or changes one.
+Test: the build compiles chrome/browser/importer; functional (planned): the
+  import dialog lists Linux-style browser profiles (no Arc or Canary).
+
+--- a/chrome/browser/importer/chrome_importer_list.cc
++++ b/chrome/browser/importer/chrome_importer_list.cc
+@@ -73,7 +73,7 @@
+           base::FilePath::StringType(FILE_PATH_LITERAL("Local State")))),
+       GetChromeDevUserDataFolder(), kGoogleChromeBrowserDev,
+       user_data_importer::TYPE_CHROME);
+-#if !BUILDFLAG(IS_LINUX)
++#if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_BSD)
+   AddChromeToProfiles(
+       profiles,
+       GetChromeSourceProfiles(GetCanaryUserDataFolder().Append(
+@@ -147,7 +147,7 @@
+         base::FilePath::StringType(FILE_PATH_LITERAL("Local State")))),
+     GetBraveUserDataFolder(), kBraveBrowser, user_data_importer::TYPE_BRAVE);
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   // Installed via snap Opera has different profile path.
+   AddChromeToProfiles(
+       profiles,
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_serialization.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_serialization.cc
+@@ -171,7 +171,7 @@
+     parts.push_back(u"⌘");
+ #elif BUILDFLAG(IS_WIN)
+     parts.push_back(l10n_util::GetStringUTF16(IDS_APP_WINDOWS_KEY));
+-#elif BUILDFLAG(IS_LINUX)
++#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+     parts.push_back(l10n_util::GetStringUTF16(IDS_APP_SUPER_KEY));
+ #endif
+   }
+--- a/chrome/browser/ui/views/frame/layout/browser_view_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_layout_impl.cc
+@@ -327,7 +327,7 @@
+     background->SetVisible(true);
+     background->SetPrimaryColor(CustomCornersBackground::FrameTheme());
+   }
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   // On Linux with classic theme (no native top border), paint the top
+   // container with the frame color and rounded upper corners in zen mode
+   // so the toolbar doesn't poke above the window's rounded corners.
+@@ -342,7 +342,7 @@
+     corners[CornerOrientation::kTopTrailing] = window_corner;
+     background->SetCorners(corners);
+   }
+-#endif  // BUILDFLAG(IS_LINUX)
++#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   else {
+     // No need to paint otherwise.
+     background->SetVisible(false);
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -1677,7 +1677,7 @@
+     ProposedLayout& top_container_layout,
+     BrowserLayoutParams& params,
+     float top_chrome_ratio) const {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   constexpr int kZenModeTopBorderHeight = 4;
+   if (top_chrome_ratio >= 1.0f || views().browser_view->bounds().y() > 0) {
+     return;
+@@ -1686,7 +1686,7 @@
+     top_container_layout.bounds.set_height(kZenModeTopBorderHeight);
+     params.SetTop(top_container_layout.bounds.bottom());
+   }
+-#endif  // BUILDFLAG(IS_LINUX)
++#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+ }
+ 
+ void BrowserViewTabbedLayoutImpl::ConfigureTopContainerBackground(
+--- a/chrome/browser/ui/views/location_bar/location_bar_view.cc
++++ b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+@@ -333,7 +333,7 @@
+   // to draw outside the parent's bounds.
+   SetPaintToLayer();
+   layer()->SetFillsBoundsOpaquely(false);
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   SetClipLayerToVisibleBounds(true);
+ #endif
+ 
+--- a/chrome/browser/ui/views/toolbar/toolbar_icon_container_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_icon_container_view.cc
+@@ -117,7 +117,7 @@
+   SetPaintToLayer();
+   layer()->SetFillsBoundsOpaquely(false);
+   layer()->AsTextured()->SetFillsBoundsCompletely(false);
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+   SetClipLayerToVisibleBounds(true);
+ #endif
+   AddLayerToRegion(border_.layer(), views::LayerRegion::kBelow);
+--- a/chrome/common/importer/chrome_importer_utils.h
++++ b/chrome/common/importer/chrome_importer_utils.h
+@@ -24,7 +24,7 @@
+ base::FilePath GetChromeUserDataFolder();
+ base::FilePath GetChromeBetaUserDataFolder();
+ base::FilePath GetChromeDevUserDataFolder();
+-#if !BUILDFLAG(IS_LINUX)
++#if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_BSD)
+ // Canary is not available on Linux
+ base::FilePath GetCanaryUserDataFolder();
+ #endif
+@@ -50,7 +50,7 @@
+ base::FilePath GetWhaleUserDataFolder();
+ base::FilePath GetBraveUserDataFolder();
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+ base::FilePath GetOperaSnapUserDataFolder();
+ #endif
+ base::ListValue GetChromeSourceProfiles(const base::FilePath& local_state);
