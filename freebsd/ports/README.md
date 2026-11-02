@@ -10,96 +10,192 @@ Status: **untested skeleton**. The first builds are expected to fail in
 places (see "What to expect"); each failure log is the input for the next
 fix.
 
+## How to read the steps
+
+- **Where:** every command runs from the top of your clone,
+  `~/Beryllium`, unless the step says otherwise. Repository paths such as
+  `freebsd/tools/sync-port` are relative to it.
+- **Who:** steps marked *you* run as your normal user. Steps marked *root*
+  need root; they are written with `doas`. Use `sudo` instead if that is
+  what you have set up, or run them from a root shell (then type the path
+  to your clone instead of `$HOME`).
+- **Check:** each step ends with what you should see. If you see something
+  else, stop there and send the output.
+
 ## Requirements
 
 - amd64, 16 GB RAM or more (128 GB is comfortable), about 100 GB free disk,
   1.5 million free inodes.
-- `ports-mgmt/poudriere` 3.4 or newer (`-b` fetches dependency packages).
-- A ports tree close to the one the BSD patches were imported from (ports
-  commit in `www/beryllium/files/IMPORTED-FROM`); a current `main` works.
+- A ports tree in `/usr/ports` (a git checkout of the FreeBSD ports `main`
+  branch is fine).
 
 ## One-time setup
 
-All commands as root.
+### Step 1 (you): get the current code
 
-1. Poudriere configuration (`/usr/local/etc/poudriere.conf`), at least:
+```sh
+cd ~/Beryllium
+```
 
-   ```sh
-   ZPOOL=zroot            # or NO_ZFS=yes
-   BASEFS=/usr/local/poudriere
-   DISTFILES_CACHE=/usr/ports/distfiles
-   USE_TMPFS=no           # the build tree is tens of GB
-   ALLOW_MAKE_JOBS=yes
-   MAX_EXECUTION_TIME=172800
-   NOHANG_TIME=28800
-   ```
+```sh
+git checkout main && git pull && git submodule update --init
+```
 
-2. A build jail for a release target. Packages built for 15.x run on a
-   16-CURRENT host:
+Check: `git -C helium describe --tags` prints `0.20.3`.
 
-   ```sh
-   poudriere jail -c -j 151amd64 -v 15.1-RELEASE -a amd64
-   ```
+### Step 2 (root): host tools
 
-3. The ports tree (reusing an existing git checkout of `/usr/ports`):
+```sh
+doas pkg install -y poudriere git python3
+```
 
-   ```sh
-   poudriere ports -c -p default -m null -M /usr/ports
-   ```
+Check: `poudriere version` prints 3.4 or newer, and `python3 --version`
+prints a version.
 
-4. The Beryllium overlay (adjust the path to your clone):
+### Step 3 (you): the port is in sync with the repository
 
-   ```sh
-   poudriere ports -c -p beryllium -m null -M /home/you/Beryllium/freebsd/ports
-   ```
+```sh
+freebsd/tools/sync-port --check
+```
+
+Check: `sync-port: port inputs are up to date`.
+
+### Step 4 (root): Poudriere configuration
+
+Find out whether the machine uses ZFS and what the pool is called:
+
+```sh
+zpool list -H -o name
+```
+
+Then edit `/usr/local/etc/poudriere.conf` (as root) so it contains these
+lines. Use the pool name printed above for `ZPOOL`; if the command printed
+nothing or failed, use `NO_ZFS=yes` instead of the `ZPOOL` line.
+
+```sh
+ZPOOL=zroot
+BASEFS=/usr/local/poudriere
+DISTFILES_CACHE=/usr/ports/distfiles
+USE_TMPFS=no
+ALLOW_MAKE_JOBS=yes
+MAX_EXECUTION_TIME=172800
+NOHANG_TIME=28800
+```
+
+`USE_TMPFS=no` because the build tree is tens of GB. The two time limits
+allow a long first build.
+
+Create the distfiles directory if it does not exist:
+
+```sh
+doas mkdir -p /usr/ports/distfiles
+```
+
+Check: `grep -E '^(ZPOOL|NO_ZFS|BASEFS|DISTFILES_CACHE|USE_TMPFS|ALLOW_MAKE_JOBS)' /usr/local/etc/poudriere.conf`
+shows your values.
+
+### Step 5 (root): a build jail
+
+A FreeBSD 15.1 jail, because 15.x is a release target and packages built
+for 15.x run on a 16-CURRENT host. This downloads the 15.1 base system.
+
+```sh
+doas poudriere jail -c -j 151amd64 -v 15.1-RELEASE -a amd64
+```
+
+Check: `doas poudriere jail -l` lists `151amd64` with version
+`15.1-RELEASE`.
+
+### Step 6 (root): the ports tree
+
+Reuse your existing `/usr/ports` checkout:
+
+```sh
+doas poudriere ports -c -p default -m null -M /usr/ports
+```
+
+Check: `doas poudriere ports -l` lists `default` with method `null`.
+
+### Step 7 (root): the Beryllium overlay
+
+`$HOME` is expanded by your shell before `doas` runs, so this points at your
+clone:
+
+```sh
+doas poudriere ports -c -p beryllium -m null -M "$HOME/Beryllium/freebsd/ports"
+```
+
+Check: `doas poudriere ports -l` now also lists `beryllium`.
 
 ## Before each build
 
-1. Make sure the port is in sync with the repository (CI checks this too):
+### Step 8 (you): the port is still in sync
 
-   ```sh
-   freebsd/tools/sync-port --check
-   ```
+Repeat step 3 after every `git pull`:
 
-2. `distinfo` pins every distfile except the Helium source archive, which
-   this project's automation could not download. Record it once per Helium
-   update (this also fetches the other distfiles into the cache Poudriere
-   uses):
+```sh
+freebsd/tools/sync-port --check
+```
 
-   ```sh
-   make -C freebsd/ports/www/beryllium PORTSDIR=/usr/ports DISTDIR=/usr/ports/distfiles makesum
-   ```
+### Step 9 (root, then you): record the Helium archive checksum
 
-   Then check that only the Helium line was added and nothing else changed:
+`distinfo` pins every distfile except the Helium source archive, which this
+project's automation could not download. Record it once per Helium update.
+This also downloads all the other distfiles (about 2.2 GB, mostly the
+Chromium tarball) into the cache Poudriere uses, so it takes a while.
 
-   ```sh
-   git diff freebsd/ports/www/beryllium/distinfo
-   ```
+```sh
+doas make -C freebsd/ports/www/beryllium PORTSDIR=/usr/ports DISTDIR=/usr/ports/distfiles makesum
+```
 
-   Any change to an existing SHA256 line means a distfile differs from what
-   was pinned: stop and report it. The Chromium tarball must match Google's
-   published hash, `d9e8b637dbdd3a1cccb4966e81a66e3f3c4c29f5ce9732a70f5a4f949cd03923`
-   for `chromium-156.0.8078.79-lite.tar.xz`.
+`makesum` rewrote `distinfo` as root; give it back to yourself:
+
+```sh
+doas chown "$(id -un)" freebsd/ports/www/beryllium/distinfo
+```
+
+Then check that only the Helium lines and the timestamp changed:
+
+```sh
+git diff freebsd/ports/www/beryllium/distinfo
+```
+
+Check: the diff adds two lines for `imputnet-helium-2f81b9ca...` (SHA256
+and SIZE) and changes `TIMESTAMP`, nothing else. Any change to an existing
+SHA256 line means a downloaded file differs from what was pinned: stop and
+send the diff. The Chromium tarball's line must stay
+`d9e8b637dbdd3a1cccb4966e81a66e3f3c4c29f5ce9732a70f5a4f949cd03923`
+(Google's published hash for `chromium-156.0.8078.79-lite.tar.xz`).
 
 ## Build
 
+### Step 10 (root): build
+
 ```sh
-poudriere bulk -j 151amd64 -p default -O beryllium -b latest www/beryllium
+doas poudriere bulk -j 151amd64 -p default -O beryllium -b latest www/beryllium
 ```
 
 `-b latest` takes every dependency from the official `latest` package
-repository, so only Beryllium itself is compiled. The log is under
-`/usr/local/poudriere/data/logs/bulk/151amd64-default-beryllium/latest/logs/`.
+repository, so only Beryllium itself is compiled. Expect several hours.
 
-To keep the work directory of a failed build for inspection, add `-k` and
-`-i` (interactive) or set `KEEP_FAILED_WRKDIR` style options; the log alone
-is usually enough.
+Check: the summary at the end says `Built: 1` (success) or `Failed: 1`.
 
-## Install and run
+If it failed, find the log:
 
 ```sh
-pkg add /usr/local/poudriere/data/packages/151amd64-default-beryllium/All/beryllium-0.20.3.1.pkg
+find /usr/local/poudriere/data/logs/bulk -name 'beryllium-*.log' | tail -1
 ```
+
+and send the part from the first `Error`, `FAILED` or `***` line back to
+the start of that build phase (the phases are marked `=======<phase: ...>`).
+
+### Step 11 (root): install and run
+
+```sh
+doas pkg add "$(find /usr/local/poudriere/data/packages -name 'beryllium-*.pkg' | tail -1)"
+```
+
+Then, as you:
 
 ```sh
 beryllium
@@ -123,6 +219,3 @@ does not touch a stock `chromium` installation or its profile.
   and `check-plist` will name them.
 - **Icons.** The build currently installs Helium's icons; replacing them with
   Beryllium's is a branding task before any package is shared.
-
-Send the failing part of the log (from the first `Error` or `FAILED` line
-back to the start of that step) and it becomes the next fix.
