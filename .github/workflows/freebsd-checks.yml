@@ -32,6 +32,8 @@ jobs:
         run: ./freebsd/tools/sync-port --check
       - name: Helium IS_LINUX conditions reviewed for FreeBSD
         run: ./freebsd/tools/helium-linux-conditions
+      - name: Helium Crashpad calls defined on FreeBSD
+        run: ./freebsd/tools/helium-bsd-crashpad-calls
       - name: Privacy key check on the port's own copy
         run: >
           ./freebsd/tools/gnargs-from-flags check

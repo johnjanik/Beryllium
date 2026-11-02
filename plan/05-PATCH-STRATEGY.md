@@ -290,6 +290,17 @@ checked against the patch, or `linux-only` with a reason). GN's and grit's
 `is_linux` need no change: GN's is true on BSD, and the BSD set already
 patches grit's.
 
+A third kind fails only at the final link: Helium code calling functions
+whose only definition is in a file the BSD set removes from the build. The
+fifth build compiled all 54,881 steps and then could not link `chrome`
+because Helium's crash reporting calls four functions from `crashpad.cc`,
+which FreeBSD does not build (there is no Crashpad on FreeBSD).
+`patches/platform/beryllium-bsd-no-crashpad.patch` adds `crashpad_bsd.cc`
+with definitions that state the FreeBSD situation (no reports, no uploads),
+and `freebsd/tools/helium-bsd-crashpad-calls` (run in CI) fails when Helium
+calls a `crash_reporter::` function that has neither a FreeBSD definition
+nor a reviewed reason to link.
+
 ## 8. Upstreaming policy
 
 | Change type | Destination |

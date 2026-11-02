@@ -6,9 +6,10 @@ Google's official Chromium `-lite` tarball, the imported FreeBSD patch set
 `helium` submodule pins), and Beryllium's own patches (`files/beryllium/`).
 `www/beryllium-devel` is the same build under a separate package name.
 
-Status: **untested skeleton**. The first builds are expected to fail in
-places (see "What to expect"); each failure log is the input for the next
-fix.
+Status: **in progress**. The fifth build (2 November 2026) compiled every
+step and failed only at the final link, which is now fixed. Further
+failures are still expected at packaging (see "What to expect"); each
+failure log is the input for the next fix.
 
 ## How to read the steps
 

@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Guard against Helium code that calls Crashpad functions FreeBSD lacks.
+
+The FreeBSD port removes components/crash/core/app/crashpad.cc from the
+build: FreeBSD has no Crashpad. Helium code that calls a crash_reporter::
+function defined there compiles but fails at the very end of the build,
+when chrome is linked (fifth Poudriere build, 2 November 2026).
+
+Every crash_reporter::NAME( call in a line Helium's series adds must be
+either defined in Beryllium's FreeBSD replacement, crashpad_bsd.cc
+(patches/platform/beryllium-bsd-no-crashpad.patch), or listed in
+REVIEWED below with the reason it links on FreeBSD. Anything else fails, so
+the problem shows up in CI instead of after a 2.5 hour build.
+
+  helium-bsd-crashpad-calls    check (exit 1 on an unhandled call)
+"""
+
+import argparse
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+DEFAULT_PATCHES = os.path.join(REPO, "helium", "patches")
+DEFAULT_FIX = os.path.join(REPO, "patches", "platform",
+                           "beryllium-bsd-no-crashpad.patch")
+STUB_FILE = "components/crash/core/app/crashpad_bsd.cc"
+CALL_RE = re.compile(r"\bcrash_reporter::([A-Za-z_]\w*)\s*\(")
+# A definition in the stub: return type, name, parameter list, then "{".
+DEF_RE = re.compile(r"^[A-Za-z_][\w:<>,\s\*&]*?\b([A-Za-z_]\w*)\s*\([^;]*\)\s*\{")
+
+# (function, file that calls it) -> why it links on FreeBSD.
+REVIEWED = {
+    ("UploadListToValue", "chrome/browser/ui/webui/crashes/crashes_ui.cc"):
+        "defined in components/crash/core/browser/crashes_ui_util.cc, "
+        "which FreeBSD builds",
+    ("DeleteCrashReportImpl", "components/crash/core/app/crash_export_thunks.cc"):
+        "crash_export_thunks.cc is part of chrome_elf, Windows only",
+}
+
+
+def added_lines(path):
+    current = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("+++ "):
+                current = line[4:].strip().split("\t")[0]
+                if current.startswith("b/"):
+                    current = current[2:]
+            elif line.startswith("+") and current:
+                yield current, line[1:]
+
+
+def helium_calls(patches_dir):
+    with open(os.path.join(patches_dir, "series"), encoding="utf-8") as f:
+        series = [l.split("#", 1)[0].strip() for l in f]
+    calls = []
+    for name in filter(None, series):
+        for path, text in added_lines(os.path.join(patches_dir, name)):
+            if text.lstrip().startswith("//"):
+                continue
+            for m in CALL_RE.finditer(text):
+                calls.append((name, path, m.group(1)))
+    return calls
+
+
+def stub_definitions(fix_patch):
+    if not os.path.exists(fix_patch):
+        return set()
+    return {m.group(1) for path, text in added_lines(fix_patch)
+            if path == STUB_FILE for m in [DEF_RE.match(text)] if m}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--patches", default=DEFAULT_PATCHES)
+    ap.add_argument("--fix-patch", default=DEFAULT_FIX)
+    a = ap.parse_args(argv)
+    defined = stub_definitions(a.fix_patch)
+    problems = []
+    calls = helium_calls(a.patches)
+    for patch, path, fn in calls:
+        if fn in defined or (fn, path) in REVIEWED:
+            continue
+        problems.append(f"{patch} :: {path} :: crash_reporter::{fn}")
+    if not problems:
+        print(f"helium-bsd-crashpad-calls: OK ({len(calls)} calls, "
+              f"{len(defined)} FreeBSD definitions)")
+        return 0
+    print("helium-bsd-crashpad-calls: Helium calls Crashpad functions that "
+          "FreeBSD does not build; define them in " + STUB_FILE +
+          " (patches/platform/beryllium-bsd-no-crashpad.patch) or review them "
+          "in freebsd/tools/helium-bsd-crashpad-calls:")
+    for p in sorted(set(problems)):
+        print("  " + p)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

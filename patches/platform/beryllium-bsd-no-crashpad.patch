@@ -1,0 +1,72 @@
+Beryllium: crash report functions for FreeBSD, which has no Crashpad
+
+Purpose: the FreeBSD port removes crashpad.cc from the build (there is no
+  Crashpad on FreeBSD) and fences Chromium's own calls into it with
+  #if !BUILDFLAG(IS_BSD). Helium's crash reporting adds new calls
+  (helium_crash_reporting.cc from helium/core/crash-reporting-prefs.patch,
+  helium_crash_dialog_controller.cc from helium/ui/crash-dialog.patch) to
+  four functions defined only in crashpad.cc: SetUploadConsentFromUser,
+  GetReports, RequestSingleCrashUpload and DeleteCrashReport. The fifth
+  Poudriere build (2 November 2026) compiled everything and then failed to
+  link chrome with these four undefined symbols.
+  This patch adds crashpad_bsd.cc, built on BSD in place of crashpad.cc,
+  with definitions that state FreeBSD's real situation: there are never
+  any crash reports and nothing is uploaded. The crash dialog therefore
+  never appears, and no report can reach a crash server. One definition
+  file instead of fencing Helium's nine call sites, so a Helium update that
+  calls these functions again still links.
+Stage: 4 (Beryllium series). Depends on the imported BSD patch
+  patch-components_crash_core_app_BUILD.gn (stage 2) and on
+  helium/core/crash-reporting-prefs.patch (stage 3), which declares
+  SetUploadConsentFromUser and DeleteCrashReport.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Compiled
+  against the post-stage-4 crashpad.h with FreeBSD's build_config.h and
+  -Werror=missing-declarations, so every definition matches a declaration.
+Known gap: Helium's crash reporting setting (Settings, Helium services)
+  is still shown on FreeBSD and has no effect there.
+Test: the build links chrome; functional (planned): no crash dialog after
+  a forced renderer or browser crash; beryllium://crashes lists nothing.
+security-review: not required (removes behaviour; no new input handling)
+
+--- a/components/crash/core/app/BUILD.gn
++++ b/components/crash/core/app/BUILD.gn
+@@ -106,6 +106,7 @@
+ 
+   if (is_bsd) {
+     sources -= [ "crashpad.cc" ]
++    sources += [ "crashpad_bsd.cc" ]
+   }
+ 
+   defines = [ "CRASH_IMPLEMENTATION" ]
+--- /dev/null
++++ b/components/crash/core/app/crashpad_bsd.cc
+@@ -0,0 +1,28 @@
++// Copyright 2026 The Beryllium Authors
++// SPDX-License-Identifier: GPL-3.0-only
++
++// FreeBSD has no Crashpad: the FreeBSD port removes crashpad.cc from the
++// build. Helium's crash reporting settings and crash dialog call the report
++// functions below, so on FreeBSD they describe the true state: there are
++// never any crash reports, and nothing is ever uploaded.
++
++#include <string>
++#include <vector>
++
++#include "components/crash/core/app/crashpad.h"
++
++namespace crash_reporter {
++
++void SetUploadConsentFromUser(bool consent) {}
++
++void GetReports(std::vector<Report>* reports) {
++  reports->clear();
++}
++
++void RequestSingleCrashUpload(const std::string& local_id) {}
++
++bool DeleteCrashReport(const std::string& local_id) {
++  return false;
++}
++
++}  // namespace crash_reporter
