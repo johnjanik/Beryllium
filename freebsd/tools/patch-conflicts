@@ -15,10 +15,13 @@ options Helium's utils/patches.py uses (GNU patch -p1, --ignore-whitespace,
 --forward, default fuzz).
 
 When a Helium section applies to `plain` but not to `bsd`, the two layers
-changed nearby lines. The tool then does a three-way merge (git merge-file):
+changed nearby lines. The tool then does a three-way line merge:
 base = plain before the section, theirs = plain after it, ours = bsd before
-it. A clean merge gives the refreshed section mechanically: the diff from
-ours to the merged result. With --write-refresh, every Helium patch with a
+it. Edits on different lines merge even when adjacent; when Helium deletes a
+range containing a BSD edit, or rewrites it with code free of platform
+conditionals, Helium's version wins and is listed for review. A
+clean merge gives the refreshed section mechanically: the diff from ours to
+the merged result. With --write-refresh, every Helium patch with a
 refreshed section is written to patches/helium-refresh/<same path> with an
 "Original sha256:" header, which freebsd/tools/sync-port verifies and the
 port applies in place of Helium's copy. Merges with real conflicts are
@@ -31,6 +34,7 @@ Exit status: 0 nothing failed (or everything was refreshed), 1 otherwise.
 
 import argparse
 import datetime
+import difflib
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -92,19 +96,74 @@ class Work:
         return p.returncode, p.stdout + p.stderr + rejtext
 
 
+def _edits(base, other):
+    """Line edits turning base into other: [(i1, i2, [new lines])]."""
+    sm = difflib.SequenceMatcher(a=base, b=other, autojunk=False)
+    return [(i1, i2, other[j1:j2]) for tag, i1, i2, j1, j2 in sm.get_opcodes()
+            if tag != "equal"]
+
+
 def merge3(ours, base, theirs):
-    """git merge-file; returns (merged bytes, number of conflicts)."""
-    with tempfile.TemporaryDirectory() as d:
-        paths = []
-        for name, data in (("ours", ours), ("base", base), ("theirs", theirs)):
-            p = os.path.join(d, name)
-            with open(p, "wb") as f:
-                f.write(data or b"")
-            paths.append(p)
-        r = subprocess.run(["git", "merge-file", "-p", *paths], capture_output=True)
-        if r.returncode < 0:
-            raise RuntimeError(r.stderr.decode())
-        return r.stdout, r.returncode
+    """Three-way line merge of ours (BSD side) and theirs (Helium's result).
+
+    Edits on different lines merge even when adjacent (git merge-file treats
+    adjacent edits as a conflict). When Helium deletes a range that contains
+    a BSD edit, the deletion wins: the BSD change only adjusted code Helium
+    removes. Anything else touching the same base lines is a conflict.
+    Returns (merged bytes, conflicts, notes)."""
+    b = (base or b"").splitlines(keepends=True)
+    o = (ours or b"").splitlines(keepends=True)
+    t = (theirs or b"").splitlines(keepends=True)
+    eo, et = _edits(b, o), _edits(b, t)
+    notes, conflicts, merged_edits = [], 0, []
+
+    def overlaps(x, y):
+        (a1, a2, _), (b1, b2, _) = x, y
+        if a1 == a2 and b1 == b2:
+            return a1 == b1
+        if a1 == a2:
+            return b1 < a1 < b2
+        if b1 == b2:
+            return a1 < b1 < a2
+        return a1 < b2 and b1 < a2
+
+    used_o = set()
+    for te in et:
+        clash = [k for k, oe in enumerate(eo) if overlaps(te, oe)]
+        if not clash:
+            merged_edits.append(te)
+            continue
+        if all(eo[k] == te for k in clash):
+            merged_edits.append(te)
+            used_o.update(clash)
+            continue
+        t1, t2, tlines = te
+        inside = all(t1 <= eo[k][0] and eo[k][1] <= t2 for k in clash)
+        if inside and not tlines:
+            merged_edits.append(te)
+            used_o.update(clash)
+            notes.append(f"Helium deletes base lines {t1 + 1}-{t2}, dropping a BSD "
+                         f"edit inside them")
+            continue
+        if inside and not any(b"BUILDFLAG(IS_" in l for l in tlines):
+            # Helium rewrites the region and its new code has no platform
+            # conditionals, so the BSD edit (to the old code) has nothing
+            # to apply to.
+            merged_edits.append(te)
+            used_o.update(clash)
+            notes.append(f"Helium rewrites base lines {t1 + 1}-{t2} without platform "
+                         f"conditionals, replacing a BSD edit inside them")
+            continue
+        conflicts += 1
+        used_o.update(clash)
+    merged_edits += [oe for k, oe in enumerate(eo) if k not in used_o]
+    # Apply from the end so indexes stay valid; inserts before replacements
+    # at the same position keep a stable order.
+    merged_edits.sort(key=lambda e: (e[0], e[1] != e[0]), reverse=True)
+    out = list(b)
+    for i1, i2, lines in merged_edits:
+        out[i1:i2] = lines
+    return b"".join(out), conflicts, notes
 
 
 def unified(path, before, after):
@@ -126,17 +185,24 @@ def shared_files():
 
 
 def series_sections():
-    """{path: [(layer, patch_name, section_text)]} in application order."""
+    """{path: [(layer, patch_name, original_section, applied_section)]} in
+    application order. For Helium, `original` is Helium's own text (what the
+    plain replay applies) and `applied` is what the port applies on the BSD
+    tree (Beryllium's refresh when one exists)."""
     out = {}
     for layer, d in (("helium", HELIUM_PATCHES), ("beryllium", os.path.join(REPO, "patches"))):
         for name in wb.read_series(d):
-            if layer == "helium":
-                text = wb.helium_patch_text(name)
-            else:
-                with open(os.path.join(d, name), encoding="utf-8") as f:
-                    text = f.read()
-            for path, section in wb.split_git_patch(text):
-                out.setdefault(path, []).append((layer, name, section))
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                original = dict(wb.split_git_patch(f.read()))
+            refreshed = layer == "helium" and os.path.exists(
+                os.path.join(wb.REFRESH_DIR, name))
+            applied = (dict(wb.split_git_patch(wb.helium_patch_text(name)))
+                       if refreshed else original)
+            for path, section in original.items():
+                # A section a refresh leaves out is already made by the BSD
+                # set (identical change); None means "nothing to apply".
+                out.setdefault(path, []).append(
+                    (layer, name, section, applied.get(path)))
     return out
 
 
@@ -157,6 +223,10 @@ def write_refresh(name, new_sections, version):
     body = []
     for path, section in wb.split_git_patch(current):
         body.append(new_sections.get(path, section))
+    if not "".join(body).strip():
+        raise SystemExit(f"patch-conflicts: every section of {name} is already made "
+                         "by the BSD set; an empty refresh would make patch(1) "
+                         "fail, so this case needs a hand decision")
     preamble = [l for l in lines[:first]
                 if not l.startswith(("Beryllium refresh of ", "Original sha256: ",
                                      "Refreshed: ", "Reason: "))]
@@ -205,7 +275,7 @@ def main(argv=None):
                 if rc != 0:
                     broken.append((path, "bsd", os.path.basename(bsd_patch), out))
                     continue
-            for layer, name, section in sections.get(path, []):
+            for layer, name, section, applied_section in sections.get(path, []):
                 if layer == "beryllium":
                     # Beryllium's patches are written against the BSD tree.
                     rc, out = bsd.patch(section, 1, ("--ignore-whitespace",))
@@ -219,18 +289,22 @@ def main(argv=None):
                 if rc_plain != 0:
                     # Fails without the BSD set too: not a layering conflict.
                     broken.append((path, layer, name, out_plain))
-                    bsd.patch(section, 1, ("--ignore-whitespace",))
+                    if applied_section is not None:
+                        bsd.patch(applied_section, 1, ("--ignore-whitespace",))
                     continue
-                rc, out = bsd.patch(section, 1, ("--ignore-whitespace",))
+                if applied_section is None:
+                    applied += 1  # the BSD set already made this change
+                    continue
+                rc, out = bsd.patch(applied_section, 1, ("--ignore-whitespace",))
                 if rc == 0:
                     applied += 1
                     continue
                 bsd.write(ours)  # undo any partial application
-                merged, conflicts = merge3(ours, base, plain.read())
+                merged, conflicts, notes = merge3(ours, base, plain.read())
                 if conflicts == 0 and layer == "helium":
                     bsd.write(merged)
                     new_sections.setdefault(name, {})[path] = unified(path, ours, merged)
-                    refreshed.append((path, name))
+                    refreshed.append((path, name, notes))
                 else:
                     manual.append((path, layer, name, out))
                     bsd.write(merged if conflicts == 0 else ours)
@@ -238,8 +312,10 @@ def main(argv=None):
     print(f"patch-conflicts: {len(files)} files, {applied} sections applied, "
           f"{len(refreshed)} refreshable by three-way merge, "
           f"{len(manual)} need a hand merge, {len(broken)} fail without the BSD set")
-    for path, name in refreshed:
+    for path, name, notes in refreshed:
         print(f"  REFRESH helium: {name} on {path}")
+        for n in notes:
+            print(f"          review: {n}")
     for path, layer, name, _ in manual:
         print(f"  MANUAL  {layer}: {name} on {path}")
     for path, layer, name, _ in broken:
@@ -251,9 +327,11 @@ def main(argv=None):
     if a.report:
         with open(a.report, "w", encoding="utf-8") as f:
             f.write(f"# Patch conflicts on Chromium {version}\n\n")
-            for path, name in refreshed:
-                f.write(f"## refreshable: `{name}` on `{path}`\n\n```diff\n"
-                        f"{new_sections[name][path]}```\n\n")
+            for path, name, notes in refreshed:
+                f.write(f"## refreshable: `{name}` on `{path}`\n\n")
+                for n in notes:
+                    f.write(f"- review: {n}\n")
+                f.write(f"\n```diff\n{new_sections[name][path]}```\n\n")
             for path, layer, name, out in manual + broken:
                 f.write(f"## {layer}: `{name}` on `{path}`\n\n```\n{out}\n```\n\n")
     if manual or broken:

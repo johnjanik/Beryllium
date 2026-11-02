@@ -244,6 +244,37 @@ Expected hot spots, from the file inventories collected at the snapshot:
 7. Update `freebsd/ports/www/beryllium/distinfo`, bump the platform revision,
    write the build manifest, tag.
 
+## 7a. Conflicts between the BSD set and Helium's series (as built, 2 November 2026)
+
+The first Poudriere builds showed the order in section 3 works for the BSD
+set (all 1,696 patches applied to Chromium 156.0.8078.79) and that Helium's
+patches, written against unmodified Chromium, can fail where a BSD patch
+changed their context lines (typically `|| BUILDFLAG(IS_BSD)` added to an
+`#if`). Since nothing in `helium/` is edited, such a Helium patch gets a
+Beryllium **refresh**: a corrected copy at
+`patches/helium-refresh/<same path as in helium/patches>`, which the port
+lays over a copy of Helium's patch directory before applying the series.
+
+- `freebsd/tools/patch-conflicts` replays every file both layers touch,
+  with Helium's patch options, and finds the failures without a full
+  checkout. With `--write-refresh` it writes refreshes by three-way line
+  merge: edits on different lines merge even when adjacent; where Helium
+  deletes a block containing a BSD edit, or rewrites it with code free of
+  platform conditionals, Helium's version wins and the tool lists it for
+  review; anything else is left for a hand merge. A section a refresh
+  leaves out is one the BSD set already makes identically.
+- Each refresh starts with `Original sha256:` of the Helium patch it
+  replaces. `freebsd/tools/sync-port --check` (and CI) fails when Helium
+  changes a refreshed patch, so a refresh never silently outlives its
+  original.
+- Per Chromium or Helium update, step 4 of section 7 becomes: run
+  `patch-conflicts`, review its notes, `--write-refresh`, then `sync-port`.
+
+First result (Helium 0.20.3 on the BSD set from ports `6ad3e0c8`): 13 failing
+sections in 10 Helium patches, all refreshed mechanically, 4 by the
+"Helium's version wins" rule (each checked by hand: Helium removes the same
+`#if` guards on Linux), 0 hand merges; 449 sections then apply.
+
 ## 8. Upstreaming policy
 
 | Change type | Destination |

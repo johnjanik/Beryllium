@@ -594,6 +594,8 @@ and Q11 (rename the user-visible `helium://` scheme to `beryllium://`).
 | BSD patch import | 1,696 patches from ports `6ad3e0c8`; 217 on security-review paths, review debt tracked | `freebsd/tools/import-bsd-patches`, `freebsd/ports/www/beryllium/BSD-PATCH-REVIEW.md` |
 | Port skeleton | written, **not yet built**; Google `-lite` tarball (04 section 2.1); one `distinfo` line (Helium archive) recorded by `make makesum` on the build host | `freebsd/ports/www/beryllium`, `freebsd/ports/README.md` |
 | Patch workbench | builds any file in its post-stage-4 state for writing new patches | `freebsd/tools/patch-workbench` |
+| First Poudriere builds (2 November) | build 1: fetch, checksums and extract pass; patch stage lacked Python (fixed). Build 2: all 1,696 BSD patches apply to `.79`, pruning complete, Helium's `disable-ai.patch` fails on BSD-changed context | `freebsd/results/` (logs with the owner) |
+| BSD/Helium conflicts | all 13 failing sections refreshed (10 Helium patches), 449 sections verified to apply; procedure in 05 section 7a | `freebsd/tools/patch-conflicts`, `patches/helium-refresh/` |
 | Icons | still Helium's; replace before any package is shared | branding task |
 
 

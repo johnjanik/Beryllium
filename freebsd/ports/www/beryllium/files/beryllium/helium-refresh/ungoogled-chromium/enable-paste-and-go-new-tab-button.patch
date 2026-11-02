@@ -1,0 +1,42 @@
+Beryllium refresh of helium/patches/ungoogled-chromium/enable-paste-and-go-new-tab-button.patch
+Original sha256: 0b13523199bb613268a9caa39e74f80cda44e0ef3b37ed74672720f36ba4a49f
+Refreshed: 2026-11-02 against Chromium 156.0.8078.79 with the imported BSD set, by freebsd/tools/patch-conflicts
+Reason: the BSD set changes lines this patch uses as context; the
+  refreshed sections are three-way merges and make the same change.
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -1422,9 +1422,6 @@
+ }
+ 
+ void NewTabFromClipboardURL(BrowserWindowInterface* browser) {
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+-  if (ui::Clipboard::IsSupportedClipboardBuffer(
+-          ui::ClipboardBuffer::kSelection)) {
+     ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+     CHECK(clipboard)
+         << "Clipboard instance is not available, cannot proceed with "
+@@ -1454,8 +1451,6 @@
+               }
+             },
+             browser->GetWeakPtr()));
+-  }
+-#endif
+ }
+ 
+ void CloseTab(BrowserWindowInterface* browser) {
+--- a/chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.cc
+@@ -245,13 +245,11 @@
+     new_tab_button_->GetViewAccessibility().SetName(
+         l10n_util::GetStringUTF16(IDS_ACCNAME_NEWTAB));
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+     // On Linux, middle-clicking the New Tab Button triggers
+     // paste and navigate, either to URLs or to search queries.
+     new_tab_button_->SetTriggerableEventFlags(
+         new_tab_button_->GetTriggerableEventFlags() |
+         ui::EF_MIDDLE_MOUSE_BUTTON);
+-#endif
+   }
+ 
+   reserved_grab_handle_space_ =

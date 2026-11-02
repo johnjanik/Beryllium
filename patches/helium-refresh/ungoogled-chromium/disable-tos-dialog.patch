@@ -1,0 +1,16 @@
+Beryllium refresh of helium/patches/ungoogled-chromium/disable-tos-dialog.patch
+Original sha256: b8d1364f3b6aaf641827a23474338fa97358eda9738ba3df6e09c1e6f349c640
+Refreshed: 2026-11-02 against Chromium 156.0.8078.79 with the imported BSD set, by freebsd/tools/patch-conflicts
+Reason: the BSD set changes lines this patch uses as context; the
+  refreshed sections are three-way merges and make the same change.
+--- a/chrome/browser/first_run/first_run.h
++++ b/chrome/browser/first_run/first_run.h
+@@ -74,7 +74,7 @@
+   bool confirm_to_quit;
+ #endif
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+-  bool eula_required = true;
++  bool eula_required = false;
+ #endif
+ };
+ 

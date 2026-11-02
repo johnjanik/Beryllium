@@ -1,0 +1,19 @@
+Beryllium refresh of helium/patches/helium/core/use-system-python3.patch
+Original sha256: adf627d3c025bf1f782306a1b82864481ac83aeba92a8719ef556f81d21a9bb3
+Refreshed: 2026-11-02 against Chromium 156.0.8078.79 with the imported BSD set, by freebsd/tools/patch-conflicts
+Reason: the BSD set changes lines this patch uses as context; the
+  refreshed sections are three-way merges and make the same change.
+--- a/build/config/siso/platform.star
++++ b/build/config/siso/platform.star
+@@ -8,7 +8,10 @@ load("@builtin//runtime.star", "runtime"
+ load("@builtin//struct.star", "module")
+ 
+ # Python binary name for host actions.
+-__python_bin = "../../third_party/cpython3/host/bin/python3"
++__python_bin = {
++    True: "python3.exe",
++    False: "python3",
++}[runtime.os == "windows"]
+ 
+ # Python binary name for remote Linux worker actions (cross-compilation from Windows/macOS).
+ __remote_python_bin = "../../third_party/cpython3/linux-amd64/bin/python3"
