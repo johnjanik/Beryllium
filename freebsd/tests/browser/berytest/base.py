@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Test case base: one browser per test class, crash checks after each test."""
 
+import os
 import unittest
 
-from . import context
+from . import context, cores
 from .browser import Browser, has_display
 
 
@@ -58,6 +59,29 @@ class BrowserTest(unittest.TestCase):
                                 for c in crashes)
             self.ctx.note(self.id(), f"renderer crash during the test: {details}\n"
                           f"browser log tail:\n{self.browser.log_tail(25)}")
+            self.collect_cores()
+
+    def collect_cores(self):
+        """With --cores: backtraces of new core dumps, saved and noted."""
+        if not self.browser.core_dir:
+            return
+        import time
+        time.sleep(2)  # the kernel finishes writing the core
+        seen = getattr(self.ctx, "cores_seen", set())
+        self.ctx.cores_seen = seen
+        new = [c for c in cores.find(self.browser.core_dir, self.browser.started_at)
+               if c not in seen]
+        if not new:
+            self.note("no core file was written; check kern.coredump=1 and kern.corefile "
+                      "(sysctl kern.corefile=/var/tmp/%N.%P.core), then rerun with --cores")
+            return
+        for core in new:
+            seen.add(core)
+            bt = cores.backtrace(self.browser.binary, core)
+            name = f"backtrace-{self.id().split('.')[-1]}-{os.path.basename(core)}.txt"
+            with open(self.ctx.artifact(name), "w") as f:
+                f.write(f"core {core}\nbinary {self.browser.binary}\n\n{bt}\n")
+            self.note(f"core {core}; backtrace in {name}:\n" + "\n".join(bt.splitlines()[:30]))
 
     def url(self, path):
         return self.browser.url(path)

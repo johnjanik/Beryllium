@@ -9,6 +9,7 @@ browser's stderr to the results directory.
 import fcntl
 import json
 import os
+import resource
 import shutil
 import signal
 import subprocess
@@ -17,6 +18,8 @@ import time
 from .cdp import CDPError, Connection, Page
 
 DEFAULT_BINARIES = ("/usr/local/bin/beryllium", "/usr/local/share/beryllium/beryllium")
+# The launcher sets "ulimit -c 0"; --cores runs the browser itself.
+DIRECT_BINARY = "/usr/local/share/beryllium/beryllium"
 KEEP_ENV = ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR",
             "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "DBUS_SESSION_BUS_ADDRESS",
             "LANG", "LC_ALL", "LC_CTYPE", "TZ", "PATH", "USER", "LOGNAME", "SHELL",
@@ -48,6 +51,10 @@ class Browser:
         self.ctx = ctx
         self.name = name
         self.binary = find_binary(ctx.options.browser)
+        self.cores = getattr(ctx.options, "cores", False)
+        if self.cores and self.binary == DEFAULT_BINARIES[0] and os.access(DIRECT_BINARY, os.X_OK):
+            self.binary = DIRECT_BINARY
+        self.core_dir = ctx.artifact("cores") if self.cores else None
         self.headless = ctx.options.headless if headless is None else headless
         self.root = ctx.scratch(name)
         self.home = os.path.join(self.root, "home")
@@ -95,14 +102,22 @@ class Browser:
         from_browser_r, from_browser_w = os.pipe()
         child_r, child_w = _high_fd(to_browser_r), _high_fd(from_browser_w)
 
+        cores = self.cores
+
         def preexec():
             os.dup2(child_r, 3)
             os.dup2(child_w, 4)
             os.setsid()
+            if cores:
+                _, hard = resource.getrlimit(resource.RLIMIT_CORE)
+                resource.setrlimit(resource.RLIMIT_CORE, (hard, hard))
 
+        if self.core_dir:
+            os.makedirs(self.core_dir, exist_ok=True)
+        self.started_at = time.time()
         self.log = open(self.log_path, "wb")
         self.proc = subprocess.Popen(
-            self.command(), env=self.environment(), cwd=self.root,
+            self.command(), env=self.environment(), cwd=self.core_dir or self.root,
             stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT,
             pass_fds=(3, 4), preexec_fn=preexec)
         os.close(child_r)

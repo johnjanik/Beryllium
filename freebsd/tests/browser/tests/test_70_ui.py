@@ -50,15 +50,21 @@ class Toolbar(BrowserTest):
         cls.port = free_port()
         return [f"--enable-ui-devtools={cls.port}"]
 
-    def snapshot(self, devtools):
-        """[(depth, name, props, node)] for the toolbar subtree."""
-        root = devtools.document()
-        toolbars = ui.find(root, "ToolbarView")
-        self.assertTrue(toolbars, "no ToolbarView in the window")
-        out = []
-        for node, depth, _ in ui.walk(toolbars[0]):
-            out.append((depth, ui.node_name(node), devtools.properties(node["nodeId"]), node))
-        return out
+    def snapshot(self, devtools, attempts=8):
+        """[(depth, name, props, node)] for the toolbar subtree. The window
+        can change while it is read (a node disappears); read it again."""
+        last = None
+        for _ in range(attempts):
+            root = devtools.document()
+            toolbars = ui.find(root, "ToolbarView")
+            self.assertTrue(toolbars, "no ToolbarView in the window")
+            try:
+                return [(depth, ui.node_name(node), devtools.properties(node["nodeId"]), node)
+                        for node, depth, _ in ui.walk(toolbars[0])]
+            except RuntimeError as e:
+                last = e
+                time.sleep(0.5)
+        raise last
 
     def save(self, label, rows):
         with open(self.ctx.artifact(f"ui-toolbar-{label}.txt"), "w") as f:

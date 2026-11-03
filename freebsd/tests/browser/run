@@ -36,8 +36,11 @@ def options(argv):
     ap.add_argument("--browser", help="browser binary (default: /usr/local/bin/beryllium)")
     ap.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
                     help="extra browser switch, may repeat")
-    ap.add_argument("--scheme", default="beryllium",
-                    help="internal page scheme (chrome for a stock Chromium)")
+    ap.add_argument("--scheme", default="chrome",
+                    help="scheme for opening internal pages over DevTools (default chrome: "
+                         "Beryllium shows beryllium:// but maps it to chrome:// only in "
+                         "the browser's own navigation, which DevTools' Page.navigate "
+                         "bypasses; the startup test checks beryllium:// separately)")
     ap.add_argument("--headless", action="store_true", help="no windows")
     ap.add_argument("--network", action="store_true",
                     help="also run tests that need the internet (YouTube)")
@@ -50,6 +53,12 @@ def options(argv):
     ap.add_argument("--results", help="results directory (default: ~/beryllium-test-results/<time>)")
     ap.add_argument("--keep-profiles", action="store_true",
                     help="keep the throwaway profiles for inspection")
+    ap.add_argument("--cores", action="store_true",
+                    help="let crashing processes write core dumps (runs the browser binary "
+                         "directly, not the launcher) and add lldb backtraces to the report")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="also replay video playback under different browser switches to "
+                         "find which part of the video path crashes (several minutes)")
     ap.add_argument("--list", action="store_true", help="list the tests and exit")
     o = ap.parse_args(argv)
     if not o.results:

@@ -28,6 +28,13 @@ it they are skipped. Useful options:
 - `run --headless`: no windows; the toolbar test is skipped.
 - `run --list`: list every test with its description.
 - `run --keep-profiles`: keep the throwaway profiles for inspection.
+- `run media videodiag --diagnose`: replay video under switches that each
+  turn off one part of the video path (GPU, hardware decode, decode
+  threads, Wayland...) and record which avoid a crash
+  (`video-diagnosis.txt`).
+- `run --cores`: let crashing processes write core dumps and put `lldb`
+  backtraces in the report (`backtrace-*.txt`). It runs the browser binary
+  directly, because the launcher turns core dumps off.
 
 It prints a summary and writes everything to
 `~/beryllium-test-results/<date-time>/`: `report.txt` (send this one),
@@ -40,6 +47,7 @@ files named below.
 |---|---|---|
 | `startup` | starts; beryllium://version says Beryllium, not Helium; profile in `~/.config/beryllium`, nothing in Chromium's or Helium's folders | |
 | `pages` | 20 internal pages load without a crash or error page, and none says "Helium" (except the credits) | |
+| `videodiag` | with `--diagnose`: video playback under nine switch sets, as a table | `video-diagnosis.txt` |
 | `media` | codec support (VP9, AV1, Opus, H.264, AAC); H.264, VP9 and AV1 clips play; AV1, VP9 and Opus through Media Source Extensions, the way YouTube streams | `media-codecs.json` |
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
 | `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17) | |
@@ -59,6 +67,33 @@ can also read yourself:
 ```sh
 grep 'exited on signal' /var/log/messages | tail
 ```
+
+## Getting a backtrace
+
+Core dumps go to `kern.corefile` (default `%N.core` in the crashing
+process's directory). Point it somewhere writable for the run, then put it
+back:
+
+```sh
+doas sysctl kern.corefile=/var/tmp/%N.%P.core
+```
+
+```sh
+freebsd/tests/browser/run media --cores
+```
+
+The backtraces are in the results directory. The cores themselves can be
+large; delete them afterwards (`doas rm /var/tmp/beryllium.*.core`) and
+restore the setting (`doas sysctl kern.corefile=%N.core`).
+
+## Internal pages and beryllium://
+
+The tests open internal pages as `chrome://`. Beryllium shows them as
+`beryllium://` and maps that back to `chrome://` in the browser's own
+navigation (address bar, bookmarks, menus, new tabs), which DevTools'
+`Page.navigate` does not go through (it returns `ERR_ABORTED` for
+`beryllium://`). The `startup` group checks `beryllium://version` through
+the new-tab path instead.
 
 ## Validating the harness elsewhere
 
