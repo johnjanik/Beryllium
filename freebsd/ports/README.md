@@ -6,10 +6,8 @@ Google's official Chromium `-lite` tarball, the imported FreeBSD patch set
 `helium` submodule pins), and Beryllium's own patches (`files/beryllium/`).
 `www/beryllium-devel` is the same build under a separate package name.
 
-Status: **in progress**. The fifth build (2 November 2026) compiled every
-step and failed only at the final link, which is now fixed. Further
-failures are still expected at packaging (see "What to expect"); each
-failure log is the input for the next fix.
+Status: **builds a package**. The seventh build (3 November 2026, 15.1
+jail) completed: `Built: 1`. The package has not been run or tested yet.
 
 ## How to read the steps
 
@@ -97,15 +95,43 @@ shows your values.
 
 ### Step 5 (root): a build jail
 
-A FreeBSD 15.1 jail, because 15.x is a release target and packages built
-for 15.x run on a 16-CURRENT host. This downloads the 15.1 base system.
+Build in a jail with the **same FreeBSD major version as the machine you
+will install on**: `pkg` refuses a package built for another major version
+("wrong architecture: FreeBSD:15:amd64 instead of FreeBSD:16:amd64").
+Create the jail that matches your machine; you can have both.
+
+**16-CURRENT machine** (the project's build host). This downloads a recent
+16.0-CURRENT snapshot of the base system:
+
+```sh
+doas poudriere jail -c -j 160amd64 -v 16.0-CURRENT -a amd64
+```
+
+A jail must not be newer than the running kernel. Compare the two numbers
+these print; the first (the jail) must not be larger than the second (your
+kernel):
+
+```sh
+grep -m1 '^#define __FreeBSD_version' /usr/local/poudriere/jails/160amd64/usr/include/sys/param.h
+```
+
+```sh
+uname -K
+```
+
+If the jail is newer, update the machine to a current 16.0-CURRENT first,
+or delete the jail (`doas poudriere jail -d -j 160amd64`) and build it from
+the machine's own sources instead (about an hour):
+`doas poudriere jail -c -j 160amd64 -b -m src=/usr/src -v 16.0-CURRENT`.
+
+**FreeBSD 15.x machine** (the release target):
 
 ```sh
 doas poudriere jail -c -j 151amd64 -v 15.1-RELEASE -a amd64
 ```
 
-Check: `doas poudriere jail -l` lists `151amd64` with version
-`15.1-RELEASE`.
+Check: `doas poudriere jail -l` lists the jail you created. The steps below
+show both jails; use the one that matches your machine.
 
 ### Step 6 (root): the ports tree
 
@@ -172,6 +198,14 @@ send the diff. The Chromium tarball's line must stay
 
 ### Step 10 (root): build
 
+16-CURRENT machine:
+
+```sh
+doas poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium
+```
+
+FreeBSD 15.x machine:
+
 ```sh
 doas poudriere bulk -j 151amd64 -p default -O beryllium -b latest www/beryllium
 ```
@@ -183,10 +217,11 @@ Check: the summary at the end says `Built: 1` (success) or `Failed: 1`.
 
 Poudriere keeps one log directory per run; `latest` always points at the
 current or most recent one. Progress of a running build (the newest
-`[NN% step/total]` line):
+`[NN% step/total]` line; for the 15.x jail, write `151amd64` for
+`160amd64`):
 
 ```sh
-doas tail -1 /usr/local/poudriere/data/logs/bulk/151amd64-default/latest/logs/beryllium-0.20.3.1.log
+doas tail -1 /usr/local/poudriere/data/logs/bulk/160amd64-default/latest/logs/beryllium-0.20.3.1.log
 ```
 
 `doas poudriere status` summarises the running build. If the build failed,
@@ -195,6 +230,14 @@ line back to the start of that build phase (the phases are marked
 `=======<phase: ...>`).
 
 ### Step 11 (root): install and run
+
+16-CURRENT machine:
+
+```sh
+doas pkg add /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
+```
+
+FreeBSD 15.x machine:
 
 ```sh
 doas pkg add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
@@ -208,6 +251,34 @@ beryllium
 
 Beryllium uses `~/.config/beryllium` and `/usr/local/share/beryllium`, so it
 does not touch a stock `chromium` installation or its profile.
+
+### Testing a 15.x package on a 16-CURRENT machine
+
+For release testing only; for everyday use, build in the 16-CURRENT jail.
+Programs built for 15.x run on 16-CURRENT, but `pkg` needs to be told to
+accept the package, and its dependencies should come from your machine's
+own (16) repository rather than from Poudriere's 15.x copies.
+
+As root, install the dependencies from the 16 repository:
+
+```sh
+doas pkg install -y $(pkg query -F /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg '%dn')
+```
+
+Then the package, accepting the 15.x ABI for this one command:
+
+```sh
+doas pkg -o ABI=FreeBSD:15:amd64 add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
+```
+
+Check that every library is found (no output means all are):
+
+```sh
+ldd /usr/local/share/beryllium/beryllium | grep 'not found'
+```
+
+If a FreeBSD base library is reported missing, `doas pkg install
+compat15x-amd64` provides the 15.x versions.
 
 ## What to expect from the first builds
 

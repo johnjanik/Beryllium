@@ -26,9 +26,11 @@ independent project; see [Origin and independence](#origin-and-independence).
 ## Status
 
 > [!WARNING]
-> Beryllium is in **Phase 0**. There is no browser build, no package, and
-> no sandbox code yet. Nothing in this repository should be used as a
-> browser on FreeBSD today.
+> Beryllium is in **Phase 0**. The port now builds a package (first
+> successful Poudriere build: 3 November 2026), but it has not been run or
+> tested, and there is no sandbox code yet: like the stock FreeBSD
+> Chromium, it runs without Chromium's sandbox. Do not use it as your
+> browser yet.
 
 What exists so far:
 
@@ -42,8 +44,9 @@ What exists so far:
   [`flags.freebsd.gn`](flags.freebsd.gn): generated GN arguments with a
   privacy-key guard.
 - [`freebsd/ports/www/beryllium`](freebsd/ports/README.md): the Poudriere
-  port (untested skeleton) with the imported FreeBSD patch set and
-  Beryllium's first patches (`beryllium://`, own profile and paths).
+  port, which builds a package (not yet run or tested), with the imported
+  FreeBSD patch set and Beryllium's patches (`beryllium://`, own profile
+  and paths, FreeBSD fixes for Helium's code).
 - [`freebsd/PATCH-MATRIX.md`](freebsd/PATCH-MATRIX.md): where the FreeBSD,
   Helium and Beryllium patch layers touch the same files.
 
