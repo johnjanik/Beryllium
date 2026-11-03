@@ -1,7 +1,10 @@
 <div align="center">
-    <img src="freebsd/branding/beryllium-logo.png"
-        title="Beryllium" alt="Beryllium logo" width="160" />
-    <h1>Beryllium</h1>
+    <picture>
+        <source media="(prefers-color-scheme: dark)"
+            srcset="branding/kit/masters/lockup-color-dark.png" />
+        <img src="branding/kit/masters/lockup-color.png"
+            title="Beryllium Browser" alt="Beryllium Browser" width="420" />
+    </picture>
     <p>
         A privacy-focused browser for FreeBSD.
         <br>

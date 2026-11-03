@@ -81,10 +81,15 @@ class AssetTests(unittest.TestCase):
             with open(os.path.join(CHROMIUM, name), encoding="utf-8") as f:
                 self.assertNotIn("PATH_MODE_CLEAR", f.read())
 
-    def test_svgs_are_well_formed(self):
+    def test_svgs_are_well_formed_and_self_contained(self):
+        # The emblem is embedded as a data: PNG; nothing is fetched.
         for name in ("product_logo.svg", "onboarding_logo.svg"):
             root = ET.parse(os.path.join(CHROMIUM, name)).getroot()
             self.assertEqual(root.tag, "{http://www.w3.org/2000/svg}svg", name)
+            hrefs = [e.get("href") for e in root.iter() if e.get("href")]
+            self.assertTrue(hrefs, name)
+            for h in hrefs:
+                self.assertTrue(h.startswith("data:image/png;base64,"), name)
 
     def test_lockups_keep_chromium_and_helium_sizes(self):
         expected = {
@@ -98,13 +103,31 @@ class AssetTests(unittest.TestCase):
         for name, size in expected.items():
             self.assertEqual(png_size(os.path.join(CHROMIUM, name)), size, name)
 
-    def test_product_icons_are_the_kit_files(self):
+    def test_product_icons_are_square_at_each_size(self):
         for s in (16, 24, 32, 48, 64, 128, 256):
-            ours = os.path.join(CHROMIUM, "product_icon", f"{s}x{s}.png")
-            kit = os.path.join(KIT, "application", "png", f"beryllium-{s}.png")
-            self.assertEqual(png_size(ours), (s, s))
-            with open(ours, "rb") as a, open(kit, "rb") as b:
-                self.assertEqual(a.read(), b.read(), s)
+            self.assertEqual(png_size(os.path.join(CHROMIUM, "product_icon", f"{s}x{s}.png")),
+                             (s, s))
+
+
+class KitTests(unittest.TestCase):
+    def test_kit_is_art_set_v2(self):
+        # Art set v2 (3 November 2026) replaced v1, whose horned emblem
+        # resembled the FreeBSD logo; nothing of v1 may come back.
+        self.assertEqual(sorted(os.listdir(KIT)),
+                         ["README.md", "beryllium-art-sheet-v2.webp", "masters"])
+        with open(os.path.join(BRANDING, "tools", "extract-art-sheet"), encoding="utf-8") as f:
+            names = re.findall(r'^    "([a-z-]+)": \(\d', f.read(), re.M)
+        self.assertIn("emblem-color", names)
+        self.assertIn("orb-color", names)
+        expected = sorted(n + ".png" for n in names + ["lockup-color-dark"])
+        self.assertEqual(sorted(os.listdir(os.path.join(KIT, "masters"))), expected)
+        for n in expected:
+            png_size(os.path.join(KIT, "masters", n))  # a PNG
+
+    def test_mono_icon_follows_theme_and_colour_icon_has_art_palette(self):
+        with open(os.path.join(CHROMIUM, "product_logo_color.icon"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("PATH_COLOR_ARGB, 0xFF, 0xF4, 0x06, 0x02,", text)
 
 
 class PortTests(unittest.TestCase):
@@ -112,13 +135,13 @@ class PortTests(unittest.TestCase):
         with open(os.path.join(PORT, "Makefile"), encoding="utf-8") as f:
             m = re.search(r"^BERYLLIUM_ICON_SIZES=\s*(.+)$", f.read(), re.M)
         sizes = sorted(int(s) for s in m.group(1).split())
-        kit = sorted(int(d.split("x")[0]) for d in
-                     os.listdir(os.path.join(KIT, "desktop", "hicolor")))
-        self.assertEqual(sizes, kit)
+        generated = sorted(int(d.split("x")[0]) for d in
+                           os.listdir(os.path.join(CHROMIUM, "hicolor")))
+        self.assertEqual(sizes, generated)
         with open(os.path.join(PORT, "pkg-plist"), encoding="utf-8") as f:
             plist = f.read().split("\n")
         for s in sizes:
-            path = os.path.join(KIT, "desktop", "hicolor", f"{s}x{s}", "apps", "beryllium.png")
+            path = os.path.join(CHROMIUM, "hicolor", f"{s}x{s}", "apps", "beryllium.png")
             self.assertEqual(png_size(path), (s, s))
             self.assertIn(f"share/icons/hicolor/{s}x{s}/apps/beryllium.png", plist)
 

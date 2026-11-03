@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Cut Beryllium's art masters out of the art sheet.
+
+The art set v2 sheet (branding/kit/beryllium-art-sheet-v2.webp) is one RGB
+image with a checkerboard painted behind the artwork, not real
+transparency. This finds the checkerboard and removes it, and writes each
+asset as an RGBA PNG to branding/kit/masters/.
+
+How the background is found: bright, neutral regions are candidates; a
+region is background only if, with its anti-aliased rim removed, it still
+holds both checkerboard shades and alternates between them. White letters
+and glossy highlights are uniform or graded, so they stay. Bridges of one
+pixel between a highlight and the background are cut first. Edges get
+alpha from brightness (the outlines are dark, the checkerboard is light;
+luma is full resolution in the lossy WebP, colour is not), and edge
+pixels take the colour of the artwork just inside, so nothing of the
+checkerboard is left on a dark background.
+
+Not extracted (see branding/kit/README.md): the ten rounded-square icons
+at the lower right (three rings; the design has two), the small size
+ramps (the masters are scaled instead), the second colour emblem, and the
+grey emblem, whose glossy highlights cannot be told from the
+checkerboard.
+
+Needs Pillow, numpy and scipy:
+  extract-art-sheet [--check]
+"""
+
+import argparse
+import os
+import sys
+import tempfile
+
+import numpy as np
+from PIL import Image
+from scipy import ndimage as ndi
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+KIT = os.path.abspath(os.path.join(HERE, "..", "kit"))
+SHEET = os.path.join(KIT, "beryllium-art-sheet-v2.webp")
+LUMA = np.array([0.299, 0.587, 0.114], np.float32)
+
+# name: (x0, y0, x1, y1) on the 1536 x 1024 sheet, from connected components.
+ASSETS = {
+    "emblem-color": (66, 27, 478, 491),
+    "orb-color": (1007, 141, 1287, 413),
+    "orb-grey": (1338, 248, 1504, 407),
+    "emblem-mono": (1342, 417, 1498, 553),
+    "lockup-color": (36, 539, 514, 673),
+}
+# Text and rule of the lockup (sheet x >= this): pure black ink, so alpha
+# comes from darkness alone. The small counters of "B" and "e" can sit
+# mostly on white checker squares and would otherwise survive.
+INK_FROM_X = {"lockup-color": 176}
+INK_RGB = (6, 6, 6)  # median of the lockup text
+CHECKER_LUMA = 230   # mean of the two checkerboard shades
+PAD = 6
+
+
+def background_mask(rgb):
+    L = rgb @ LUMA
+    sat = rgb.max(2) - rgb.min(2)
+    cand = (L >= 185) & (sat <= 22)
+    cand = ndi.binary_opening(cand, structure=np.ones((3, 3)), iterations=1)
+    lab, n = ndi.label(cand)
+    if not n:
+        return np.zeros_like(cand), L
+    idx = np.arange(1, n + 1)
+    inner = ndi.binary_erosion(cand, iterations=1)
+    size = ndi.sum(inner, lab, idx)
+    white = ndi.sum(inner & (L > 238), lab, idx)
+    grey = ndi.sum(inner & (L >= 195) & (L <= 226), lab, idx)
+    shade = L > 232
+    flips = np.zeros_like(cand)
+    flips[:, 1:] = (shade[:, 1:] != shade[:, :-1]) & inner[:, 1:] & inner[:, :-1]
+    fl = ndi.sum(flips, lab, idx)
+    ok = ((size >= 12) & (white >= 0.15 * size) & (grey >= 0.15 * size)
+          & (fl / np.maximum(size, 1) > 0.04))
+    bg = np.zeros_like(cand)
+    bg[lab > 0] = ok[lab[lab > 0] - 1]
+    return bg, L
+
+
+def matte(rgb):
+    rgb = rgb.astype(np.float32)
+    bg, L = background_mask(rgb)
+    fg = ~bg
+    flab, fn = ndi.label(fg, structure=np.ones((3, 3)))
+    if fn:
+        areas = ndi.sum(fg, flab, np.arange(1, fn + 1))
+        fg = np.isin(flab, 1 + np.flatnonzero(areas >= 30))
+    bg = ~fg
+    dist_in = ndi.distance_transform_edt(fg)
+    dist_out = ndi.distance_transform_edt(bg)
+    k = np.ones((11, 11), np.float32)
+    bsum = ndi.convolve(np.where(bg, L, 0), k, mode="nearest")
+    bcnt = ndi.convolve(bg.astype(np.float32), k, mode="nearest")
+    Lb = np.where(bcnt > 0, bsum / np.maximum(bcnt, 1), 230)
+    core = dist_in >= 2.5
+    _, (iy, ix) = ndi.distance_transform_edt(~core, return_indices=True)
+    F = rgb[iy, ix]
+    Lf = F @ LUMA
+    edge = (fg & (dist_in < 2.5)) | (bg & (dist_out <= 1.5))
+    denom = Lb - Lf
+    a_edge = np.clip((Lb - L) / np.where(np.abs(denom) < 1, 1, denom), 0, 1)
+    a_edge = np.where(denom > 25, a_edge, fg.astype(np.float32))
+    alpha = np.where(edge, a_edge, fg.astype(np.float32))
+    out = np.where(edge[..., None], F, rgb)
+    return np.dstack([np.clip(out, 0, 255), alpha * 255]).round().astype(np.uint8)
+
+
+def ink_matte(rgb):
+    L = rgb.astype(np.float32) @ LUMA
+    a = np.clip((CHECKER_LUMA - L) / (CHECKER_LUMA - INK_RGB[0]), 0, 1)
+    a[L >= 185] = 0
+    out = np.empty(rgb.shape[:2] + (4,), np.uint8)
+    out[..., :3] = INK_RGB
+    out[..., 3] = (a * 255).round()
+    return out
+
+
+def extract(sheet, box, ink_from_x=None):
+    crop = sheet.crop((box[0] - PAD, box[1] - PAD, box[2] + PAD, box[3] + PAD))
+    rgb = np.asarray(crop)
+    rgba = matte(rgb)
+    if ink_from_x is not None:
+        x = ink_from_x - (box[0] - PAD)
+        rgba[:, x:] = ink_matte(rgb[:, x:])
+    im = Image.fromarray(rgba, "RGBA")
+    return im.crop(im.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox())
+
+
+def dark_variant(im):
+    """White text and rule for dark backgrounds; colour artwork unchanged."""
+    a = np.asarray(im).copy()
+    rgb = a[..., :3].astype(np.int16)
+    ink = ((rgb.max(2) - rgb.min(2)) < 40) & ((rgb @ np.array([299, 587, 114]) // 1000) < 110)
+    a[ink, :3] = 255
+    return Image.fromarray(a, "RGBA")
+
+
+def generate(out):
+    sheet = Image.open(SHEET).convert("RGB")
+    if sheet.size != (1536, 1024):
+        sys.exit(f"extract-art-sheet: unexpected sheet size {sheet.size}")
+    os.makedirs(out, exist_ok=True)
+    for name, box in ASSETS.items():
+        im = extract(sheet, box, INK_FROM_X.get(name))
+        im.save(os.path.join(out, name + ".png"), optimize=True)
+        if name == "lockup-color":
+            dark_variant(im).save(os.path.join(out, "lockup-color-dark.png"), optimize=True)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--out", default=os.path.join(KIT, "masters"))
+    ap.add_argument("--check", action="store_true")
+    a = ap.parse_args(argv)
+    if not a.check:
+        generate(a.out)
+        print(f"extract-art-sheet: wrote {a.out}")
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        generate(tmp)
+        bad = [n for n in sorted(os.listdir(tmp))
+               if not os.path.exists(os.path.join(a.out, n))
+               or np.any(np.asarray(Image.open(os.path.join(tmp, n)))
+                         != np.asarray(Image.open(os.path.join(a.out, n))))]
+    if bad:
+        print("extract-art-sheet: masters differ from the sheet: " + ", ".join(bad))
+        return 1
+    print("extract-art-sheet: masters match the sheet")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -118,11 +118,6 @@ def branding_files():
         for name in files:
             src = os.path.join(root, name)
             out[os.path.join("branding", os.path.relpath(src, chromium))] = src
-    hicolor = os.path.join(BRANDING, "kit", "desktop", "hicolor")
-    for root, _, files in os.walk(hicolor):
-        for name in files:
-            src = os.path.join(root, name)
-            out[os.path.join("branding", "hicolor", os.path.relpath(src, hicolor))] = src
     return out
 
 

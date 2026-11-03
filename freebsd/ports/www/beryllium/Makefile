@@ -336,7 +336,7 @@ post-patch:
 		--tree ${WRKSRC_helium} --platform-tree ${BERYLLIUM_FILES} \
 		--chromium-tree ${WRKSRC}
 	# Helium's resources (its favicons are kept), then Beryllium's branding
-	# over every Helium logo (branding/, generated from the branding kit)
+	# over every Helium logo (branding/, generated from art set v2)
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/generate_resources.py \
 		resources/generate_resources.txt resources
 	cd ${WRKSRC_helium} && ${PYTHON_CMD} utils/replace_resources.py \
@@ -408,7 +408,7 @@ do-install:
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
 	@${SED} -i "" -e 's,\@\@PACKAGE\@\@,beryllium,g;s,\@\@MENUNAME\@\@,Beryllium,g' \
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
-	# Desktop icons: the branding kit's hicolor set, unchanged
+	# Desktop icons: Beryllium art set v2 (branding/chromium/hicolor)
 .for s in ${BERYLLIUM_ICON_SIZES}
 	@${MKDIR} ${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps
 	${INSTALL_DATA} ${BERYLLIUM_FILES}/branding/hicolor/${s}x${s}/apps/beryllium.png \
