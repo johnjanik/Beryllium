@@ -47,7 +47,7 @@ def _high_fd(fd):
 
 class Browser:
     def __init__(self, ctx, name, args=(), headless=None, user_data_dir=False,
-                 prefs=None, env=None):
+                 prefs=None, env=None, settings_from=None):
         self.ctx = ctx
         self.name = name
         self.binary = find_binary(ctx.options.browser)
@@ -62,6 +62,7 @@ class Browser:
         self.user_data_dir = os.path.join(self.root, "profile") if user_data_dir else None
         self.args = list(args)
         self.prefs = prefs
+        self.settings_from = settings_from
         self.extra_env = env or {}
         self.log_path = ctx.artifact(f"{name}.stderr.log")
         self.proc = None
@@ -93,8 +94,16 @@ class Browser:
         return env
 
     def start(self, timeout=90):
-        if self.prefs is not None:
-            base = self.user_data_dir or os.path.join(self.home, ".config", "beryllium")
+        base = self.user_data_dir or os.path.join(self.home, ".config", "beryllium")
+        if self.settings_from:
+            # A copy of someone's settings (not their history, cookies or
+            # passwords, which live in other files) in the throwaway profile.
+            os.makedirs(os.path.join(base, "Default"), exist_ok=True)
+            for rel in ("Local State", os.path.join("Default", "Preferences")):
+                src = os.path.join(self.settings_from, rel)
+                if os.path.isfile(src):
+                    shutil.copyfile(src, os.path.join(base, rel))
+        elif self.prefs is not None:
             os.makedirs(os.path.join(base, "Default"), exist_ok=True)
             with open(os.path.join(base, "Default", "Preferences"), "w") as f:
                 json.dump(self.prefs, f)

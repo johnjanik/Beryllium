@@ -59,6 +59,12 @@ def options(argv):
     ap.add_argument("--diagnose", action="store_true",
                     help="also replay video playback under different browser switches to "
                          "find which part of the video path crashes (several minutes)")
+    ap.add_argument("--my-settings", nargs="?", const="~/.config/beryllium", default=None,
+                    metavar="DIR",
+                    help="ui group: also check the toolbar with a copy of your own settings "
+                         "(Local State and Default/Preferences from DIR, default "
+                         "~/.config/beryllium; copied into a throwaway profile, your profile "
+                         "is not opened)")
     ap.add_argument("--list", action="store_true", help="list the tests and exit")
     o = ap.parse_args(argv)
     if not o.results:

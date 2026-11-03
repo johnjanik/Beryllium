@@ -54,6 +54,12 @@ jobs:
           freebsd/tests/browser/run pages media stability --headless --scheme chrome
           --browser "$(command -v google-chrome || command -v chromium)"
           --browser-arg=--no-sandbox --results "$RUNNER_TEMP/browser-tests"
+      - name: Browser test suite harness, toolbar group (in Xvfb)
+        run: >
+          xvfb-run -a -s "-screen 0 1600x1000x24"
+          freebsd/tests/browser/run ui --scheme chrome
+          --browser "$(command -v google-chrome || command -v chromium)"
+          --browser-arg=--no-sandbox --results "$RUNNER_TEMP/browser-tests/ui"
       - name: Browser test report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

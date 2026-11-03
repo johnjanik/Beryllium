@@ -32,6 +32,10 @@ it they are skipped. Useful options:
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash
   (`video-diagnosis.txt`).
+- `run ui --my-settings`: also check the toolbar with a copy of your own
+  settings (`Local State` and `Default/Preferences` from
+  `~/.config/beryllium`, copied into a throwaway profile; history, cookies
+  and passwords are in other files and are not copied).
 - `run --cores`: let crashing processes write core dumps and put `lldb`
   backtraces in the report (`backtrace-*.txt`). It runs the browser binary
   directly, because the launcher turns core dumps off.
@@ -52,7 +56,7 @@ files named below.
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
 | `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17) | |
 | `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host (a local proxy records and refuses every connection) | `privacy-*.txt` |
-| `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered | `ui-toolbar-*.txt`, `.json` |
+| `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |
 | `stability` | eight animated tabs at once; quick navigation through internal pages | |
 
