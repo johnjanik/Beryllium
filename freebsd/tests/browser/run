@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Beryllium browser test suite.
+
+Runs the installed Beryllium against local test pages and media, in
+throwaway profiles (your own profile is never used), and writes a report.
+
+  freebsd/tests/browser/run                 all offline tests
+  freebsd/tests/browser/run --network       also the live-site tests (YouTube)
+  freebsd/tests/browser/run media pages     only some groups (test file names)
+  freebsd/tests/browser/run --list          list the tests
+
+Windows open while it runs unless you pass --headless (tests that inspect
+the browser's own toolbar need a window and are skipped headless).
+"""
+
+import argparse
+import os
+import sys
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from berytest import context, runner  # noqa: E402
+
+
+def options(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("groups", nargs="*",
+                    help="groups to run: startup pages media rendering sandbox privacy ui "
+                         "youtube stability (default: all)")
+    ap.add_argument("--browser", help="browser binary (default: /usr/local/bin/beryllium)")
+    ap.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
+                    help="extra browser switch, may repeat")
+    ap.add_argument("--scheme", default="beryllium",
+                    help="internal page scheme (chrome for a stock Chromium)")
+    ap.add_argument("--headless", action="store_true", help="no windows")
+    ap.add_argument("--network", action="store_true",
+                    help="also run tests that need the internet (YouTube)")
+    ap.add_argument("--youtube-video", default="aqz-KE-bpKQ",
+                    help="video id for the YouTube test (default: Big Buck Bunny)")
+    ap.add_argument("--watch", type=int, default=60,
+                    help="seconds to watch live playback (default 60)")
+    ap.add_argument("--idle", type=int, default=30,
+                    help="seconds the privacy test watches an idle browser (default 30)")
+    ap.add_argument("--results", help="results directory (default: ~/beryllium-test-results/<time>)")
+    ap.add_argument("--keep-profiles", action="store_true",
+                    help="keep the throwaway profiles for inspection")
+    ap.add_argument("--list", action="store_true", help="list the tests and exit")
+    o = ap.parse_args(argv)
+    if not o.results:
+        o.results = os.path.join(os.path.expanduser("~"), "beryllium-test-results",
+                                 time.strftime("%Y%m%d-%H%M%S"))
+    return o
+
+
+def load(groups):
+    loader = unittest.TestLoader()
+    suite = loader.discover(os.path.join(HERE, "tests"), pattern="test_*.py",
+                            top_level_dir=HERE)
+    if not groups:
+        return suite
+    wanted = unittest.TestSuite()
+
+    def visit(s):
+        for t in s:
+            if isinstance(t, unittest.TestSuite):
+                visit(t)
+            elif group_of(t) in groups:
+                wanted.addTest(t)
+    visit(suite)
+    return wanted
+
+
+def group_of(test):
+    """tests.test_30_media.Media.test_x -> media"""
+    module = test.id().split(".")[1]
+    return module.split("_", 2)[-1]
+
+
+def tests_of(suite):
+    for t in suite:
+        if isinstance(t, unittest.TestSuite):
+            yield from tests_of(t)
+        else:
+            yield t
+
+
+def main(argv=None):
+    o = options(argv if argv is not None else sys.argv[1:])
+    suite = load(o.groups)
+    if o.list:
+        for t in tests_of(suite):
+            doc = (t.shortDescription() or "").strip()
+            print(f"{t.id()}" + (f"\n    {doc}" if doc else ""))
+        return 0
+    context.CTX = ctx = context.Context(o)
+    print(f"Results: {o.results}")
+    try:
+        return runner.run(ctx, suite)
+    finally:
+        ctx.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

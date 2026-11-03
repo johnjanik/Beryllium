@@ -46,6 +46,21 @@ jobs:
         run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
       - name: ShellCheck on the installer and release tool
         run: shellcheck -s sh install.sh freebsd/tools/publish-release
+      - name: Browser test suite harness (against the runner's Chrome)
+        # The Beryllium-specific checks need Beryllium; these groups pass on
+        # any Chromium and keep the harness itself working.
+        run: >
+          freebsd/tests/browser/run --list > /dev/null &&
+          freebsd/tests/browser/run pages media stability --headless --scheme chrome
+          --browser "$(command -v google-chrome || command -v chromium)"
+          --browser-arg=--no-sandbox --results "$RUNNER_TEMP/browser-tests"
+      - name: Browser test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: browser-test-report
+          path: ${{ runner.temp }}/browser-tests
+          if-no-files-found: ignore
 
   capsicum-oracle:
     runs-on: ubuntu-latest
