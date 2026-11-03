@@ -408,10 +408,10 @@ do-install:
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
 	@${SED} -i "" -e 's,\@\@PACKAGE\@\@,beryllium,g;s,\@\@MENUNAME\@\@,Beryllium,g' \
 		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
-	# Desktop icons: Beryllium art set v2 (branding/chromium/hicolor)
+	# Desktop icons: artwork/icons (Beryllium art set v2, CC BY 4.0)
 .for s in ${BERYLLIUM_ICON_SIZES}
 	@${MKDIR} ${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps
-	${INSTALL_DATA} ${BERYLLIUM_FILES}/branding/hicolor/${s}x${s}/apps/beryllium.png \
+	${INSTALL_DATA} ${BERYLLIUM_FILES}/branding/icons/beryllium-${s}.png \
 		${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps/beryllium.png
 .endfor
 	${INSTALL_DATA} ${WRKSRC}/out/${BUILDTYPE}/*.png ${STAGEDIR}${DATADIR}

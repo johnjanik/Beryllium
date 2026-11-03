@@ -1,8 +1,8 @@
 <div align="center">
     <picture>
         <source media="(prefers-color-scheme: dark)"
-            srcset="branding/kit/masters/lockup-color-dark.png" />
-        <img src="branding/kit/masters/lockup-color.png"
+            srcset="artwork/wordmark/beryllium-lockup-dark.png" />
+        <img src="artwork/wordmark/beryllium-lockup.png"
             title="Beryllium Browser" alt="Beryllium Browser" width="420" />
     </picture>
     <p>
@@ -137,7 +137,10 @@ pin never causes merge conflicts.
 | `helium/` | Submodule: [imputnet/helium](https://github.com/imputnet/helium) at release tag `0.20.3`, commit `2f81b9ca` (Chromium 156.0.8078.79) |
 | `patches/` | Beryllium patches for FreeBSD platform, branding and security, applied after the upstream series (planned) |
 | `flags.freebsd.gn` | FreeBSD build flags appended to the upstream `flags.gn`, combined by `freebsd/tools/gnargs-from-flags` |
-| `freebsd/` | FreeBSD port, sandbox policies, test suites, tooling and branding |
+| `freebsd/` | FreeBSD port, sandbox policies, test suites and tooling |
+| `artwork/` | Logo, wordmark, icons and the source art sheet (CC BY 4.0) |
+| `branding/` | Tools that prepare the artwork, and the Chromium branding files the build uses |
+| `LICENSES/` | Licence texts other than the GPL-3.0 in `LICENSE` |
 | `plan/` | Planning documents |
 
 Clone with the submodule:
@@ -189,6 +192,15 @@ review before merging.
 All code, patches, modified portions of imported code or patches, and any
 other content unique to Helium or Beryllium and not imported from other
 repositories is licensed under GPL-3.0. See [LICENSE](LICENSE).
+
+The exception is Beryllium's artwork: the logo, wordmark and icons in
+[`artwork/`](artwork/README.md), and the branding files generated from them
+in `branding/chromium/` (and their copy in the FreeBSD port), are licensed
+under Creative Commons Attribution 4.0 International. See
+[LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt).
+
+The Beryllium name and logo identify the project; neither licence grants
+trademark rights. See [TRADEMARKS.md](TRADEMARKS.md).
 
 Helium, included as a submodule, is under its own licenses: GPL-3.0 for
 Helium's code, with imported content keeping its original license. For

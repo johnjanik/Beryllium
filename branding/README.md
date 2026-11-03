@@ -1,29 +1,45 @@
-# Beryllium branding
+# Beryllium branding for the browser build
 
-## Contents
+The artwork itself is in [`artwork/`](../artwork/README.md). This
+directory holds the tools that prepare it and the Chromium-specific files
+the build uses.
 
-- `kit/`: Beryllium art set v2 (3 November 2026): the art sheet as
-  supplied, and the masters cut from it. See `kit/README.md`.
-- `chromium/`: the files the browser build uses, generated from the
-  masters by `tools/make-chromium-branding` and committed. The build does
-  not run the tools.
-- `tools/extract-art-sheet`: cuts the masters out of the sheet and removes
-  the painted checkerboard (needs Pillow, numpy and scipy).
-- `tools/make-chromium-branding`: generates `chromium/` (needs Pillow,
-  fontTools and Inter Bold). Run it after changing the masters, then
-  `freebsd/tools/sync-port`. Both tools take `--check` to confirm the
-  committed files match.
+- `tools/extract-art-sheet`: cuts the logo and wordmark masters out of the
+  art sheet (`artwork/source/`) into `artwork/logo/` and
+  `artwork/wordmark/`, removing the painted checkerboard (needs Pillow,
+  numpy and scipy).
+- `tools/make-chromium-branding`: scales the masters to `artwork/icons/`
+  and generates `chromium/` (needs Pillow, fontTools and Inter Bold).
+- Both take `--check` to confirm the committed files match. The build does
+  not run them: after changing the artwork, run them, then
+  `freebsd/tools/sync-port`, which copies `chromium/` and `artwork/icons/`
+  into the port.
+
+## Licences
+
+- The files in `chromium/` (except the list `beryllium_resources.txt`) are
+  artwork derived from `artwork/`, and like it are licensed under
+  [CC BY 4.0](../LICENSES/CC-BY-4.0.txt), copyright © 2026 Beryllium
+  Browser contributors. The same applies to their copies in
+  `freebsd/ports/www/beryllium/files/beryllium/branding/`. The Beryllium
+  name and logo are reserved as described in
+  [TRADEMARKS.md](../TRADEMARKS.md).
+- The lockup lettering and the letters of the vector glyph are set in
+  Inter, under the SIL Open Font License 1.1, which permits its use in
+  artwork and logos.
+- The tools are part of the software and are GPL-3.0, like the rest of the
+  code.
 
 ## Where each asset is used
 
 | Asset | Source | Used for |
 |---|---|---|
-| Product and desktop icons, 48 to 256 px | colour emblem (orb, "Be", two orbits) | window and taskbar icon, About page, `share/icons/hicolor/` |
-| Product and desktop icons, 16 to 32 px | plain colour orb with "Be" | the same places at small sizes, `favicon_product`; the orbits would blur into the orb |
-| Lockups: emblem + "Beryllium" | colour emblem, Inter Bold, near-black or white lettering | `product_logo*.png` (140 x 32) and `product_logo_name_22*.png` (97 x 22), at 100% and 200% |
-| `product_logo.svg`, onboarding page logo | colour emblem, embedded as PNG | Chromium WebUI pages accept `data:` images |
-| Vector glyph: plain orb with "Be" | drawn to the plain orb's proportions, letters from Inter Bold | Chromium `.icon` files (address bar, menus, notifications; colour and theme-tinted monochrome), the 22 px monochrome PNG |
-| Repository README header | `kit/masters/lockup-color.png` and `lockup-color-dark.png` | GitHub light and dark themes |
+| App and desktop icons, 48 to 256 px | `artwork/logo/beryllium-emblem.png` (orb, "Be", two orbits) | window and taskbar icon, About page, `share/icons/hicolor/` |
+| App and desktop icons, 16 to 32 px | `artwork/logo/beryllium-orb.png` (plain orb with "Be") | the same places at small sizes, `favicon_product`; the orbits would blur into the orb |
+| Lockups: emblem + "Beryllium" | emblem, Inter Bold, near-black or white lettering | `product_logo*.png` (140 x 32) and `product_logo_name_22*.png` (97 x 22), at 100% and 200% |
+| `product_logo.svg`, onboarding page logo | emblem, embedded as PNG | Chromium WebUI pages accept `data:` images |
+| Vector glyph: plain orb with "Be" | drawn to the plain orb's proportions | Chromium `.icon` files (address bar, menus, notifications; colour and theme-tinted monochrome), the 22 px monochrome PNG |
+| Repository README header | `artwork/wordmark/beryllium-lockup.png` and `-dark.png` | GitHub light and dark themes |
 
 The port applies `chromium/beryllium_resources.txt` with Helium's
 `utils/replace_resources.py` after Helium's own list, so every Helium logo
@@ -35,8 +51,5 @@ similar) are kept; they carry no Helium mark.
 
 - **Vector master.** The art is raster (the emblem is about 410 px
   across): enough for the browser, not for print or very large displays.
-- **Licence.** State the licence of the artwork (the repository is
-  GPL-3.0; logos are often licensed separately). Inter is under the SIL
-  Open Font License 1.1, which permits its use in logos.
 - Chromium's `product_logo_animation.svg` is not replaced; where Chromium
   uses it on Linux has not been checked.
