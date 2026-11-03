@@ -108,10 +108,11 @@ set it, and the launcher will not start the browser without it.
     every video tab ("Error code 11"). The stock FreeBSD Chromium has the
     same crash; to avoid it there, start it with
     `--disable-gpu-memory-buffer-video-frames`.
-  - On Wayland, the browser waits for the GPU to finish each frame before
-    the desktop shows it, so that half-drawn frames do not flicker on
-    screen.
-    `--disable-features=BerylliumWaylandWaitForGpu` turns that off.
+  - On Wayland, the window flickered when the mouse moved, because the
+    desktop could show a frame the GPU was still drawing. Beryllium now
+    waits for the GPU to finish each frame first, which ended the flicker
+    on the test machine. The stock FreeBSD Chromium still flickers there.
+    `--disable-features=BerylliumWaylandWaitForGpu` turns the wait off.
 
 ## Reporting a problem
 
