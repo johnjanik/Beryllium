@@ -1,0 +1,71 @@
+Beryllium: no GPU memory buffers for video frames on FreeBSD with NVIDIA
+
+Purpose: on the owner's machine (FreeBSD 16.0-CURRENT, NVIDIA RTX 5090
+  Laptop, driver 595.99.02, KDE Wayland) every video crashed its tab with
+  "Error code 11" (SIGSEGV in the renderer) as soon as playback began:
+  H.264, VP9 and AV1, plain files and Media Source Extensions alike, on
+  YouTube and on local test files. Audio-only playback worked. The stock
+  FreeBSD Chromium 156.0.8078.47 crashed the same way, so the fault is in
+  the shared FreeBSD/NVIDIA path, not in Helium or Beryllium.
+  freebsd/tests/browser/run videodiag --diagnose (3 November 2026, both
+  browsers) replayed the clips under switches that each turn one part of
+  the video path off. Only these avoided the crash: no GPU at all,
+  SwiftShader, X11 instead of Wayland, headless, and
+  --disable-gpu-memory-buffer-video-frames. Hardware decode, VA-API and
+  decode threads made no difference. So the renderer faults while writing
+  decoded frames into GPU memory buffers (GBM buffer objects that the
+  NVIDIA driver allocates and the renderer maps; the imported BSD patch
+  patch-media_gfx_mappable__shared__image__video__frame__pool.cc lets
+  FreeBSD use that path as Linux does).
+  On FreeBSD with an NVIDIA GL driver the renderer now copies frames the
+  ordinary way (shared memory, uploaded by the GPU process), as it does
+  with --disable-gpu-memory-buffer-video-frames. The driver is recognised
+  by the GL vendor string, because FreeBSD reports PCI vendor 0x0000 in
+  the GPU information (beryllium://gpu, "GPU0: VENDOR= 0x0000").
+  --enable-gpu-memory-buffer-video-frames turns the faster path back on,
+  for testing a driver that fixes the fault. Other drivers are unchanged.
+  The same flag also governs camera (media stream) frames, which take the
+  same path.
+Stage: 4 (Beryllium series). Depends on the imported BSD patch
+  patch-content_renderer_render__thread__impl.cc (stage 2).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench.
+Upstream: the crash affects the FreeBSD www/chromium port too; to be
+  reported there with the videodiag table and backtraces.
+Test: freebsd/tests/browser/run media (H.264, VP9, AV1 clips play; MSE
+  plays) and run videodiag --diagnose ("as normally run" plays).
+security-review: not required (turns a code path off; no new input
+  handling)
+
+--- a/content/renderer/render_thread_impl.cc
++++ b/content/renderer/render_thread_impl.cc
+@@ -1015,13 +1015,29 @@
+            .status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_ENCODE] ==
+        gpu::kGpuFeatureStatusEnabled);
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  bool enable_gpu_memory_buffers =
++#else
+   const bool enable_gpu_memory_buffers =
++#endif
+       !is_gpu_compositing_disabled_ &&
+ #if !BUILDFLAG(IS_ANDROID)
+       !cmd_line->HasSwitch(switches::kDisableGpuMemoryBufferVideoFrames);
+ #else
+       cmd_line->HasSwitch(switches::kEnableGpuMemoryBufferVideoFrames);
+ #endif
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: with NVIDIA's FreeBSD driver, the renderer dies with SIGSEGV
++  // as soon as it writes a decoded video frame into a GPU memory buffer
++  // (every codec; the stock FreeBSD Chromium too). Copy frames the ordinary
++  // way there; --enable-gpu-memory-buffer-video-frames opts back in. The GL
++  // vendor names the driver: FreeBSD reports PCI vendor 0x0000 here.
++  if (gpu_channel_host->gpu_info().gl_vendor.find("NVIDIA") !=
++          std::string::npos &&
++      !cmd_line->HasSwitch(switches::kEnableGpuMemoryBufferVideoFrames)) {
++    enable_gpu_memory_buffers = false;
++  }
++#endif
+   const bool enable_media_stream_gpu_memory_buffers = enable_gpu_memory_buffers;
+   bool enable_video_gpu_memory_buffers = enable_gpu_memory_buffers;
+ #if BUILDFLAG(IS_WIN)

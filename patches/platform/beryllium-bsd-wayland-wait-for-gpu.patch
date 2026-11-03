@@ -1,0 +1,114 @@
+Beryllium: on FreeBSD with NVIDIA, finish a frame before Wayland shows it
+
+Purpose: the owner saw the browser window flicker when moving the mouse
+  (FreeBSD 16.0-CURRENT, NVIDIA RTX 5090 Laptop, driver 595.99.02, KDE
+  Plasma Wayland). On Wayland, Chromium draws each frame into a GBM buffer
+  and hands the buffer to the compositor (GbmSurfacelessWayland). The
+  compositor must not read the buffer before the GPU has finished drawing
+  it. Three ways to ensure that exist, and on this machine none is in use:
+  1. Explicit sync, an acquire fence sent with the buffer: KWin here offers
+     neither zwp_linux_explicit_synchronization_v1 nor
+     wp_linux_drm_syncobj_manager_v1 (beryllium://gpu, "Interfaces exposed
+     by the Wayland compositor"), and the imported BSD patches turn acquire
+     fences and the sync_file interop off on BSD
+     (patch-ui_ozone_platform_wayland_host_wayland__frame__manager.cc,
+     patch-ui_ozone_platform_wayland_host_wayland__buffer__manager__host.cc).
+  2. A CPU wait on the frame's GPU fence before committing: Chromium does
+     this when the compositor takes no fences, but the fences are file
+     descriptors from EGL_ANDROID_native_fence_sync, whose code is not built
+     on BSD (patch-ui_gl_BUILD.gn excludes gl_fence_android_native_fence_sync
+     and gl_fence.cc enables it only for Linux, ChromeOS and Android). The
+     frame has no fences, so the wait does nothing and the buffer is
+     committed right after glFlush().
+  3. Implicit sync in the kernel: Mesa drivers attach their rendering to
+     the buffer, so the compositor's reads wait for it. NVIDIA's driver does
+     not.
+  So with NVIDIA the compositor can show a frame that is still being drawn;
+  repaints from hovering and moving the mouse make that visible as flicker.
+  On FreeBSD, when the compositor takes no acquire fence and the GL driver
+  is NVIDIA's, the GPU process now calls glFinish() instead of glFlush()
+  before committing, so every committed buffer is complete. That costs the
+  GPU thread the time the GPU needs for the frame; Mesa drivers keep
+  glFlush(). The driver is recognised by the GL vendor string (FreeBSD
+  reports PCI vendor 0x0000). The existing "rely on implicit sync" driver
+  workaround still skips the wait. For comparison,
+  --disable-features=BerylliumWaylandWaitForGpu turns it off.
+Stage: 4 (Beryllium series). Depends on the imported BSD patches named
+  above (stage 2).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench.
+Known gap: a proper fix is explicit sync (sync_file or DRM syncobj
+  support on FreeBSD for NVIDIA, and KWin offering
+  wp_linux_drm_syncobj_manager_v1 there); then this wait is not needed.
+Test: manual (no automated check sees flicker): move the mouse over tabs
+  and toolbar buttons with and without
+  --disable-features=BerylliumWaylandWaitForGpu.
+security-review: not required (GPU synchronisation only; no new input
+  handling)
+
+--- a/ui/ozone/platform/wayland/gpu/gbm_surfaceless_wayland.cc
++++ b/ui/ozone/platform/wayland/gpu/gbm_surfaceless_wayland.cc
+@@ -7,14 +7,17 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdint>
++#include <cstring>
+ #include <memory>
+ #include <utility>
+ 
+ #include "base/check.h"
++#include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/task/thread_pool.h"
+ #include "base/trace_event/trace_event.h"
+ #include "base/trace_event/typed_macros.h"
++#include "build/build_config.h"
+ #include "ui/gfx/gpu_fence.h"
+ #include "ui/gfx/gpu_fence_handle.h"
+ #include "ui/gfx/swap_result.h"
+@@ -33,6 +36,29 @@
+ // and remove the rest.
+ static constexpr size_t kMaxSolidColorBuffers = 12;
+ 
++#if BUILDFLAG(IS_FREEBSD)
++// Beryllium: FreeBSD builds have no GPU fence file descriptors
++// (gl_fence_android_native_fence_sync is not built on BSD), so when the
++// compositor offers no explicit-sync protocol a frame is committed right
++// after glFlush(), with nothing to wait for. Mesa drivers order the
++// compositor's reads after the rendering (implicit sync); NVIDIA's driver
++// does not, and the compositor shows frames that are still being drawn,
++// which flickers. Wait for the GPU before committing on NVIDIA.
++// --disable-features=BerylliumWaylandWaitForGpu turns this off.
++BASE_FEATURE(kBerylliumWaylandWaitForGpu, base::FEATURE_ENABLED_BY_DEFAULT);
++
++bool BerylliumWaitForGpuBeforeCommit() {
++  static const bool wait = [] {
++    if (!base::FeatureList::IsEnabled(kBerylliumWaylandWaitForGpu)) {
++      return false;
++    }
++    const char* vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
++    return vendor && std::strstr(vendor, "NVIDIA");
++  }();
++  return wait;
++}
++#endif
++
+ void WaitForGpuFences(std::vector<std::unique_ptr<gfx::GpuFence>> fences) {
+   for (auto& fence : fences)
+     fence->Wait();
+@@ -187,7 +213,15 @@
+   }
+ 
+   if (!no_gl_flush_for_tests_ && !buffer_manager_->supports_acquire_fence()) {
++#if BUILDFLAG(IS_FREEBSD)
++    if (use_egl_fence_sync_ && BerylliumWaitForGpuBeforeCommit()) {
++      glFinish();
++    } else {
++      glFlush();
++    }
++#else
+     glFlush();
++#endif
+   }
+ 
+   PendingFrame* frame = unsubmitted_frames_.back().get();

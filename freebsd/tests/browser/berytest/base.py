@@ -35,8 +35,7 @@ class BrowserTest(unittest.TestCase):
         cls.browser = Browser(cls.ctx, cls.__name__, args=cls.extra_args(),
                               headless=headless, user_data_dir=cls.USER_DATA_DIR,
                               prefs=cls.PREFS).start()
-        if not getattr(cls.ctx, "browser_version", None):
-            cls.ctx.browser_version = cls.browser.version
+        cls.browser.record_version()
 
     @classmethod
     def extra_args(cls):

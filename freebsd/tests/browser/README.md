@@ -47,7 +47,7 @@ files named below.
 |---|---|---|
 | `startup` | starts; beryllium://version says Beryllium, not Helium; profile in `~/.config/beryllium`, nothing in Chromium's or Helium's folders | |
 | `pages` | 20 internal pages load without a crash or error page, and none says "Helium" (except the credits) | |
-| `videodiag` | with `--diagnose`: video playback under nine switch sets, as a table | `video-diagnosis.txt` |
+| `videodiag` | with `--diagnose`: video playback under ten switch sets, as a table (the last forces the GPU memory buffer path Beryllium turns off with NVIDIA) | `video-diagnosis.txt` |
 | `media` | codec support (VP9, AV1, Opus, H.264, AAC); H.264, VP9 and AV1 clips play; AV1, VP9 and Opus through Media Source Extensions, the way YouTube streams | `media-codecs.json` |
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
 | `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17) | |

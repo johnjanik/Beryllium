@@ -61,7 +61,7 @@ def system_info():
             return ""
     return {"system": " ".join(platform.uname()),
             "freebsd_version": cmd("freebsd-version", "-ku").replace("\n", " / "),
-            "beryllium_package": cmd("pkg", "info", "-q", "beryllium"),
+            "beryllium_package": cmd("pkg", "query", "%n-%v", "beryllium"),
             "python": sys.version.split()[0]}
 
 
@@ -73,6 +73,7 @@ def run(ctx, suite):
     result = runner.run(suite)
     info = system_info()
     info["browser"] = getattr(ctx, "browser_version", {})
+    info["browser_binary"] = getattr(ctx, "browser_binary", "") or ctx.options.browser or ""
     report = {"started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
               "seconds": round(time.time() - started),
               "info": info, "options": vars(ctx.options),

@@ -3,7 +3,9 @@
 switches that each turn off one part of the video path, and records which
 ones avoid the crash. Owner's report, 3 November 2026: every video test
 crashed the renderer with SIGSEGV on the 15.1 package on 16-CURRENT, while
-audio played."""
+audio played. The diagnosis (both Beryllium and the stock FreeBSD Chromium):
+only --disable-gpu-memory-buffer-video-frames, no GPU, SwiftShader, X11 or
+headless avoided it, which led to beryllium-bsd-nvidia-video-frames.patch."""
 
 import json
 import os
@@ -29,6 +31,10 @@ VARIANTS = [
                                    "--enable-unsafe-swiftshader"], None),
     ("X11 instead of Wayland", ["--ozone-platform=x11"], None),
     ("headless", [], True),
+    # Beryllium turns GPU memory buffers for video off with NVIDIA on FreeBSD
+    # (patches/platform/beryllium-bsd-nvidia-video-frames.patch); this row
+    # forces them on, to see whether a newer driver still crashes.
+    ("GPU memory buffers forced on", ["--enable-gpu-memory-buffer-video-frames"], None),
 ]
 CLIPS = [("h264_aac.mp4", False, "video"), ("mse_vp9.webm", True, "video"),
          ("mse_av1.mp4", True, "video"), ("mse_opus.webm", True, "audio")]
@@ -54,6 +60,7 @@ class VideoDiagnosis(unittest.TestCase):
             results = {}
             try:
                 browser = Browser(ctx, "diag", args=args, headless=headless).start()
+                browser.record_version()
             except CDPError as e:
                 rows.append((name, {c[0]: f"browser did not start: {str(e)[:80]}"
                                     for c in clips_here}))

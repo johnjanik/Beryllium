@@ -193,6 +193,12 @@ class Browser:
             return ""
         return "\n".join(data[-lines:])
 
+    def record_version(self):
+        """The first browser started in a run names the browser in the report."""
+        if not getattr(self.ctx, "browser_version", None):
+            self.ctx.browser_version = self.version
+            self.ctx.browser_binary = self.binary
+
     def product(self):
         return self.version.get("product", "")
 
