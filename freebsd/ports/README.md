@@ -9,6 +9,10 @@ Google's official Chromium `-lite` tarball, the imported FreeBSD patch set
 Status: **builds a package**. The seventh build (3 November 2026, 15.1
 jail) completed: `Built: 1`. The package has not been run or tested yet.
 
+`install.sh --build` at the top of the repository runs the steps below
+for you (with `--dry-run` to see them first). Follow them by hand to
+understand or adjust the setup.
+
 ## How to read the steps
 
 - **Where:** every command runs from the top of your clone,
@@ -164,12 +168,16 @@ Repeat step 3 after every `git pull`:
 freebsd/tools/sync-port --check
 ```
 
-### Step 9 (root, then you): record the Helium archive checksum
+### Step 9 (root, then you): only after a Helium update
 
-`distinfo` pins every distfile except the Helium source archive, which this
-project's automation could not download. Record it once per Helium update.
-This also downloads all the other distfiles (about 2.2 GB, mostly the
-Chromium tarball) into the cache Poudriere uses, so it takes a while.
+For Helium 0.20.3 this is done: `distinfo` pins every distfile, including
+the Helium source archive (`imputnet-helium-2f81b9ca...`). Skip to step 10.
+
+After the `helium` submodule moves to a new Helium release, `distinfo`
+lacks the new Helium archive, which this project's automation cannot
+download. Record it once, as below. This also downloads all the other
+distfiles (about 2.2 GB, mostly the Chromium tarball) into the cache
+Poudriere uses, so it takes a while.
 
 ```sh
 doas make -C freebsd/ports/www/beryllium PORTSDIR=/usr/ports DISTDIR=/usr/ports/distfiles makesum
@@ -187,8 +195,8 @@ Then check that only the Helium lines and the timestamp changed:
 git diff freebsd/ports/www/beryllium/distinfo
 ```
 
-Check: the diff adds two lines for `imputnet-helium-2f81b9ca...` (SHA256
-and SIZE) and changes `TIMESTAMP`, nothing else. Any change to an existing
+Check: the diff changes only the two `imputnet-helium-...` lines (SHA256
+and SIZE) and `TIMESTAMP`. Any change to an existing
 SHA256 line means a downloaded file differs from what was pinned: stop and
 send the diff. The Chromium tarball's line must stay
 `d9e8b637dbdd3a1cccb4966e81a66e3f3c4c29f5ce9732a70f5a4f949cd03923`
@@ -265,11 +273,17 @@ As root, install the dependencies from the 16 repository:
 doas pkg install -y $(pkg query -F /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg '%dn')
 ```
 
-Then the package, accepting the 15.x ABI for this one command:
+Then the package, accepting the 15.x ABI and OS version for this one
+command (`OSVERSION` is the 15.1 value; without it `pkg` guesses 1500000 and
+then asks whether to ignore the mismatch):
 
 ```sh
-doas pkg -o ABI=FreeBSD:15:amd64 add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
+doas pkg -o ABI=FreeBSD:15:amd64 -o OSVERSION=1501000 add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
 ```
+
+`pkg` may also print "Major OS version upgrade detected. Running pkg
+bootstrap -f recommended". That is a side effect of the override; do not
+run `pkg bootstrap -f` for it.
 
 Check that every library is found (no output means all are):
 
@@ -296,3 +310,21 @@ compat15x-amd64` provides the 15.x versions.
 - **Branding.** The build installs Beryllium's icons and logos from
   `branding/` (see `branding/README.md`); Helium's generic page favicons are
   kept.
+
+## Publishing a release (maintainer)
+
+`install.sh` installs packages from this repository's GitHub releases. After
+a successful build, from the top of your clone, on the commit the package
+was built from (pushed to GitHub):
+
+```sh
+freebsd/tools/publish-release v0.20.3.1-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
+```
+
+Give it the packages from every jail you built (for example the 151amd64
+one too). It names each `beryllium-FreeBSD-<major>-amd64.pkg`, writes
+`SHA256SUMS` and release notes that name the commit as the corresponding
+source, and creates the release with the GitHub CLI (`pkg install gh`,
+then `gh auth login` once). `--draft` creates it unpublished, and
+`--dry-run` only prepares the files. Without `gh`, it leaves the files in
+a directory to upload on the releases page.

@@ -44,6 +44,8 @@ jobs:
         run: ./freebsd/tools/import-bsd-patches check > review-debt.txt; head -n 1 review-debt.txt
       - name: Shell syntax
         run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
+      - name: ShellCheck on the installer and release tool
+        run: shellcheck -s sh install.sh freebsd/tools/publish-release
 
   capsicum-oracle:
     runs-on: ubuntu-latest

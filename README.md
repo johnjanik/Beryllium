@@ -55,6 +55,35 @@ The design is written up in [`plan/`](plan/00-INDEX.md). Start with the
 and the [roadmap](plan/09-ROADMAP.md). The engineering specification the plan
 implements is [helium-freebsd-security-port-spec.md](helium-freebsd-security-port-spec.md).
 
+## Install
+
+On FreeBSD (amd64), download the installer, read it, then run it as your
+normal user; it asks for root through `doas` or `sudo` only where needed:
+
+```sh
+fetch -o install.sh https://raw.githubusercontent.com/johnjanik/Beryllium/main/install.sh
+```
+
+```sh
+sh install.sh
+```
+
+(`curl -fsSL -o install.sh` with the same URL works too.)
+
+- `sh install.sh` installs the published package for your FreeBSD version
+  from this repository's
+  [releases](https://github.com/johnjanik/Beryllium/releases), after
+  checking it against the release's `SHA256SUMS`. Its dependencies come
+  from the official FreeBSD package repository.
+- `sh install.sh --build` builds Beryllium from source with Poudriere
+  instead (several hours, about 100 GB of disk), following
+  [freebsd/ports/README.md](freebsd/ports/README.md), and installs it.
+- `--dry-run` shows every command that would change the system and changes
+  nothing; `--uninstall` removes Beryllium and keeps your profile;
+  `--help` lists the rest.
+
+Until the first release is published, use `--build`.
+
 ## Why Beryllium exists
 
 Chromium already runs on FreeBSD through the `www/chromium` port, but it runs
@@ -144,6 +173,7 @@ pin never causes merge conflicts.
 | `artwork/` | Logo, wordmark, icons and the source art sheet (CC BY 4.0) |
 | `branding/` | Tools that prepare the artwork, and the Chromium branding files the build uses |
 | `LICENSES/` | Licence texts other than the GPL-3.0 in `LICENSE` |
+| `install.sh` | Installer: published package, or a Poudriere build from source |
 | `plan/` | Planning documents |
 
 Clone with the submodule:

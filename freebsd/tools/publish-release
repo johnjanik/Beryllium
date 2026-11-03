@@ -1,0 +1,114 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Publish Beryllium packages as a GitHub release, in the layout install.sh
+# expects. Run it on the build machine, from the repository, after a
+# Poudriere build:
+#
+#   freebsd/tools/publish-release [--draft] [--dry-run] TAG PACKAGE...
+#
+#   freebsd/tools/publish-release v0.20.3.1-1 \
+#       /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
+#
+# Each package is renamed beryllium-FreeBSD-<major>-amd64.pkg after the ABI
+# it was built for (the names stay the same from release to release, so
+# install.sh can use .../releases/latest/download/<name>), and SHA256SUMS
+# lists them. The release is created with the GitHub CLI (gh) at the
+# current commit, which must already be pushed: that commit, with the
+# distfiles pinned in freebsd/ports/www/beryllium/distinfo, is the
+# corresponding source of the packages (GPL-3.0). Without gh, the files
+# and notes are left in a directory for upload through the web page.
+
+set -eu
+
+DRAFT=""
+DRYRUN=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--draft) DRAFT=--draft ;;
+	--dry-run) DRYRUN=1 ;;
+	--help | -h) sed -n '3,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
+	-*) echo "publish-release: unknown option $1" >&2; exit 1 ;;
+	*) break ;;
+	esac
+	shift
+done
+[ $# -ge 2 ] || { echo "usage: publish-release [--draft] [--dry-run] TAG PACKAGE..." >&2; exit 1; }
+TAG=$1
+shift
+
+die() { echo "publish-release: $*" >&2; exit 1; }
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
+[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ] ||
+	die "the checkout has uncommitted changes; the release must match a commit"
+[ -n "$(git -C "$REPO_ROOT" branch -r --contains "$COMMIT")" ] ||
+	die "commit $COMMIT is not on GitHub yet; push it first"
+
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/beryllium-release.XXXXXX")
+names=""
+version=""
+for pkgfile in "$@"; do
+	[ -f "$pkgfile" ] || die "no such file: $pkgfile"
+	name=$(pkg query -F "$pkgfile" '%n')
+	[ "$name" = beryllium ] || die "$pkgfile is $name, not beryllium"
+	v=$(pkg query -F "$pkgfile" '%v')
+	[ -z "$version" ] || [ "$version" = "$v" ] ||
+		die "packages have different versions ($version, $v)"
+	version=$v
+	abi=$(pkg query -F "$pkgfile" '%q')
+	case "$abi" in
+	FreeBSD:*:amd64) ;;
+	*) die "$pkgfile is for $abi; only FreeBSD amd64 packages are published" ;;
+	esac
+	major=$(echo "$abi" | cut -d: -f2)
+	asset="beryllium-FreeBSD-${major}-amd64.pkg"
+	case " $names " in *" $asset "*) die "two packages for FreeBSD $major" ;; esac
+	cp "$pkgfile" "$OUT/$asset"
+	names="$names $asset"
+done
+
+(cd "$OUT" && for f in $names; do sha256 -r "$f"; done) >"$OUT/SHA256SUMS"
+
+chromium=$(cat "$REPO_ROOT/helium/chromium_version.txt")
+# shellcheck disable=SC2016 # the backticks are Markdown, not command substitution
+cat >"$OUT/NOTES.md" <<EOF
+Beryllium $version (Chromium $chromium) for FreeBSD amd64.
+
+**Development build: no sandbox yet.** No Beryllium process is confined;
+a compromised web page is not contained.
+
+Install: download \`install.sh\` from the repository, read it, and run
+\`sh install.sh\`; it picks the package for your FreeBSD version and checks
+it against \`SHA256SUMS\`.
+
+Packages:$(for f in $names; do printf '\n- `%s`' "$f"; done)
+
+Corresponding source: commit $COMMIT of this repository (with its \`helium\`
+submodule), and the distfiles pinned in
+\`freebsd/ports/www/beryllium/distinfo\`. The software is GPL-3.0; the artwork
+is CC BY 4.0; the Beryllium name and logo are reserved (TRADEMARKS.md).
+EOF
+
+echo "publish-release: release files in $OUT:"
+ls -l "$OUT"
+cat "$OUT/SHA256SUMS"
+
+if [ "$DRYRUN" = 1 ]; then
+	echo "+ gh release create $TAG --target $COMMIT --title \"Beryllium $version\" --notes-file $OUT/NOTES.md $DRAFT $OUT/SHA256SUMS$(for f in $names; do printf ' %s' "$OUT/$f"; done)"
+	exit 0
+fi
+if ! command -v gh >/dev/null 2>&1; then
+	cat <<EOF
+
+GitHub CLI (gh) not found (pkg install gh). To publish by hand, create a
+release with tag $TAG on commit $COMMIT at
+https://github.com/johnjanik/Beryllium/releases/new, paste NOTES.md as the
+description, and attach SHA256SUMS and the .pkg files from $OUT.
+EOF
+	exit 0
+fi
+# shellcheck disable=SC2086 # DRAFT is empty or one flag; names are plain
+(cd "$OUT" && gh release create "$TAG" --target "$COMMIT" \
+	--title "Beryllium $version" --notes-file NOTES.md $DRAFT SHA256SUMS $names)
