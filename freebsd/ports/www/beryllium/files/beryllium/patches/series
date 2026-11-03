@@ -8,3 +8,4 @@ platform/beryllium-bsd-no-crashpad.patch
 platform/beryllium-bsd-nvidia-video-frames.patch
 platform/beryllium-bsd-wayland-wait-for-gpu.patch
 security/beryllium-honest-gpu-sandbox-status.patch
+ui/beryllium-toolbar-buttons-zero-height.patch

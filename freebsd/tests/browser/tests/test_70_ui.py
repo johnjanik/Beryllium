@@ -8,7 +8,9 @@ the space did not respond and no tooltip appeared; the same with
 --disable-gpu-compositing). In a fresh profile with Helium's default
 ("classic") layout the button was fine, so this checks every layout Helium
 offers, a narrow window, and with --my-settings a copy of the user's own
-settings. Results: ui-home-button.txt (one row per layout) and
+settings. That found it: in the vertical tabs and dynamic layouts the Home,
+Forward and Collapse tabs buttons were zero pixels tall
+(patches/ui/beryllium-toolbar-buttons-zero-height.patch). Results: ui-home-button.txt (one row per layout) and
 ui-toolbar-<layout>.txt (the window's views around the toolbar)."""
 
 import json
@@ -38,7 +40,7 @@ LAYOUTS = [
     ("vertical tabs", {"layout": 2}, []),
     ("vertical tabs on the right", {"layout": 2, "vertical_right_aligned": True}, []),
     ("dynamic", {"layout": 3}, []),
-    ("zen mode", {"zen_mode": True}, []),
+    ("zen mode", {"zen_mode": True}, []),  # top bar hidden until revealed
     ("zen mode, top bar pinned", {"zen_mode": True, "zen_mode_top_chrome_pinned": True}, []),
 ]
 
@@ -117,14 +119,32 @@ def snapshot(devtools, attempts=8):
     raise last
 
 
-def examine(rows):
+def flat_buttons(rows):
+    """Toolbar buttons that are shown but have no height (the vertical tabs
+    and dynamic layouts, 3 November 2026: Home, Forward, Collapse tabs)."""
+    bars = [i for i, r in enumerate(rows) if r.name == "ToolbarView"]
+    if not bars:
+        return []
+    return [f"{r.name} \"{r.props.get('Tooltip', '')}\" {r.abs}" for r in rows
+            if r.ancestors and r.ancestors[-1] == bars[0] and r.name.endswith("Button")
+            and drawn(r.props) and r.abs[2] > 0 and r.abs[3] <= 0]
+
+
+def examine(rows, top_bar_may_hide=False):
     """Problems with the Home button in one snapshot, and a description."""
     homes = [i for i, r in enumerate(rows) if r.name == "HomeButton"]
     if not homes:
         return ["no HomeButton view in the window"], "no HomeButton view"
     i = homes[0]
     home = rows[i]
+    tops = [rows[a] for a in home.ancestors if rows[a].name == "TopContainerView"]
+    if top_bar_may_hide and tops and tops[0].abs[3] <= 0:
+        # Zen mode hides the top bar until the pointer reaches the top edge.
+        return [], f"top bar hidden, as zen mode intends; HomeButton at {home.abs}"
     problems = []
+    flat = flat_buttons(rows)
+    if flat:
+        problems.append("toolbar buttons with no height: " + ", ".join(flat))
     overflow = [r for r in rows if r.name == "OverflowButton" and drawn(r.props)
                 and r.abs[2] > 0]
     if not ui.visible(home.props) and overflow:
@@ -210,7 +230,7 @@ class Toolbar(unittest.TestCase):
                 devtools.close()
         finally:
             browser.stop()
-        problems, desc = examine(rows)
+        problems, desc = examine(rows, top_bar_may_hide=name == "zen mode")
         save(ctx.artifact(f"ui-toolbar-{slug(name)}.txt"), rows,
              "; ".join(problems) or "fine")
         with open(ctx.artifact(f"ui-toolbar-{slug(name)}.json"), "w") as f:

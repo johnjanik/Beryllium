@@ -1,0 +1,51 @@
+Beryllium: keep toolbar buttons full height in Helium's vertical layouts
+
+Purpose: with "Show home button" on, the owner saw the address bar move
+  over but no Home button, no tooltip and no response in its place
+  (16.0-CURRENT, 3 November 2026; the same with --disable-gpu-compositing,
+  so not a drawing fault). freebsd/tests/browser/run ui read the window
+  through UI DevTools in each Helium layout: classic, centered address
+  bar, minimal URL, compact and zen mode with the top bar pinned are
+  fine; in "vertical tabs" (left or right) and "dynamic", and in the
+  owner's own settings, the Home button is laid out 28 x 0 px. So are
+  the Forward button and Helium's "Collapse tabs" button. Back and Reload
+  are 28 x 31.
+  Cause: helium/ui/layout/toolbar-overflow.patch gives every toolbar
+  button that can move to the overflow menu the flex rule
+  FlexSpecification(kPreferredSnapToZero, kPreferred). That constructor
+  takes no orientation and applies the rule to both axes, so a button
+  snaps to zero height whenever the toolbar's height leaves less than its
+  preferred height. The toolbar has a 3 px interior margin above and
+  below; in the classic layout it is 37 px tall (31 px left, buttons fit),
+  in the vertical tabs and dynamic layouts 34 px (28 px left), and every
+  such button collapses. Back and Reload have kPreferred rules from
+  helium/ui/layout/toolbar-layout.patch and keep their height.
+  Chromium's own ToolbarController uses the horizontal-only form of this
+  rule, which this patch now uses too: buttons still drop into the
+  overflow menu when the toolbar is too narrow, and keep their height
+  (31 px, as Back and Reload) when it is too short.
+  Not FreeBSD-specific: the layout code is the same on every platform.
+Stage: 4 (Beryllium series). Depends on helium/ui/layout/toolbar-overflow.patch
+  (stage 3), which adds the loop this changes.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench.
+Test: freebsd/tests/browser/run ui (every layout row "fine"; the test also
+  fails on any visible toolbar button with no height).
+security-review: not required (layout only)
+
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -1947,7 +1947,13 @@
+             overflow_order, child->GetProperty(views::kElementIdentifierKey))) {
+       continue;
+     }
++    // Beryllium: snap to zero along the toolbar only. Without an orientation
++    // the rule also applies to height, and in the vertical tabs and dynamic
++    // layouts the toolbar leaves 28 px for 31 px buttons, so Home, Forward
++    // and Collapse tabs were laid out zero pixels tall: invisible, with no
++    // tooltip, while the address bar still moved over for them.
+     auto responsive = views::FlexSpecification(
++        views::LayoutOrientation::kHorizontal,
+         views::MinimumFlexSizeRule::kPreferredSnapToZero,
+         views::MaximumFlexSizeRule::kPreferred);
+     if (const auto* flex = child->GetProperty(views::kFlexBehaviorKey)) {

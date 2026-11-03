@@ -112,6 +112,7 @@ Beryllium/
     platform/                         # FreeBSD counterparts of helium-linux's 7 platform patches
                                       # (branding, binary rename, default theme, crash, paths)
     branding/                         # Beryllium naming, icons, credits
+    ui/                               # fixes to Helium's interface code (not FreeBSD-specific)
     security/
       capsicum/                       # renderer and utility confinement
       launcher/                       # descriptor hygiene at child launch
