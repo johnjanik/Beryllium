@@ -111,7 +111,7 @@ set it, and the launcher will not start the browser without it.
   - On Wayland, the window flickered when the mouse moved, because the
     desktop could show a frame the GPU was still drawing. Beryllium now
     waits for the GPU to finish each frame first, which ended the flicker
-    on the test machine. The stock FreeBSD Chromium still flickers there.
+    on the test machine.
     `--disable-features=BerylliumWaylandWaitForGpu` turns the wait off.
 
 ## Reporting a problem
