@@ -156,8 +156,9 @@ GN_BOOTSTRAP_FLAGS=	--no-clean --no-rebuild --skip-generate-buildfiles
 SUB_FILES=	beryllium beryllium.desktop pkg-message
 SUB_LIST+=	COMMENT="${COMMENT}"
 
-OPTIONS_DEFINE=		CODECS CUPS DEBUG DRIVER KERBEROS LTO PIPEWIRE SEARCHICONS WIDEVINE
-OPTIONS_DEFAULT=	CODECS CUPS DRIVER KERBEROS PIPEWIRE SEARCHICONS SNDIO ALSA PULSEAUDIO
+OPTIONS_DEFINE=		CODECS CUPS DEBUG DRIVER KERBEROS LTO PIPEWIRE SEARCHICONS SYMBOLS WIDEVINE
+OPTIONS_DEFAULT=	CODECS CUPS DRIVER KERBEROS PIPEWIRE SEARCHICONS SNDIO ALSA PULSEAUDIO \
+			SYMBOLS
 OPTIONS_GROUP=		AUDIO
 OPTIONS_GROUP_AUDIO=	ALSA PULSEAUDIO SNDIO
 OPTIONS_RADIO=		KERBEROS
@@ -169,6 +170,7 @@ HEIMDAL_BASE_DESC=	Heimdal Kerberos (base)
 HEIMDAL_DESC=		Heimdal Kerberos (security/heimdal)
 MIT_DESC=		MIT Kerberos (security/krb5)
 SEARCHICONS_DESC=	Search engine icons from helium-nonfree-assets (licence under review, plan/10 Q5)
+SYMBOLS_DESC=		Keep function names in the browser binary (named crash backtraces; larger package)
 
 ALSA_LIB_DEPENDS=	libasound.so:audio/alsa-lib
 ALSA_RUN_DEPENDS=	${LOCALBASE}/lib/alsa-lib/libasound_module_pcm_oss.so:audio/alsa-plugins \
@@ -238,6 +240,15 @@ WIDEVINE_RUN_DEPENDS=	foreign-cdm>0:www/foreign-cdm
 
 .include <bsd.port.options.mk>
 .include <bsd.port.pre.mk> # for COMPILER_VERSION
+
+# SYMBOLS: install the browser without stripping its symbol table, so lldb
+# names the functions in a crash backtrace (on by default while Beryllium is
+# in development; the build itself has no debug info, symbol_level=0).
+.if ${PORT_OPTIONS:MSYMBOLS}
+BERYLLIUM_INSTALL_BROWSER=	${INSTALL} ${COPY} ${_BINOWNGRP} -m ${BINMODE}
+.else
+BERYLLIUM_INSTALL_BROWSER=	${INSTALL_PROGRAM}
+.endif
 
 .if ${PORT_OPTIONS:MHEIMDAL_BASE} && !exists(/usr/lib/libkrb5.so)
 IGNORE=		you have selected HEIMDAL_BASE but do not have Heimdal installed in base
@@ -419,7 +430,7 @@ do-install:
 .for d in snapshot_blob.bin v8_context_snapshot.bin
 	${INSTALL_DATA} ${WRKSRC}/out/${BUILDTYPE}/${d} ${STAGEDIR}${DATADIR}
 .endfor
-	${INSTALL_PROGRAM} ${WRKSRC}/out/${BUILDTYPE}/chrome \
+	${BERYLLIUM_INSTALL_BROWSER} ${WRKSRC}/out/${BUILDTYPE}/chrome \
 		${STAGEDIR}${DATADIR}/beryllium
 	cd ${WRKSRC}/out/${BUILDTYPE} && \
 		${COPYTREE_SHARE} "locales resources" ${STAGEDIR}${DATADIR}

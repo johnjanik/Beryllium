@@ -36,13 +36,27 @@ def find(core_dir, since):
     return sorted(found, key=os.path.getmtime)
 
 
-def backtrace(binary, core, lines=80):
-    """Backtrace of the crashing thread, with the loaded modules for context."""
+# Enough to tell a bad pointer from a bad instruction, and which thread and
+# code it was, even in a stripped binary: the backtrace, the faulting
+# instruction in context, all registers, the fault address (siginfo), the
+# memory map entry for the pc, the threads, and the load addresses.
+LLDB_COMMANDS = ["bt", "disassemble --start-address '$pc-96' --count 48", "register read",
+                 "thread siginfo", "memory region $pc", "thread list", "image list"]
+GDB_COMMANDS = ["bt", "x/48i $pc-96", "info registers", "p $_siginfo", "info threads",
+                "info sharedlibrary"]
+
+
+def backtrace(binary, core, lines=400):
+    """What the debugger can say about the crash; see LLDB_COMMANDS."""
     if shutil.which("lldb"):
-        cmd = ["lldb", "--batch", "-c", core, binary, "-o", "bt", "-o", "register read rip",
-               "-o", "image lookup -a $pc"]
+        cmd = ["lldb", "--batch", "-c", core, binary]
+        for c in LLDB_COMMANDS:
+            cmd += ["-o", c]
     elif shutil.which("gdb"):
-        cmd = ["gdb", "-batch", "-ex", "bt", "-ex", "info registers rip", binary, core]
+        cmd = ["gdb", "-batch"]
+        for c in GDB_COMMANDS:
+            cmd += ["-ex", c]
+        cmd += [binary, core]
     else:
         return "(no lldb or gdb to read the core)"
     try:
