@@ -313,9 +313,12 @@ compat15x-amd64` provides the 15.x versions.
 
 ## Publishing a release (maintainer)
 
-`install.sh` installs packages from this repository's GitHub releases. After
-a successful build, from the top of your clone, on the commit the package
-was built from (pushed to GitHub):
+`install.sh` installs packages from this repository's GitHub releases, and
+fetches itself from the `main` branch. After a successful build, bring
+`main` up to date and push it, then publish from the top of your clone on
+`main`. The release names the current commit as the package's source, so
+that commit must contain the port the package was built from; commits that
+change only documentation since the build are fine.
 
 ```sh
 freebsd/tools/publish-release v0.20.3.1-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
@@ -328,3 +331,8 @@ source, and creates the release with the GitHub CLI (`pkg install gh`,
 then `gh auth login` once). `--draft` creates it unpublished, and
 `--dry-run` only prepares the files. Without `gh`, it leaves the files in
 a directory to upload on the releases page.
+
+Before building the next release, raise the number in `revision.txt` at
+the top of the repository and run `freebsd/tools/sync-port`, which writes
+it into the port as `BERYLLIUM_REVISION` (0.20.3.1 becomes 0.20.3.2). The
+new package then has a higher version and `pkg` treats it as an update.

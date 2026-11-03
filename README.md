@@ -8,57 +8,51 @@
     <p>
         A privacy-focused browser for FreeBSD.
         <br>
-        Built natively, confined with FreeBSD's own security primitives.
+        Built natively, to be confined with FreeBSD's own security primitives.
     </p>
 </div>
 
-## Goal
-
-**The goal of this project is to create Beryllium: a privacy-focused,
-Chromium-based browser built natively for FreeBSD.**
-
-Beryllium is built from source as a native FreeBSD application and ships as
-an ordinary `pkg` package. Its privacy patch set is derived from the GPL-3.0
-code of the Helium browser, and it replaces the missing Chromium sandbox on
-FreeBSD with one built on FreeBSD's own security primitives. Beryllium is an
-independent project; see [Origin and independence](#origin-and-independence).
+Beryllium is a Chromium-based browser built from source as a native FreeBSD
+application and installed as an ordinary `pkg` package. Its privacy patch
+set is derived from the GPL-3.0 code of the Helium browser. Its goal is to
+give Chromium on FreeBSD the process sandbox it lacks today, built on
+Capsicum. Beryllium is an independent project; see
+[Origin and independence](#origin-and-independence).
 
 ## Status
 
 > [!WARNING]
-> Beryllium is in **Phase 0**. The port now builds a package (first
-> successful Poudriere build: 3 November 2026), but it has not been run or
-> tested, and there is no sandbox code yet: like the stock FreeBSD
-> Chromium, it runs without Chromium's sandbox. Do not use it as your
-> browser yet.
+> **Development build, no sandbox yet.** Beryllium works for everyday
+> browsing, but no Beryllium process is confined: like the stock
+> FreeBSD Chromium, a compromised web page has the same access to your
+> files and network as you do. `beryllium://gpu` says so
+> ("Sandboxed: false"). Do not rely on Beryllium to contain an attack yet.
 
-What exists so far:
+Current release: **Beryllium 0.20.3.1**, based on Chromium 156.0.8078.79.
 
-- [`freebsd/tests/capsicum-standalone/`](freebsd/tests/capsicum-standalone/README.md):
-  a Capsicum kernel oracle and red-team probe set. Run
-  `sh freebsd/tests/capsicum-standalone/run-oracle.sh` as an ordinary user.
-- [`freebsd/tools/baseline-collect.sh`](freebsd/tools/baseline-collect.sh):
-  records the machine, kernel and a running stock Chromium for the Phase 0
-  baseline.
-- [`freebsd/tools/gnargs-from-flags`](freebsd/tools/gnargs-from-flags) and
-  [`flags.freebsd.gn`](flags.freebsd.gn): generated GN arguments with a
-  privacy-key guard.
-- [`freebsd/ports/www/beryllium`](freebsd/ports/README.md): the Poudriere
-  port, which builds a package (not yet run or tested), with the imported
-  FreeBSD patch set and Beryllium's patches (`beryllium://`, own profile
-  and paths, FreeBSD fixes for Helium's code).
-- [`freebsd/PATCH-MATRIX.md`](freebsd/PATCH-MATRIX.md): where the FreeBSD,
-  Helium and Beryllium patch layers touch the same files.
+- **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland.
+- **Works:** browsing; video playback, including YouTube; WebGL; the toolbar in all of Helium's layouts; Beryllium's own name, icons, `beryllium://` pages and profile folder.
+- **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server (test suite, `privacy` group).
+- **Not yet:** any process sandbox; WebGPU (no adapter is found).
 
-The design is written up in [`plan/`](plan/00-INDEX.md). Start with the
-[index](plan/00-INDEX.md), then the [project charter](plan/01-PROJECT-CHARTER.md)
-and the [roadmap](plan/09-ROADMAP.md). The engineering specification the plan
-implements is [helium-freebsd-security-port-spec.md](helium-freebsd-security-port-spec.md).
+### Sandbox status of this release
+
+Each release states what is enforced, so you can check it yourself with
+`procstat -s` (a `C` in the flags column means Capsicum capability mode).
+
+| Process | Status |
+|---|---|
+| Browser | not confined |
+| Renderers (web pages) | not confined |
+| GPU | not confined (reported honestly at `beryllium://gpu`) |
+| Network, audio, other utilities | not confined |
 
 ## Install
 
-On FreeBSD (amd64), download the installer, read it, then run it as your
-normal user; it asks for root through `doas` or `sudo` only where needed:
+On FreeBSD 16 (amd64), download the installer, read it, then run it as your
+normal user. It asks for root through `doas` or `sudo` only for the steps
+that need it.
 
 ```sh
 fetch -o install.sh https://raw.githubusercontent.com/johnjanik/Beryllium/main/install.sh
@@ -70,115 +64,174 @@ sh install.sh
 
 (`curl -fsSL -o install.sh` with the same URL works too.)
 
-- `sh install.sh` installs the published package for your FreeBSD version
-  from this repository's
-  [releases](https://github.com/johnjanik/Beryllium/releases), after
-  checking it against the release's `SHA256SUMS`. Its dependencies come
-  from the official FreeBSD package repository.
-- `sh install.sh --build` builds Beryllium from source with Poudriere
-  instead (several hours, about 100 GB of disk), following
-  [freebsd/ports/README.md](freebsd/ports/README.md), and installs it.
-- `--dry-run` shows every command that would change the system and changes
-  nothing; `--uninstall` removes Beryllium and keeps your profile;
-  `--help` lists the rest.
+The installer downloads the package for your FreeBSD version from this
+repository's [releases](https://github.com/johnjanik/Beryllium/releases),
+checks it against the release's `SHA256SUMS`, installs its dependencies
+from the official FreeBSD package repository, and installs it.
 
-Until the first release is published, use `--build`.
+| Command | What it does |
+|---|---|
+| `sh install.sh` | install or update to the latest release |
+| `sh install.sh --build` | build from source with Poudriere and install (several hours, about 100 GB of disk); for FreeBSD versions without a package |
+| `sh install.sh --uninstall` | remove Beryllium; your profile stays |
+| `sh install.sh --dry-run` | show every command that would change the system, and change nothing |
+
+`sh install.sh --help` lists the other options. To update, run
+`sh install.sh` again when a new release is out; there is no in-browser
+updater.
+
+Beryllium needs `kern.ipc.shm_allow_removed=1`. The installer offers to
+set it, and the launcher will not start the browser without it.
+
+## Using Beryllium
+
+- Start it from your desktop menu, or run `beryllium`.
+- Internal pages use the `beryllium://` scheme: `beryllium://settings`,
+  `beryllium://version`, `beryllium://gpu`.
+- Your profile is in `~/.config/beryllium` (set `BERYLLIUM_CONFIG_HOME` to
+  use another folder), separate from Chromium's and Helium's.
+- Wayland is recommended. Under X11, any program in your session can read
+  input from and inject input into other windows.
+- Online services (extension proxy, `!bangs` list, filter-list and
+  component updates, dictionaries) are off by default, because the project
+  runs no servers for them yet. What that changes for each feature is in
+  [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
+- Managed policies go in `/usr/local/etc/beryllium/policies/managed/`.
+
+### Known issues
+
+- **WebGPU** finds no adapter.
+- **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
+  Chromium's graphics path differently from the Intel and AMD drivers, and
+  Beryllium works around both when it detects an NVIDIA driver:
+  - Video frames are not written into GPU memory buffers, which crashed
+    every video tab ("Error code 11"). The stock FreeBSD Chromium has the
+    same crash; to avoid it there, start it with
+    `--disable-gpu-memory-buffer-video-frames`.
+  - On Wayland, the browser waits for the GPU to finish each frame before
+    the desktop shows it, so that half-drawn frames do not flicker on
+    screen.
+    `--disable-features=BerylliumWaylandWaitForGpu` turns that off.
+
+## Reporting a problem
+
+Open an [issue](https://github.com/johnjanik/Beryllium/issues). The browser
+test suite collects most of what is needed: it runs the installed Beryllium
+in throwaway profiles (your own profile is never opened) and writes a
+report.
+
+```sh
+freebsd/tests/browser/run
+```
+
+Attach `report.txt` from the results directory it prints. `run --list`
+shows every test; [its README](freebsd/tests/browser/README.md) explains
+the options, such as `--my-settings` to check the toolbar with a copy of
+your own settings and `--cores` to get backtraces from a crash.
+
+## Build from source
+
+Beryllium builds in a [Poudriere](https://github.com/freebsd/poudriere) jail
+from this repository's port, `freebsd/ports/www/beryllium`. The full
+walkthrough, from installing Poudriere to installing the package, is
+[freebsd/ports/README.md](freebsd/ports/README.md); `sh install.sh --build`
+follows it for you. With the jail and ports trees set up as described
+there, a build is:
+
+```sh
+doas poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium
+```
+
+Build in a jail of the same FreeBSD major version as the machine that will
+run the package (`160amd64` for 16.0-CURRENT, `151amd64` for 15.1).
 
 ## Why Beryllium exists
 
-Chromium already runs on FreeBSD through the `www/chromium` port, but it runs
-without kernel-enforced process confinement. The port's FreeBSD sandbox code
-lowers one memory limit and returns. There is no zygote, no seccomp
-equivalent and no Capsicum. A compromised renderer has the same access to
-files, sockets and processes as the user who started the browser.
+Chromium already runs on FreeBSD through the `www/chromium` port, but
+without kernel-enforced process confinement. The port's FreeBSD sandbox
+code lowers one memory limit and returns. There is no zygote, no seccomp
+equivalent and no Capsicum, so a compromised renderer has the same access
+to files, sockets and processes as the user who started the browser.
 
-No privacy-focused Chromium derivative offers a FreeBSD build. Beryllium is
-an independent project that fills that gap.
+No privacy-focused Chromium derivative offered a FreeBSD build. Beryllium
+fills that gap first, and then works on the sandbox.
 
-## Privacy features from the code base
+## Privacy features
 
-Beryllium's code base is derived from Helium's open-source patch set. From it,
-Beryllium keeps:
+From Helium's open-source patch set, Beryllium keeps:
 
-- The patch set, defaults and build flags, including the ungoogled-chromium
-  base.
-- The bundled uBlock Origin fork, its filter defaults and CNAME uncloaking.
-- Native `!bangs`, the onboarding page, fingerprinting noise, and the rest of
-  the privacy customizations.
+- the patch set, defaults and build flags, including the ungoogled-chromium
+  base;
+- the bundled uBlock Origin, its filter defaults and CNAME uncloaking;
+- native `!bangs`, fingerprinting noise, and the other privacy settings.
 
-Things that differ:
+What differs:
 
-- Beryllium does not use Helium's service endpoints. The services switch
-  (extension proxy, `!bangs` list, filter-list updates, dictionaries,
-  component updates) is off by default until Beryllium hosts its own instance
-  of the open-source services. The consequences per feature are listed in
-  [the privacy invariants plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
-- Browser updates arrive through `pkg`, not an in-app updater.
-- Crash reports are not uploaded, because the crash handler does not run on
-  FreeBSD.
+- Beryllium does not use Helium's service endpoints; its online services
+  are off until Beryllium hosts its own instance of the open-source
+  services.
+- Updates come through `pkg`.
+- Crash reports are never uploaded: there is no crash reporter on FreeBSD.
 
 ## What Beryllium adds
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors. No path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
 | **Resource profiles** | Measured `rctl` rule sets for jail deployments. |
-| **Kernel-attested status** | The sandbox status page reports what the kernel says about each process, which users can check themselves with `procstat`. |
-| **MAC module study** | An optional, administrator-loaded policy that narrows what sandboxed processes can reach in the kernel (sockets, sysctls, process visibility). Not required for a first release. |
-
-Every release will publish a table stating what is enforced and tested, what
-is configured but untested, and what is planned.
+| **Kernel-attested status** | Status pages report what the kernel says about each process, which you can check yourself with `procstat`. The first step is in this release: `beryllium://gpu` reports the GPU process's real state. |
+| **MAC module study** | An optional, administrator-loaded policy that narrows what sandboxed processes can reach in the kernel. Not required for a first release. |
 
 ## Roadmap
 
-| Phase | Outcome |
-|---|---|
-| 0. Baseline | Reproduce the current FreeBSD Chromium build and record what is actually sandboxed |
-| 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour preserved and no sandbox claims |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests |
-| 3. Other processes | Utility, audio, network and GPU policies |
-| 4. Jail and resources | Optional jail profile and measured resource limits |
-| 5. MAC module study | Decision memo, prototype if justified |
-| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow |
+| Phase | Outcome | Status |
+|---|---|---|
+| 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
+| 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | next |
+| 3. Other processes | Utility, audio, network and GPU policies | planned |
+| 4. Jail and resources | Optional jail profile and measured resource limits | planned |
+| 5. MAC module study | Decision memo, prototype if justified | planned |
+| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite) |
 
-Details, effort estimates and the first-release definition are in the
-[roadmap](plan/09-ROADMAP.md).
+Details are in the [roadmap](plan/09-ROADMAP.md) and the rest of
+[`plan/`](plan/00-INDEX.md); the engineering specification is
+[helium-freebsd-security-port-spec.md](helium-freebsd-security-port-spec.md).
 
 ## Targets
 
-- FreeBSD `amd64` on the supported stable branches (currently 14.x and 15.x),
-  with kernels patched for FreeBSD-SA-26:28.capsicum. Development happens on
-  16.0-CURRENT; stable branches are built in Poudriere jails and tested in
-  bhyve guests.
-- Wayland (recommended) and X11. On X11 any client can read input from and
-  inject input into other windows, which weakens every sandbox layer.
+- FreeBSD amd64: 16.0-CURRENT (where development happens) and the supported
+  stable branches (14.x and 15.x), with kernels patched for
+  FreeBSD-SA-26:28.capsicum. Packages are published for the versions the
+  project has built and checked; the others build from source.
+- Wayland (recommended) and X11.
 - `aarch64` later, once CI covers it.
 
 ## Repository layout
 
-Beryllium is structured as a platform repository around a pinned copy of
-the upstream patch set it is derived from. That code is included as a git
-submodule pinned at a release tag. Nothing inside it is edited, so moving the
-pin never causes merge conflicts.
+The upstream patch set is a git submodule pinned at a release tag and never
+edited; Beryllium's changes are separate patches applied after it.
 
 | Path | Contents |
 |---|---|
 | `helium/` | Submodule: [imputnet/helium](https://github.com/imputnet/helium) at release tag `0.20.3`, commit `2f81b9ca` (Chromium 156.0.8078.79) |
-| `patches/` | Beryllium patches for FreeBSD platform, branding and security, applied after the upstream series (planned) |
-| `flags.freebsd.gn` | FreeBSD build flags appended to the upstream `flags.gn`, combined by `freebsd/tools/gnargs-from-flags` |
-| `freebsd/` | FreeBSD port, sandbox policies, test suites and tooling |
+| `patches/` | Beryllium's patches, applied after the upstream series: branding, FreeBSD platform fixes, security, and interface fixes |
+| `flags.freebsd.gn` | FreeBSD build flags appended to the upstream `flags.gn` |
+| `freebsd/ports/` | The Poudriere port, with the imported FreeBSD Chromium patch set |
+| `freebsd/tests/` | The browser test suite and the Capsicum kernel tests |
+| `freebsd/tools/` | Build, patch, release and checking tools |
 | `artwork/` | Logo, wordmark, icons and the source art sheet (CC BY 4.0) |
-| `branding/` | Tools that prepare the artwork, and the Chromium branding files the build uses |
+| `branding/` | Tools that prepare the artwork, and the branding files the build uses |
+| `install.sh` | The installer |
+| `plan/` | Design and planning documents |
 | `LICENSES/` | Licence texts other than the GPL-3.0 in `LICENSE` |
-| `install.sh` | Installer: published package, or a Poudriere build from source |
-| `plan/` | Planning documents |
 
 Clone with the submodule:
 
-```bash
+```sh
 git clone --recurse-submodules https://github.com/johnjanik/Beryllium.git
 ```
 
@@ -193,10 +246,10 @@ send changes upstream.
 
 ## Contributing
 
-Beryllium is at the planning stage. Issues that discuss the plan are welcome.
-Changes that touch process creation, IPC, file descriptors, shared memory,
-the GPU process, the network service or sandbox setup require a security
-review before merging.
+Issues and pull requests are welcome. Changes that touch process creation,
+IPC, file descriptors, shared memory, the GPU process, the network service
+or sandbox setup require a security review before merging. How patches are
+layered is described in [the patch strategy](plan/05-PATCH-STRATEGY.md).
 
 ## Credits
 

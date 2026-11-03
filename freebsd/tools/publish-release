@@ -83,6 +83,10 @@ Install: download \`install.sh\` from the repository, read it, and run
 \`sh install.sh\`; it picks the package for your FreeBSD version and checks
 it against \`SHA256SUMS\`.
 
+What works, what was checked and on what hardware, the sandbox status
+of each process and the known issues: the Status section of README.md at
+commit $COMMIT.
+
 Packages:$(for f in $names; do printf '\n- `%s`' "$f"; done)
 
 Corresponding source: commit $COMMIT of this repository (with its \`helium\`
