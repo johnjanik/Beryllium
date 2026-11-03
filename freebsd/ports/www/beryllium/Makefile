@@ -451,8 +451,12 @@ post-install-DEBUG-on:
 	${INSTALL_PROGRAM} ${WRKSRC}/out/${BUILDTYPE}/character_data_generator \
 		${STAGEDIR}${DATADIR}
 
+# Helium's ungoogled-chromium/fix-building-with-prunned-binaries.patch
+# disables the Linux strip_binary branch of chrome/test/chromedriver/BUILD.gn,
+# so chromedriver is linked directly as "chromedriver" (as in
+# www/ungoogled-chromium), not "chromedriver.unstripped" (www/chromium).
 post-install-DRIVER-on:
-	${INSTALL_PROGRAM} ${WRKSRC}/out/${BUILDTYPE}/chromedriver.unstripped \
+	${INSTALL_PROGRAM} ${WRKSRC}/out/${BUILDTYPE}/chromedriver \
 		${STAGEDIR}${PREFIX}/bin/beryllium-chromedriver
 
 .include <bsd.port.post.mk>
