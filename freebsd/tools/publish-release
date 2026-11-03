@@ -113,6 +113,13 @@ description, and attach SHA256SUMS and the .pkg files from $OUT.
 EOF
 	exit 0
 fi
-# shellcheck disable=SC2086 # DRAFT is empty or one flag; names are plain
-(cd "$OUT" && gh release create "$TAG" --target "$COMMIT" \
-	--title "Beryllium $version" --notes-file NOTES.md $DRAFT SHA256SUMS $names)
+# gh finds the GitHub repository from the git checkout it runs in, so run it
+# in the repository and name the release files by their full paths (each is
+# uploaded under its own file name).
+set -- "$OUT/SHA256SUMS"
+for f in $names; do
+	set -- "$@" "$OUT/$f"
+done
+# shellcheck disable=SC2086 # DRAFT is empty or one flag
+(cd "$REPO_ROOT" && gh release create "$TAG" --target "$COMMIT" \
+	--title "Beryllium $version" --notes-file "$OUT/NOTES.md" $DRAFT "$@")
