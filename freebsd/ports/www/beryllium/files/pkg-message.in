@@ -4,18 +4,19 @@
 Beryllium is a development build (Phase 1).
 
 Sandbox status: none. Like www/chromium today, no Beryllium process runs in
-Capsicum capability mode yet. Do not rely on this release to contain a
-compromised web page. The sandbox status of each release is published at
-https://github.com/johnjanik/Beryllium.
+Capsicum capability mode yet, and beryllium://gpu says "Sandboxed: false".
+Do not rely on this release to contain a compromised web page. The sandbox
+status of each release is published at https://github.com/johnjanik/Beryllium.
 
-- Updates arrive through pkg (pkg upgrade); there is no in-browser updater.
+- Updates: install a newer Beryllium package (install.sh, or a new
+  Poudriere build); there is no in-browser updater.
 - Profile: ~/.config/beryllium (override with BERYLLIUM_CONFIG_HOME).
 - Policies: %%PREFIX%%/etc/beryllium/policies/managed/
 - Wayland is recommended. Under X11, any program in the session can read
   input from and inject input into other windows.
-- Helium services (extension proxy, !bangs list, filter-list and component
-  updates, dictionaries) are off by default; see the project documentation
-  for what that changes.
+- Online services (extension proxy, !bangs list, filter-list and component
+  updates, dictionaries) are off by default; the project runs no such
+  servers yet. See the project documentation for what that changes.
 - Optional system hardening that blocks some cross-process observation:
     sysctl security.bsd.see_other_uids=0
     sysctl security.bsd.see_other_gids=0

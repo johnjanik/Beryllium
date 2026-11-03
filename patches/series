@@ -5,3 +5,4 @@ branding/beryllium-webui-scheme.patch
 platform/beryllium-paths-and-branding.patch
 platform/beryllium-bsd-helium-linux-conditions.patch
 platform/beryllium-bsd-no-crashpad.patch
+security/beryllium-honest-gpu-sandbox-status.patch

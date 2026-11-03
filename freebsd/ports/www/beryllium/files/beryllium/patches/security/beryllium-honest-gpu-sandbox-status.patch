@@ -1,0 +1,58 @@
+Beryllium: report the GPU process's real sandbox state (RT-17)
+
+Purpose: beryllium://gpu showed "Sandboxed: true" on the owner's
+  16.0-CURRENT machine (3 November 2026), as chrome://gpu does for the stock
+  FreeBSD Chromium. It is false: the FreeBSD port's
+  SandboxLinux::InitializeSandbox() (sandbox/policy/freebsd/sandbox_freebsd.cc,
+  from the imported BSD patches) applies no confinement and returns true in
+  every case, even with --no-sandbox, and the GPU process reports that value.
+  A browser that claims a sandbox it does not have misleads users and
+  reviewers.
+  On FreeBSD the GPU process now reports sandboxed only if the kernel says
+  it is in Capsicum capability mode (cap_getmode(2)). Today that is false;
+  once Beryllium's sandbox enters capability mode in the GPU process, the
+  report becomes true with no further change.
+  The value is only displayed (beryllium://gpu) and recorded in UMA, which
+  is disabled; nothing in the browser acts on it (checked in gpu_init.cc,
+  gpu_process_host.cc, gpu_data_manager_impl_private.cc, gpu_util.cc), and
+  "false" is its default on every platform. InitializeSandbox() itself is
+  left unchanged because other process types use its result.
+Stage: 4 (Beryllium series). Depends on the imported BSD patches
+  patch-content_gpu_gpu__main.cc and patch-sandbox_policy_freebsd_*.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench; the new code
+  compiled against FreeBSD 16.0-CURRENT headers.
+Test: beryllium://gpu shows "Sandboxed: false" (plan/12 RT-17);
+  freebsd/tests (planned) checks it against procstat for the GPU process.
+security-review: required (sandbox reporting)
+
+--- a/content/gpu/gpu_main.cc
++++ b/content/gpu/gpu_main.cc
+@@ -127,6 +127,10 @@
+ #include "sandbox/policy/sandbox_type.h"
+ #endif
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include <sys/capsicum.h>
++#endif
++
+ #if BUILDFLAG(IS_MAC)
+ #include "base/message_loop/message_pump_apple.h"
+ #include "components/metal_util/device_removal.h"
+@@ -582,7 +586,16 @@
+     tracing::PerfettoTracedProcess::Get().RestartThreadInSandbox();
+   }
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium (RT-17): the FreeBSD SandboxLinux::InitializeSandbox() applies
++  // no confinement and always returns true, which beryllium://gpu showed as
++  // "Sandboxed: true". Report what the kernel says instead: sandboxed only
++  // if this process is in Capsicum capability mode.
++  u_int cap_mode = 0;
++  return res && cap_getmode(&cap_mode) == 0 && cap_mode != 0;
++#else
+   return res;
++#endif
+ }
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ 
