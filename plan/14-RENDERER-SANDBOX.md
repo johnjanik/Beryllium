@@ -14,21 +14,27 @@ FreeBSD ports 6ad3e0c8) with `freebsd/tools/patch-workbench`.
   `base::SysInfo` values, and for renderers `gfx::InitializeFonts()`;
   `InitializeSandbox()` lowers `RLIMIT_DATA` and returns. Nothing calls
   `cap_enter`.
-- **Renderers never call it.** On FreeBSD a renderer runs `PreSandboxInit()`
+- Every process type reaches it. A renderer runs `PreSandboxInit()`
   (`content/app/content_main_runner_impl.cc`: system values, BoringSSL,
   rust_png CPU features, WebRTC, WebNN), then `RendererMain()` calls
-  `RendererMainPlatformDelegate::EnableSandbox()`, which the FreeBSD patch
-  reduces to `return true`. Only the browser (as "no sandbox"), the GPU
-  process (`StartSandboxLinux` in `content/gpu/gpu_main.cc`) and utility
-  processes (`sandbox::policy::Sandbox::Initialize`) reach
-  `InitializeSandbox()`. So renderers do not even get the `RLIMIT_DATA`
-  limit the others get.
+  `RendererMainPlatformDelegate::EnableSandbox()`, which calls
+  `sandbox::policy::Sandbox::Initialize()` and so
+  `SandboxLinux::InitializeSandbox(kRenderer)`; the FreeBSD patch only
+  skips the Linux seccomp checks after it. The GPU process arrives through
+  `StartSandboxLinux` (`content/gpu/gpu_main.cc`), utility processes through
+  `Sandbox::Initialize`. So every child gets the warm-up and the 4 GB
+  `RLIMIT_DATA` (the survey shows `datasize=4194304 KB` in all of them).
+  (A first reading on 4 November 2026 said renderers never reach it; that
+  was wrong: it missed the `Sandbox::Initialize()` call above the skipped
+  checks.)
 - There is no zygote on FreeBSD: each renderer is launched from the
   browser, inherits its Mojo channel as a descriptor, and initialises Mojo
   after `EnableSandbox()`.
 
 ## 2. The lockdown point
 
+The end of `SandboxLinux::InitializeSandbox()` for `kRenderer`
+(`sandbox/policy/freebsd/sandbox_freebsd.cc`), reached from
 `RendererMainPlatformDelegate::EnableSandbox()`
 (`content/renderer/renderer_main_platform_delegate_linux.cc`). It runs:
 
@@ -39,10 +45,9 @@ FreeBSD ports 6ad3e0c8) with `freebsd/tools/patch-workbench`.
   working in capability mode (`sendmsg`/`recvmsg` with `SCM_RIGHTS` are
   allowed).
 
-Beryllium's change calls into `sandbox_freebsd.cc` from there for
-`kRenderer`: finish the warm-up, limit and close descriptors, harden
-(`procctl`), `cap_enter`, check `cap_getmode`, log one line, and on failure
-end the process in a production build.
+Beryllium's change does, for `kRenderer` only: finish the warm-up, limit and
+close descriptors, harden (`procctl`), `cap_enter`, check `cap_getmode`, log
+one line, and on failure end the process in a production build.
 
 ## 3. Increments
 
@@ -57,13 +62,21 @@ FreeBSD test bed, so an increment must be worth a build.
    names and limits. FreeBSD records these "CAPFAIL" events for processes
    that never entered capability mode (since 14.1 and 15). Its report is the
    input to increments 2 and 3.
-2. **Opt-in lockdown** (next build): the code in section 2, enabled only by
-   a Beryllium switch, so daily use is unaffected while it is tested; plus a
-   diagnostic mode that sets `PROC_TRAPCAP_CTL`, so the first refused call
-   ends the renderer with a backtrace instead of failing quietly. Warm-up
-   moves are taken from the survey, starting with the known ones:
-   `vm.stats.vm.v_page_count` (the 2023 attempt's first failure), time-zone
-   data, fonts.
+2. **Opt-in lockdown** (written 4 November 2026, in the next build:
+   `patches/security/beryllium-capsicum-renderer.patch`): warm-up, a
+   `utrace` marker at the lockdown point (always, so the survey splits each
+   renderer's trace into before and after), and `cap_enter` only with
+   `--enable-features=BerylliumCapsicumRenderer`; with
+   `BerylliumCapsicumTrap` as well, `PROC_TRAPCAP_CTL` turns the first
+   refused call into SIGTRAP and a backtrace. The survey of 4 November found
+   renderers reading, among others, `vm.stats.vm.v_page_count` and
+   `v_page_size` about 19 times each and `kern.ipc.shmmax` and
+   `kern.version` (via `uname()`) once, all refused in capability mode, where
+   their FreeBSD code calls `NOTREACHED()` or `CHECK` and would end the
+   renderer; `base/system` now keeps those answers once read, and the
+   warm-up reads them first. Most of the survey's 18,000 refused calls
+   (library loading, resource paks) are start-up, before the lockdown
+   point; the marker will show which remain after it.
 3. **Descriptor hygiene and allowlist:** `closefrom` in the launcher, the
    committed renderer allowlist from the survey, rights limits per
    descriptor, environment allowlist.

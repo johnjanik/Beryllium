@@ -2,9 +2,14 @@
 """Capsicum survey (--diagnose): runs the browser under ktrace and records,
 per process type, everything capability mode would refuse (system calls,
 path lookups, sysctls) across the plan/09 Phase 2 workloads, with each
-process's descriptors, environment variable names and limits. The input to
-the renderer sandbox (feature matrix S-REN-02 warm-up and S-REN-03
-descriptor inventory). Nothing is confined; the browser runs as usual.
+process's descriptors, environment variable names and limits. Builds with
+patches/security/beryllium-capsicum-renderer.patch write a marker at the
+renderer's lockdown point (utrace, traced with -t u); the report then
+separates what a renderer does before it (start-up, allowed) from what it
+does after (must work in capability mode). The input to the renderer
+sandbox (feature matrix S-REN-02 warm-up and S-REN-03 descriptor
+inventory). Nothing is confined unless the browser is started with
+--enable-features=BerylliumCapsicumRenderer.
 
 Results: capsicum-survey.txt (read this), capsicum-survey.json, and
 capsicum-kdump.txt.gz (the trace lines of every process but the browser)."""
@@ -161,7 +166,7 @@ class CapsicumSurvey(unittest.TestCase):
 
         trace = os.path.join(scratch, "browser.ktr")
         browser = Browser(ctx, "capsicum", headless=headless,
-                          wrapper=["ktrace", "-i", "-t", "pny", "-f", trace]).start()
+                          wrapper=["ktrace", "-i", "-t", "pnyu", "-f", trace]).start()
         browser.record_version()
         types = {browser.proc.pid: "browser"}
         samples = {}
@@ -208,6 +213,14 @@ class CapsicumSurvey(unittest.TestCase):
             browser.stop()
 
         readable, readable_from = capsicum.readable_sysctls(RESULTS_DIR, platform.release())
+        no_fds = samples and not any(s.get("fds") for s in samples.values())
+        debug = capsicum.proc_debug_setting()
+        fd_note = ""
+        if no_fds:
+            fd_note = ("Descriptors and environment could not be read (procstat -f and -e "
+                       f"need security.bsd.unprivileged_proc_debug=1; it is {debug}). To "
+                       "include them, run again after: doas sysctl "
+                       "security.bsd.unprivileged_proc_debug=1 (and set it back after).\n\n")
         kept = []
         with subprocess.Popen(["kdump", "-f", trace], stdout=subprocess.PIPE, text=True,
                               errors="replace") as proc:
@@ -222,7 +235,7 @@ class CapsicumSurvey(unittest.TestCase):
         text = (f"Capsicum survey, {time.strftime('%Y-%m-%d %H:%M:%S')}, kernel "
                 f"{platform.release()}, browser {getattr(ctx, 'browser_version', {}).get('product', '?')}\n"
                 "Workloads (name: page title when done):\n"
-                + "".join(f"  {r}\n" for r in ran) + "\n"
+                + "".join(f"  {r}\n" for r in ran) + "\n" + fd_note
                 + capsicum.report(summary, samples, readable_from))
         with open(ctx.artifact("capsicum-survey.txt"), "w") as f:
             f.write(text)

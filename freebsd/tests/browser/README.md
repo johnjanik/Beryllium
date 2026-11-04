@@ -34,8 +34,16 @@ it they are skipped. Useful options:
   emoji, images, WebGL, WebAssembly, workers, a service worker, storage, a
   form, a PDF, video, printing), with each process's descriptors,
   environment variable names (not values) and limits
-  (`capsicum-survey.txt`). Nothing is confined while it runs. Needs
-  `security.bsd.unprivileged_proc_debug=1` (the default).
+  (`capsicum-survey.txt`). Builds from 0.20.3.3 mark each renderer's
+  lockdown point, and the report then separates what happens before it
+  (start-up) from what happens after (must work in capability mode).
+  Nothing is confined while it runs. Descriptors and environment need
+  `security.bsd.unprivileged_proc_debug=1` (the default) during the run.
+- `run --browser-arg=--enable-features=BerylliumCapsicumRenderer`: the whole
+  suite with renderers in Capsicum capability mode (opt-in while the
+  sandbox is being built, plan/14); `sandbox` shows each renderer's mode,
+  the other groups show what still breaks. Add `,BerylliumCapsicumTrap` and
+  `--cores` to get a backtrace at the first refused call.
 - `run media videodiag --diagnose`: replay video under switches that each
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash

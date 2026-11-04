@@ -19,8 +19,18 @@ import subprocess
 
 # "  1234 beryllium CAP   system call not allowed: openat"; kdump -H adds a
 # thread id column after the pid.
-KDUMP_RE = re.compile(r"^\s*(\d+)\s+(?:\d+\s+)?(\S+)\s+(CAP|NAMI|SCTL)\s+(.*?)\s*$")
+KDUMP_RE = re.compile(r"^\s*(\d+)\s+(?:\d+\s+)?(\S+)\s+(CAP|NAMI|SCTL|USER)\s+(.*?)\s*$")
 SAMPLES = 8  # example paths kept per failure
+# Written with utrace(2) by patches/security/beryllium-capsicum-renderer.patch
+# at the renderer's lockdown point; kdump prints it as a length and hex bytes.
+MARKER = b"BERYLLIUM-LOCKDOWN"
+# System calls whose refusal comes from a path lookup, so the lookup just
+# before it names the path; other refusals (cpuset, signals) get no path.
+PATH_SYSCALLS = {"open", "openat", "access", "eaccess", "faccessat", "readlink",
+                 "readlinkat", "stat", "lstat", "fstatat", "__realpathat", "mkdir",
+                 "mkdirat", "rename", "renameat", "unlink", "unlinkat", "rmdir",
+                 "connect", "bind", "statfs", "pathconf", "execve", "chdir",
+                 "chmod", "chown", "link", "symlink", "mkfifo", "__sysctl"}
 
 
 def _unquote(text):
@@ -30,9 +40,43 @@ def _unquote(text):
     return text
 
 
+def syscall_of(message):
+    """The system call a CAPFAIL message is about, if it names one."""
+    if message.startswith("system call not allowed: "):
+        return message.split(": ", 1)[1].split()[0]
+    if ": " in message:
+        return message.split(": ", 1)[0]
+    return None
+
+
+def sysctl_name(name):
+    """Groups per-process and per-oid names: kern.proc.pid.123 -> kern.proc.pid.<pid>."""
+    name = re.sub(r"^(kern\.proc\.\w+)\.\d+$", r"\1.<pid>", name)
+    return re.sub(r"^(sysctl\.\w+)(\.\d+)+$", r"\1.<oid>", name)
+
+
+def is_marker(data):
+    if MARKER.decode() in data:
+        return True
+    fields = data.split()
+    try:
+        raw = bytes(int(x, 16) for x in fields[1:])
+    except ValueError:
+        return False
+    return MARKER in raw
+
+
+def _new_proc(comm):
+    return {"comm": comm, "marker": False, "lookups": 0,
+            "cap": collections.Counter(), "cap_after": collections.Counter(),
+            "cap_paths": collections.defaultdict(list),
+            "sysctl": collections.Counter(), "sysctl_after": collections.Counter()}
+
+
 def parse_kdump(lines):
     """Per pid: capability failures (message -> count, with example paths
-    from the lookup that caused them) and sysctl names read."""
+    from the lookup that caused them) and sysctl names read, in total and
+    after the lockdown marker when the process wrote one."""
     procs = {}
     last_path = {}
     for line in lines:
@@ -40,18 +84,24 @@ def parse_kdump(lines):
         if not m:
             continue
         pid, comm, kind, data = int(m.group(1)), m.group(2), m.group(3), m.group(4)
-        p = procs.setdefault(pid, {"comm": comm, "cap": collections.Counter(),
-                                   "cap_paths": collections.defaultdict(list),
-                                   "sysctl": collections.Counter(), "lookups": 0})
-        if kind == "NAMI":
+        p = procs.setdefault(pid, _new_proc(comm))
+        if kind == "USER":
+            if is_marker(data):
+                p["marker"] = True
+        elif kind == "NAMI":
             last_path[pid] = _unquote(data)
             p["lookups"] += 1
         elif kind == "SCTL":
-            p["sysctl"][_unquote(data)] += 1
+            name = sysctl_name(_unquote(data))
+            p["sysctl"][name] += 1
+            if p["marker"]:
+                p["sysctl_after"][name] += 1
         else:  # CAP
             message = data
             p["cap"][message] += 1
-            path = last_path.get(pid)
+            if p["marker"]:
+                p["cap_after"][message] += 1
+            path = last_path.get(pid) if syscall_of(message) in PATH_SYSCALLS else None
             examples = p["cap_paths"][message]
             if path and path not in examples and len(examples) < SAMPLES:
                 examples.append(path)
@@ -95,10 +145,28 @@ def environment_names(pid, text=None):
     return sorted({m.group(1) for line in lines for m in ENV_NAME_RE.finditer(line)})
 
 
+# "  4242 beryllium  datasize   4194304 KB   4194304 KB" (FreeBSD 16 adds units)
+LIMIT_RE = re.compile(r"^\s*\d+\s+\S+\s+(\S+)\s+(infinity|-?\d+(?:\s+[A-Za-z]+)?)"
+                      r"\s+(infinity|-?\d+(?:\s+[A-Za-z]+)?)\s*$")
+
+
 def limits(pid, text=None):
     """{rlimit: (soft, hard)} from procstat -l."""
-    rows = _table(text if text is not None else _run(["procstat", "-l", str(pid)]))
-    return {r["RLIMIT"]: (r.get("SOFT", ""), r.get("HARD", "")) for r in rows if "RLIMIT" in r}
+    text = text if text is not None else _run(["procstat", "-l", str(pid)])
+    out = {}
+    for line in text.splitlines()[1:]:
+        m = LIMIT_RE.match(line)
+        if m:
+            out[m.group(1)] = (" ".join(m.group(2).split()), " ".join(m.group(3).split()))
+    return out
+
+
+def proc_debug_setting():
+    """security.bsd.unprivileged_proc_debug: procstat -f and -e read another
+    process's descriptors and environment only when it is 1 (limits are
+    readable either way); ktrace started on itself works regardless."""
+    value = _run(["sysctl", "-n", "security.bsd.unprivileged_proc_debug"]).strip()
+    return value or None
 
 
 def readable_sysctls(results_dir, kernel_release):
@@ -125,12 +193,16 @@ def summarise(kdump, types, readable=None):
         ptype = types.get(pid, "unknown")
         if ptype == "browser":
             continue
-        t = out.setdefault(ptype, {"pids": [], "cap": collections.Counter(),
+        t = out.setdefault(ptype, {"pids": [], "marked": 0,
+                                   "cap": collections.Counter(),
+                                   "cap_after": collections.Counter(),
                                    "cap_paths": collections.defaultdict(list),
-                                   "sysctl": collections.Counter()})
+                                   "sysctl": collections.Counter(),
+                                   "sysctl_after": collections.Counter()})
         t["pids"].append(pid)
-        t["cap"].update(p["cap"])
-        t["sysctl"].update(p["sysctl"])
+        t["marked"] += 1 if p["marker"] else 0
+        for key in ("cap", "cap_after", "sysctl", "sysctl_after"):
+            t[key].update(p[key])
         for message, paths in p["cap_paths"].items():
             examples = t["cap_paths"][message]
             for path in paths:
@@ -140,6 +212,28 @@ def summarise(kdump, types, readable=None):
         t["sysctl_blocked"] = (sorted(n for n in t["sysctl"] if n not in readable)
                                if readable is not None else None)
     return out
+
+
+def _failures(lines, counter, paths, title):
+    if not counter:
+        return
+    lines.append(title)
+    for message, n in counter.most_common():
+        lines.append(f"  {n:6d}  {message}")
+        for path in paths.get(message, []):
+            lines.append(f"            {path}")
+    lines.append("")
+
+
+def _sysctls(lines, counter, blocked, note, title):
+    if not counter:
+        return
+    lines.append(f"{title} ({note}):")
+    for name, n in sorted(counter.items()):
+        mark = "" if blocked is None else (
+            "  REFUSED in capability mode" if name in blocked else "  ok")
+        lines.append(f"  {n:6d}  {name}{mark}")
+    lines.append("")
 
 
 def report(summary, samples, readable_from=None):
@@ -153,25 +247,30 @@ def report(summary, samples, readable_from=None):
         t = summary.get(ptype, empty)
         count = len(t["pids"]) or sum(1 for s in samples.values() if s.get("type") == ptype)
         lines += [f"== {ptype} ({count} processes)", ""]
-        if t["cap"]:
-            lines.append("Would be refused in capability mode (count, message, example paths):")
-            for message, n in t["cap"].most_common():
-                lines.append(f"  {n:6d}  {message}")
-                for path in t["cap_paths"].get(message, []):
-                    lines.append(f"            {path}")
-        else:
-            lines.append("No capability failures recorded.")
-        lines.append("")
-        if t["sysctl"]:
-            note = (f"readable in capability mode per {readable_from}" if readable_from
-                    else "no oracle result for this kernel to say which are readable")
-            lines.append(f"Sysctls read ({note}):")
-            blocked = set(t["sysctl_blocked"] or [])
-            for name, n in sorted(t["sysctl"].items()):
-                mark = "" if t["sysctl_blocked"] is None else (
-                    "  REFUSED in capability mode" if name in blocked else "  ok")
-                lines.append(f"  {n:6d}  {name}{mark}")
+        note = (f"readable in capability mode per {readable_from}" if readable_from
+                else "no oracle result for this kernel to say which are readable")
+        blocked = set(t["sysctl_blocked"]) if t.get("sysctl_blocked") is not None else None
+        if t.get("marked"):
+            lines.append(f"{t['marked']} of these processes wrote the lockdown marker.")
             lines.append("")
+            if not t["cap_after"] and not t["sysctl_after"]:
+                lines.append("After the lockdown point: nothing capability mode would refuse.")
+                lines.append("")
+            _failures(lines, t["cap_after"], t["cap_paths"],
+                      "AFTER the lockdown point (must work in capability mode):")
+            _sysctls(lines, t["sysctl_after"], blocked, note,
+                     "Sysctls read AFTER the lockdown point")
+            before = t["cap"] - t["cap_after"]
+            _failures(lines, before, t["cap_paths"],
+                      "Before the lockdown point (start-up; allowed):")
+        else:
+            if not t["cap"]:
+                lines.append("No capability failures recorded.")
+                lines.append("")
+            _failures(lines, t["cap"], t["cap_paths"],
+                      "Would be refused in capability mode (no lockdown marker in this "
+                      "build, so start-up and later are mixed):")
+            _sysctls(lines, t["sysctl"], blocked, note, "Sysctls read")
         sample = next((samples[pid] for pid in t["pids"] if pid in samples), None)
         if sample is None:
             sample = next((s for s in samples.values() if s.get("type") == ptype), None)

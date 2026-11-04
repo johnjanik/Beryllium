@@ -588,13 +588,14 @@ title = "Renderers in capability mode"
 need = "Every production renderer enters Capsicum capability mode before it handles web content, and the browser checks it with the kernel."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
 tested = "written"
+where = ["patches/security/beryllium-capsicum-renderer.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
 evidence = "owner, 0.20.3.1, 4 Nov 2026: browser, renderers, GPU, network and storage processes all report capability mode: no"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
-notes = "Renderers never reach the FreeBSD sandbox code; the lockdown point is RendererMainPlatformDelegate::EnableSandbox() (plan/14 section 2)."
+notes = "Opt-in for testing: --enable-features=BerylliumCapsicumRenderer makes each renderer enter capability mode at the end of SandboxLinux::InitializeSandbox() (plan/14 section 2). Not yet compiled; default on comes with S-REN-09."
 
 [[feature]]
 id = "S-REN-02"
@@ -603,12 +604,13 @@ title = "Warm-up before lockdown"
 need = "Everything a renderer needs from the system (uname, memory size, time zones, fonts, locale, libraries) is read before cap_enter."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
 tested = "planned"
+where = ["patches/security/beryllium-capsicum-renderer.patch"]
 planned_test = "functional suite with the sandbox on and off; the capsicum survey (run capsicum --diagnose) lists what must move before lockdown"
 source = ["plan/06-SECURITY-MODEL.md §2", "plan/06-SECURITY-MODEL.md §3.1", "plan/03-ARCHITECTURE.md §4.5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R5"]
-notes = "The survey records every sysctl and path the renderer uses after start, marked against the oracle's list of sysctls readable in capability mode."
+notes = "Survey of 4 Nov 2026 on the owner's machine: memory and shared-memory sysctls, uname, executable path and time zone are warmed up and cached; the lockdown marker in the next build separates start-up from later activity."
 
 [[feature]]
 id = "S-REN-03"
@@ -624,7 +626,7 @@ where = ["freebsd/tests/browser/tests/test_55_capsicum.py",
          "freebsd/tests/browser/berytest/capsicum.py"]
 tests = ["freebsd/tools/tests/test_capsicum_survey.py"]
 source = ["helium-freebsd-security-port-spec.md §6.2", "plan/06-SECURITY-MODEL.md §2"]
-notes = "Done with ktrace (-t pny: capability failures, lookups, sysctls) and procstat on the release build instead of a diagnostic build: descriptors, environment names and limits per process per workload. Not yet run on FreeBSD."
+notes = "Done with ktrace (-t pnyu: capability failures, lookups, sysctls, the lockdown marker) and procstat on the release build instead of a diagnostic build. First run on the owner's machine 4 Nov 2026; descriptors and environment need security.bsd.unprivileged_proc_debug=1 during the run."
 
 [[feature]]
 id = "S-REN-04"
@@ -701,10 +703,10 @@ phase = 2
 implemented = "partial"
 built = "no"
 tested = "planned"
-planned_test = "sandbox suite: injected setup failure is fatal and logged; no fallback to an unrestricted renderer"
 where = ["freebsd/ports/www/beryllium-devel/Makefile"]
+planned_test = "sandbox suite: injected setup failure is fatal and logged; no fallback to an unrestricted renderer"
 source = ["helium-freebsd-security-port-spec.md §2.3", "plan/06-SECURITY-MODEL.md §3.4", "plan/01-PROJECT-CHARTER.md D5"]
-notes = "The devel port exists; the build flag beryllium_sandbox_required does not."
+notes = "The devel port exists; the opt-in lockdown fails closed when requested; the build flag beryllium_sandbox_required (production default on) does not exist yet."
 
 [[feature]]
 id = "S-REN-10"
@@ -1105,7 +1107,7 @@ tested = "planned"
 where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
 planned_test = "resources suite: memory and descriptor tests"
 source = ["helium-freebsd-security-port-spec.md §8.1", "plan/06-SECURITY-MODEL.md §7"]
-notes = "Only the imported RLIMIT_DATA, and only in the GPU and utility processes: renderers never reach the FreeBSD sandbox code (plan/14 section 1)."
+notes = "Every child process, renderers included, gets only the imported RLIMIT_DATA of 4 GB (plan/14 section 1; survey of 4 Nov 2026)."
 
 [[feature]]
 id = "S-RES-02"
@@ -1182,11 +1184,13 @@ title = "Lockdown log"
 need = "One log line per process at lockdown: type, stage, result, error, number of unexpected descriptors; no URLs or paths."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
 tested = "planned"
+where = ["patches/security/beryllium-capsicum-renderer.patch"]
 planned_test = "sandbox suite: failure injection produces the expected line"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.5"]
+notes = "One line per renderer when the opt-in lockdown succeeds; the failure path ends the renderer with the errno (PCHECK). The structured format is still to do."
 
 [[feature]]
 id = "S-STA-05"

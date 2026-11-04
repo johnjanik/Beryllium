@@ -38,9 +38,57 @@ PROCSTAT_E = """\
 """
 PROCSTAT_L = """\
   PID COMM             RLIMIT                  SOFT             HARD
- 4242 beryllium        datasize           8589934592       8589934592
- 4242 beryllium        coredumpsize                0                0
+ 4242 beryllium        datasize           4194304 KB       4194304 KB
+ 4242 beryllium        coredumpsize                0 B              0 B
+ 4242 beryllium        cputime              infinity         infinity
 """
+MARKER_HEX = " ".join(f"{b:02x}" for b in b"BERYLLIUM-LOCKDOWN")
+KDUMP_MARKED = f"""\
+ 6000 beryllium NAMI  "/libexec/ld-elf.so.1"
+ 6000 beryllium CAP   system call not allowed: open
+ 6000 beryllium SCTL  "kern.proc.pid.6000"
+ 6000 beryllium USER  18  {MARKER_HEX}
+ 6000 beryllium NAMI  "/etc/localtime"
+ 6000 beryllium CAP   system call not allowed: __realpathat
+ 6000 beryllium CAP   cpuset_getaffinity: restricted cpuset operation
+ 6000 beryllium SCTL  "vm.stats.vm.v_page_count"
+ 6000 beryllium SCTL  "sysctl.name.1.30.214748238"
+"""
+
+
+class Marker(unittest.TestCase):
+    def test_split_at_lockdown_marker(self):
+        p = capsicum.parse_kdump(KDUMP_MARKED.splitlines())[6000]
+        self.assertTrue(p["marker"])
+        self.assertEqual(p["cap"]["system call not allowed: open"], 1)
+        self.assertNotIn("system call not allowed: open", p["cap_after"])
+        self.assertEqual(p["cap_after"]["system call not allowed: __realpathat"], 1)
+        self.assertEqual(dict(p["sysctl_after"]),
+                         {"vm.stats.vm.v_page_count": 1, "sysctl.name.<oid>": 1})
+        self.assertIn("kern.proc.pid.<pid>", p["sysctl"])
+
+    def test_paths_only_for_lookups(self):
+        p = capsicum.parse_kdump(KDUMP_MARKED.splitlines())[6000]
+        self.assertEqual(p["cap_paths"]["system call not allowed: __realpathat"],
+                         ["/etc/localtime"])
+        self.assertEqual(p["cap_paths"].get("cpuset_getaffinity: restricted cpuset operation"), [])
+
+    def test_report_with_marker(self):
+        procs = capsicum.parse_kdump(KDUMP_MARKED.splitlines())
+        summary = capsicum.summarise(procs, {6000: "renderer"}, readable={"hw.ncpu"})
+        text = capsicum.report(summary, {}, "oracle-16.0-CURRENT-20261101.json")
+        self.assertIn("1 of these processes wrote the lockdown marker", text)
+        after = text.index("AFTER the lockdown point")
+        before = text.index("Before the lockdown point")
+        self.assertLess(after, before)
+        self.assertIn("__realpathat", text[after:before])
+        self.assertIn("system call not allowed: open", text[before:])
+
+    def test_marker_decoding(self):
+        self.assertTrue(capsicum.is_marker(f"18  {MARKER_HEX}"))
+        self.assertTrue(capsicum.is_marker('"BERYLLIUM-LOCKDOWN"'))
+        self.assertFalse(capsicum.is_marker("4  de ad be ef"))
+        self.assertFalse(capsicum.is_marker("RTLD: dlopen"))
 
 
 class Parse(unittest.TestCase):
@@ -62,7 +110,10 @@ class Parse(unittest.TestCase):
         self.assertEqual(fds[1]["type"], "s")
         self.assertEqual(capsicum.environment_names(4242, PROCSTAT_E),
                          ["DISPLAY", "HOME", "LD_LIBRARY_PATH", "TOKEN", "b"])
-        self.assertEqual(capsicum.limits(4242, PROCSTAT_L)["coredumpsize"], ("0", "0"))
+        lim = capsicum.limits(4242, PROCSTAT_L)
+        self.assertEqual(lim["coredumpsize"], ("0 B", "0 B"))
+        self.assertEqual(lim["datasize"], ("4194304 KB", "4194304 KB"))
+        self.assertEqual(lim["cputime"], ("infinity", "infinity"))
 
     def test_environment_values_never_kept(self):
         names = capsicum.environment_names(4242, PROCSTAT_E)
