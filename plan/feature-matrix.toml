@@ -590,12 +590,12 @@ priority = "must"
 phase = 2
 implemented = "partial"
 built = "no"
-tested = "written"
+tested = "manual"
 where = ["patches/security/beryllium-capsicum-renderer.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
-evidence = "owner, 0.20.3.1, 4 Nov 2026: browser, renderers, GPU, network and storage processes all report capability mode: no"
+evidence = "owner, 0.20.3.3 with --enable-features=BerylliumCapsicumRenderer, 4 Nov 2026: every renderer in capability mode (procstat), the whole suite passes; trap mode stops renderers at their first refused call (cpuset_getaffinity)"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
-notes = "Opt-in for testing: --enable-features=BerylliumCapsicumRenderer makes each renderer enter capability mode at the end of SandboxLinux::InitializeSandbox() (plan/14 section 2). Not yet compiled; default on comes with S-REN-09."
+notes = "Opt-in. Not yet a sandbox in 0.20.3.3: renderers inherit directory descriptors (/, /usr...) and writable profile files, which capability mode leaves usable; S-IPC-01 and the lockdown's directory sweep, in the next build, close them."
 
 [[feature]]
 id = "S-REN-02"
@@ -663,9 +663,10 @@ priority = "must"
 phase = 2
 implemented = "todo"
 built = "no"
-tested = "planned"
-planned_test = "sandbox suite: no directory descriptors outside the allowlist; forbidden opens fail with the oracle's errno"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
 source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
+notes = "Blocked in 0.20.3.3 by inherited directory descriptors; the next build closes them at launch (S-IPC-01) and sweeps any left at lockdown."
 
 [[feature]]
 id = "S-REN-07"
@@ -864,11 +865,13 @@ title = "Clean descriptors at launch"
 need = "The launcher limits the rights of descriptors it passes, and every child closes all others with closefrom before it runs."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "done"
 built = "no"
-tested = "planned"
-planned_test = "oracle fd.closefrom, fd.dev_fd_complete; sandbox suite allowlist diff"
+tested = "written"
+where = ["patches/security/beryllium-close-inherited-descriptors.patch"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
 source = ["plan/06-SECURITY-MODEL.md §4", "plan/03-ARCHITECTURE.md §4.2"]
+notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed for the next build with close() and closefrom(2) between fork and exec."
 
 [[feature]]
 id = "S-IPC-02"
@@ -1190,7 +1193,7 @@ tested = "planned"
 where = ["patches/security/beryllium-capsicum-renderer.patch"]
 planned_test = "sandbox suite: failure injection produces the expected line"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.5"]
-notes = "One line per renderer when the opt-in lockdown succeeds; the failure path ends the renderer with the errno (PCHECK). The structured format is still to do."
+notes = "One line per renderer when the opt-in lockdown succeeds (capability_mode=1 closed_directories=N); the failure path ends the renderer with the errno (PCHECK). The structured format is still to do."
 
 [[feature]]
 id = "S-STA-05"

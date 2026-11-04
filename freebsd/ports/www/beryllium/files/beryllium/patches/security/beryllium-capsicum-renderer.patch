@@ -36,6 +36,13 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
     (libthr loads it by path for unwinding when a thread exits), and
     caph_limit_stdio() before cap_enter() (a failure there is logged, not
     fatal).
+  - before cap_enter(), every directory descriptor is closed and counted
+    (from kern.proc.filedesc): capability mode still allows lookups
+    beneath a directory descriptor, and the survey of 0.20.3.3 found
+    renderers holding /, /usr, /usr/local and /usr/local/etc, inherited
+    from the browser (beryllium-close-inherited-descriptors.patch stops
+    the inheritance; this is the check behind it). The log line reports
+    closed_directories=N; a table that cannot be read fails the lockdown.
   Later increments make it the default and fail closed in the production
   package (charter D5), add the descriptor allowlist, launcher hygiene,
   kernel attestation and status reporting.
@@ -49,7 +56,10 @@ Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
 Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
   test_50_sandbox shows renderers in capability mode and the rest of the
-  suite shows what still breaks.
+  suite shows what still breaks. Owner's machine, 0.20.3.3, 4 November
+  2026: with the feature, every renderer in capability mode and the whole
+  suite passing; the survey's after-lockdown list holds only
+  cpuset_getaffinity (18) and one open.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -216,7 +226,7 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -4,18 +4,29 @@
+@@ -4,18 +4,31 @@
  
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
@@ -231,9 +241,11 @@ security-review: required (sandbox setup, process confinement)
 +#include <sys/procctl.h>
  #include <sys/resource.h>
  #include <sys/stat.h>
++#include <sys/sysctl.h>
  #include <sys/time.h>
  #include <sys/types.h>
 +#include <sys/uio.h>
++#include <sys/user.h>
 +// utrace(2) needs sys/param.h, sys/time.h and sys/uio.h first.
 +#include <sys/ktrace.h>
 +#include <time.h>
@@ -246,7 +258,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -63,6 +74,86 @@
+@@ -63,6 +76,128 @@
  namespace sandbox {
  namespace policy {
  
@@ -297,8 +309,46 @@ security-review: required (sandbox setup, process confinement)
 +  localtime_r(&now, &local);
 +}
 +
++// Closes every directory descriptor the process holds and returns how many,
++// or -1 if its descriptor table could not be read. A renderer needs none
++// (plan/06 section 3.2), and capability mode still allows lookups beneath a
++// directory descriptor: one on "/" reaches the whole file system. Children
++// used to inherit the browser's (/, /usr, /usr/local, /usr/local/etc; the
++// Capsicum survey of 4 November 2026); base/process/launch_posix.cc now
++// closes inherited descriptors, and this is the check behind it.
++int CloseDirectoryDescriptors() {
++  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_FILEDESC,
++                static_cast<int>(getpid())};
++  size_t len = 0;
++  if (sysctl(mib, 4, nullptr, &len, nullptr, 0) != 0) {
++    return -1;
++  }
++  len += len / 4;  // room for descriptors opened meanwhile
++  std::vector<char> table(len);
++  if (sysctl(mib, 4, table.data(), &len, nullptr, 0) != 0) {
++    return -1;
++  }
++  int closed = 0;
++  for (size_t offset = 0; offset + sizeof(int) <= len;) {
++    const auto* kf =
++        reinterpret_cast<const struct kinfo_file*>(table.data() + offset);
++    if (kf->kf_structsize <= 0) {
++      break;
++    }
++    // kf_fd is negative for the working directory, root and text entries.
++    if (kf->kf_fd >= 0 && kf->kf_type == KF_TYPE_VNODE &&
++        kf->kf_vnode_type == KF_VTYPE_VDIR) {
++      close(kf->kf_fd);
++      ++closed;
++    }
++    offset += static_cast<size_t>(kf->kf_structsize);
++  }
++  return closed;
++}
++
 +// Enters capability mode; returns false, with errno set, if it did not.
-+bool LockDownRenderer() {
++// |closed_directories| receives how many directory descriptors were closed.
++bool LockDownRenderer(int* closed_directories) {
 +  WarmUpForCapabilityMode();
 +  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (!base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer)) {
@@ -309,6 +359,10 @@ security-review: required (sandbox setup, process confinement)
 +    if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
 +      PLOG(WARNING) << "beryllium-sandbox: PROC_TRAPCAP_CTL";
 +    }
++  }
++  *closed_directories = CloseDirectoryDescriptors();
++  if (*closed_directories < 0) {
++    return false;
 +  }
 +  // Standard input and output keep only the rights stdio needs.
 +  if (caph_limit_stdio() != 0) {
@@ -333,7 +387,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +265,19 @@
+@@ -174,6 +309,22 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
@@ -342,11 +396,14 @@ security-review: required (sandbox setup, process confinement)
 +        base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer);
 +    // Fail closed when the lockdown was asked for: a renderer that should be
 +    // confined and is not must not handle web content.
-+    PCHECK(LockDownRenderer()) << "beryllium-sandbox: renderer pid=" << getpid()
-+                               << " could not enter capability mode";
++    int closed_directories = 0;
++    PCHECK(LockDownRenderer(&closed_directories))
++        << "beryllium-sandbox: renderer pid=" << getpid()
++        << " could not enter capability mode";
 +    if (requested) {
 +      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
-+                   << " capability_mode=1";
++                   << " capability_mode=1 closed_directories="
++                   << closed_directories;
 +    }
 +  }
 +

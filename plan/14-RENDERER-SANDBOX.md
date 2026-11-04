@@ -77,7 +77,24 @@ FreeBSD test bed, so an increment must be worth a build.
    warm-up reads them first. Most of the survey's 18,000 refused calls
    (library loading, resource paks) are start-up, before the lockdown
    point; the marker will show which remain after it.
-3. **Descriptor hygiene and allowlist:** `closefrom` in the launcher, the
+   **Results, 0.20.3.3 on the owner's machine (4 November 2026):** with the
+   feature on, every renderer is in capability mode and the whole browser
+   suite passes. After the lockdown point renderers are refused only
+   `cpuset_getaffinity` (18 calls over 20 renderers) and one `open`; trap
+   mode stops them at the first of these. Core dumps cannot be written from
+   capability mode ("no core dump - other error"), so the survey run with
+   the feature on, not `--cores`, shows what a confined renderer is refused.
+   **But it is not yet a sandbox:** the survey's descriptor list shows a
+   renderer holding about 120 descriptors inherited from the browser,
+   among them directories (`/`, `/usr`, `/usr/local`, `/usr/local/etc`) and
+   writable profile databases, which capability mode leaves usable.
+3. **Descriptor hygiene and allowlist** (started, in the build after
+   0.20.3.3): `patches/security/beryllium-close-inherited-descriptors.patch`
+   makes every child close what it inherits (`/dev/fd` lists only 0-2 on
+   FreeBSD without fdescfs, so Chromium's own walk closed nothing), and the
+   lockdown closes and counts any directory descriptor left before
+   `cap_enter`. A sandbox test now fails on any renderer holding a
+   directory or writable file. Then: `closefrom` in the launcher, the
    committed renderer allowlist from the survey, rights limits per
    descriptor, environment allowlist.
 4. **Shared memory without a namespace:** `memfd_create` with seals for

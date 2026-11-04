@@ -244,7 +244,10 @@ class CapsicumSurvey(unittest.TestCase):
                        "workloads": ran, "types": {str(k): v for k, v in types.items()},
                        "samples": {str(k): v for k, v in samples.items()},
                        "summary": {k: {"pids": v["pids"], "cap": dict(v["cap"]),
+                                       "cap_after": dict(v["cap_after"]),
                                        "cap_paths": dict(v["cap_paths"]),
+                                       "cap_paths_after": dict(v["cap_paths_after"]),
+                                       "sysctl_after": dict(v["sysctl_after"]),
                                        "sysctl": dict(v["sysctl"]),
                                        "sysctl_blocked": v["sysctl_blocked"]}
                                    for k, v in summary.items()}}, f, indent=1)

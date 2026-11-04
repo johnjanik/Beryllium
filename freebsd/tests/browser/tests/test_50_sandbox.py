@@ -5,6 +5,7 @@ capability mode (procstat -s shows C in FLAGS)."""
 
 import subprocess
 
+from berytest import capsicum
 from berytest.base import BrowserTest
 
 
@@ -60,3 +61,21 @@ class SandboxHonesty(BrowserTest):
         self.assertIsNotNone(actual, "procstat could not read the GPU process")
         self.assertEqual(bool(claim), bool(actual),
                          "the browser's sandbox claim does not match the kernel (RT-17)")
+
+    def test_renderers_hold_no_directories_or_writable_files(self):
+        """No renderer holds a directory or a writable file (S-IPC-01, S-REN-06)."""
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        problems, read = [], 0
+        for p in procs:
+            if p["type"] != "renderer":
+                continue
+            fds = capsicum.descriptors(p["id"])
+            if fds:
+                read += 1
+            problems += [f"renderer {p['id']}: {x}" for x in capsicum.risky_descriptors(fds)]
+        if not read:
+            self.skipTest("procstat could not read renderer descriptors "
+                          "(security.bsd.unprivileged_proc_debug=0?)")
+        self.note("\n".join(problems) or f"{read} renderers: none")
+        self.assertEqual(problems, [], "renderers hold descriptors they must not")

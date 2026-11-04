@@ -67,6 +67,14 @@ class Marker(unittest.TestCase):
                          {"vm.stats.vm.v_page_count": 1, "sysctl.name.<oid>": 1})
         self.assertIn("kern.proc.pid.<pid>", p["sysctl"])
 
+    def test_paths_per_phase(self):
+        p = capsicum.parse_kdump(KDUMP_MARKED.splitlines())[6000]
+        self.assertEqual(p["cap_paths_before"]["system call not allowed: open"],
+                         ["/libexec/ld-elf.so.1"])
+        self.assertNotIn("system call not allowed: open", p["cap_paths_after"])
+        self.assertEqual(p["cap_paths_after"]["system call not allowed: __realpathat"],
+                         ["/etc/localtime"])
+
     def test_paths_only_for_lookups(self):
         p = capsicum.parse_kdump(KDUMP_MARKED.splitlines())[6000]
         self.assertEqual(p["cap_paths"]["system call not allowed: __realpathat"],
@@ -114,6 +122,16 @@ class Parse(unittest.TestCase):
         self.assertEqual(lim["coredumpsize"], ("0 B", "0 B"))
         self.assertEqual(lim["datasize"], ("4194304 KB", "4194304 KB"))
         self.assertEqual(lim["cputime"], ("infinity", "infinity"))
+
+    def test_risky_descriptors(self):
+        text = (PROCSTAT_F
+                + " 4242 beryllium           20 v d r-------   1       0 -   /\n"
+                + " 4242 beryllium           64 v r -w------   1       0 -   /home/u/.config/beryllium/LOG\n"
+                + " 4242 beryllium            2 v r -w------   1       0 -   /tmp/stderr.log\n"
+                + " 4242 beryllium         root v d r-------   -       - -   /\n")
+        risky = capsicum.risky_descriptors(capsicum.descriptors(4242, text))
+        self.assertEqual(risky, ["fd 20 directory /",
+                                 "fd 64 writable file /home/u/.config/beryllium/LOG"])
 
     def test_environment_values_never_kept(self):
         names = capsicum.environment_names(4242, PROCSTAT_E)

@@ -70,6 +70,8 @@ def _new_proc(comm):
     return {"comm": comm, "marker": False, "lookups": 0,
             "cap": collections.Counter(), "cap_after": collections.Counter(),
             "cap_paths": collections.defaultdict(list),
+            "cap_paths_before": collections.defaultdict(list),
+            "cap_paths_after": collections.defaultdict(list),
             "sysctl": collections.Counter(), "sysctl_after": collections.Counter()}
 
 
@@ -102,9 +104,11 @@ def parse_kdump(lines):
             if p["marker"]:
                 p["cap_after"][message] += 1
             path = last_path.get(pid) if syscall_of(message) in PATH_SYSCALLS else None
-            examples = p["cap_paths"][message]
-            if path and path not in examples and len(examples) < SAMPLES:
-                examples.append(path)
+            phase = "cap_paths_after" if p["marker"] else "cap_paths_before"
+            for key in ("cap_paths", phase):
+                examples = p[key][message]
+                if path and path not in examples and len(examples) < SAMPLES:
+                    examples.append(path)
     return procs
 
 
@@ -129,10 +133,28 @@ def _table(text):
 
 
 def descriptors(pid, text=None):
-    """[{fd, type, flags, name}] from procstat -f."""
+    """[{fd, type, vtype, flags, name}] from procstat -f. type: v vnode,
+    s socket, p pipe, k kqueue, h shared memory...; vtype for vnodes: d
+    directory, r regular file, c character device."""
     rows = _table(text if text is not None else _run(["procstat", "-f", str(pid)]))
-    return [{"fd": r.get("FD", ""), "type": r.get("T", ""), "flags": r.get("FLAGS", ""),
-             "name": r.get("NAME", r.get("PATH", ""))} for r in rows]
+    return [{"fd": r.get("FD", ""), "type": r.get("T", ""), "vtype": r.get("V", ""),
+             "flags": r.get("FLAGS", ""), "name": r.get("NAME", r.get("PATH", ""))}
+            for r in rows]
+
+
+def risky_descriptors(fds):
+    """Descriptors a confined renderer must not hold: directories (lookups
+    beneath them still work in capability mode) and writable files, apart
+    from 0-2. "text", "cwd", "root" and "trace" are not descriptors."""
+    out = []
+    for d in fds:
+        if not d["fd"].isdigit() or d["type"] != "v":
+            continue
+        if d["vtype"] == "d":
+            out.append(f"fd {d['fd']} directory {d['name']}")
+        elif int(d["fd"]) > 2 and "w" in d["flags"] and d["vtype"] == "r":
+            out.append(f"fd {d['fd']} writable file {d['name']}")
+    return out
 
 
 ENV_NAME_RE = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=")
@@ -197,17 +219,20 @@ def summarise(kdump, types, readable=None):
                                    "cap": collections.Counter(),
                                    "cap_after": collections.Counter(),
                                    "cap_paths": collections.defaultdict(list),
+                                   "cap_paths_before": collections.defaultdict(list),
+                                   "cap_paths_after": collections.defaultdict(list),
                                    "sysctl": collections.Counter(),
                                    "sysctl_after": collections.Counter()})
         t["pids"].append(pid)
         t["marked"] += 1 if p["marker"] else 0
         for key in ("cap", "cap_after", "sysctl", "sysctl_after"):
             t[key].update(p[key])
-        for message, paths in p["cap_paths"].items():
-            examples = t["cap_paths"][message]
-            for path in paths:
-                if path not in examples and len(examples) < SAMPLES:
-                    examples.append(path)
+        for key in ("cap_paths", "cap_paths_before", "cap_paths_after"):
+            for message, paths in p[key].items():
+                examples = t[key][message]
+                for path in paths:
+                    if path not in examples and len(examples) < SAMPLES:
+                        examples.append(path)
     for t in out.values():
         t["sysctl_blocked"] = (sorted(n for n in t["sysctl"] if n not in readable)
                                if readable is not None else None)
@@ -256,12 +281,12 @@ def report(summary, samples, readable_from=None):
             if not t["cap_after"] and not t["sysctl_after"]:
                 lines.append("After the lockdown point: nothing capability mode would refuse.")
                 lines.append("")
-            _failures(lines, t["cap_after"], t["cap_paths"],
+            _failures(lines, t["cap_after"], t["cap_paths_after"],
                       "AFTER the lockdown point (must work in capability mode):")
             _sysctls(lines, t["sysctl_after"], blocked, note,
                      "Sysctls read AFTER the lockdown point")
             before = t["cap"] - t["cap_after"]
-            _failures(lines, before, t["cap_paths"],
+            _failures(lines, before, t["cap_paths_before"],
                       "Before the lockdown point (start-up; allowed):")
         else:
             if not t["cap"]:
@@ -278,7 +303,8 @@ def report(summary, samples, readable_from=None):
             lines.append(f"Descriptors of pid {sample['pid']} (procstat -f, after "
                          f"{', '.join(sample.get('workloads', [])) or 'start'}):")
             for d in sample.get("fds", []):
-                lines.append(f"  {d['fd']:>5} {d['type']:<2} {d['flags']:<10} {d['name']}")
+                lines.append(f"  {d['fd']:>5} {d['type']:<2}{d.get('vtype', ''):<2} "
+                             f"{d['flags']:<10} {d['name']}")
             lines.append(f"Environment variable names: {', '.join(sample.get('env', [])) or '(none)'}")
             lim = sample.get("limits", {})
             if lim:

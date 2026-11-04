@@ -42,8 +42,10 @@ it they are skipped. Useful options:
 - `run --browser-arg=--enable-features=BerylliumCapsicumRenderer`: the whole
   suite with renderers in Capsicum capability mode (opt-in while the
   sandbox is being built, plan/14); `sandbox` shows each renderer's mode,
-  the other groups show what still breaks. Add `,BerylliumCapsicumTrap` and
-  `--cores` to get a backtrace at the first refused call.
+  the other groups show what still breaks. `,BerylliumCapsicumTrap` stops a
+  renderer at its first refused call; processes in capability mode cannot
+  write core dumps, so run the `capsicum` survey with the same switch to see
+  which calls they are refused.
 - `run media videodiag --diagnose`: replay video under switches that each
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash
