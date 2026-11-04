@@ -30,7 +30,7 @@ implemented = "inherited"
 built = "v0.20.3.1-1"
 tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_starts_and_answers"]
-evidence = "15.1 package, 3 Nov 2026; daily use on 0.20.3.1 (owner)"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/04-BUILD-AND-PORTING-PLAN.md §8", "plan/09-ROADMAP.md §3"]
 
 [[feature]]
@@ -42,10 +42,10 @@ priority = "must"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "written"
+tested = "failing"
 tests = ["freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
          "freebsd/tests/browser/tests/test_90_stability.py::test_rapid_internal_navigation"]
-evidence = "failed on the 15.1 package only through a harness fault (beryllium:// over DevTools), fixed since; rerun pending"
+evidence = "owner, 0.20.3.1, 4 Nov 2026: rapid navigation passes; the pages test fails only because beryllium://flags labels Helium's flags \"Helium flag.\" (fixed for the next build, F-ID-01)"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -59,7 +59,7 @@ implemented = "inherited"
 built = "v0.20.3.1-1"
 tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_90_stability.py::test_many_busy_tabs"]
-evidence = "15.1 package, 3 Nov 2026"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -175,12 +175,12 @@ priority = "must"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "manual"
+tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_30_media.py::test_codec_support",
          "freebsd/tests/browser/tests/test_30_media.py::test_play_h264_aac",
          "freebsd/tests/browser/tests/test_30_media.py::test_play_vp9_opus",
          "freebsd/tests/browser/tests/test_30_media.py::test_play_av1_opus"]
-evidence = "owner, 0.20.3.1: video plays, 4 Nov 2026; the suite's media group failed on the 15.1 package (the NVIDIA crash, F-MED-03) and has not been rerun"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -192,11 +192,11 @@ priority = "must"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "manual"
+tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_30_media.py::test_mse_av1_mp4",
          "freebsd/tests/browser/tests/test_30_media.py::test_mse_vp9_webm",
          "freebsd/tests/browser/tests/test_30_media.py::test_mse_opus_webm"]
-evidence = "owner, 0.20.3.1: YouTube plays, 4 Nov 2026; suite rerun pending"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026; YouTube plays"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
 
 [[feature]]
@@ -208,10 +208,12 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
-tested = "manual"
+tested = "passing"
 where = ["patches/platform/beryllium-bsd-nvidia-video-frames.patch"]
-tests = ["freebsd/tests/browser/tests/test_35_videodiag.py::test_which_switch_avoids_the_crash"]
-evidence = "owner, 0.20.3.1: YouTube plays, 4 Nov 2026"
+tests = ["freebsd/tests/browser/tests/test_30_media.py::test_play_h264_aac",
+         "freebsd/tests/browser/tests/test_30_media.py::test_mse_vp9_webm",
+         "freebsd/tests/browser/tests/test_35_videodiag.py::test_which_switch_avoids_the_crash"]
+evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026: every clip plays (all crashed on the 15.1 package)"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
 notes = "To report to the FreeBSD Chromium maintainers."
 
@@ -239,9 +241,9 @@ phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
 tested = "passing"
-tests = ["freebsd/tests/browser/tests/test_30_media.py::test_mse_opus_webm"]
-evidence = "15.1 package, 3 Nov 2026 (Opus decodes and plays; the audio backend is not asserted)"
 where = ["freebsd/ports/www/beryllium/Makefile"]
+tests = ["freebsd/tests/browser/tests/test_30_media.py::test_mse_opus_webm"]
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026 (Opus decodes and plays; the audio backend is not asserted)"
 source = ["plan/01-PROJECT-CHARTER.md D6"]
 
 [[feature]]
@@ -281,7 +283,7 @@ built = "v0.20.3.1-1"
 tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas",
          "freebsd/tests/browser/tests/test_40_rendering.py::test_gpu_info"]
-evidence = "15.1 package on NVIDIA, 3 Nov 2026; Intel and AMD untested"
+evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026; Intel and AMD untested"
 source = ["plan/01-PROJECT-CHARTER.md D6", "plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -296,7 +298,7 @@ built = "v0.20.3.1-1"
 tested = "failing"
 where = ["freebsd/ports/www/beryllium/Makefile"]
 tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas"]
-evidence = "15.1 package, 3 Nov 2026: no adapter (the test records it, asserts nothing)"
+evidence = "owner, 0.20.3.1, 4 Nov 2026: WebGPU enabled in the feature list but no adapter (the test records it, asserts nothing)"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11", "RT-07"]
 
 [[feature]]
@@ -401,10 +403,10 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
-tested = "manual"
+tested = "passing"
 where = ["patches/ui/beryllium-toolbar-buttons-zero-height.patch"]
 tests = ["freebsd/tests/browser/tests/test_70_ui.py::test_home_button_shows_in_every_layout"]
-evidence = "owner, 0.20.3.1: Home button shows in vertical tabs, 4 Nov 2026; the ui test found the bug on the 15.1 package and has not been rerun"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026: all ten layouts and the owner's own settings"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
 
 [[feature]]
@@ -457,12 +459,12 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
-tested = "written"
+tested = "failing"
 where = ["patches/platform/beryllium-paths-and-branding.patch", "freebsd/tools/beryllium-name-substitution"]
 tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_version_page_names_beryllium",
          "freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
          "freebsd/tools/tests/test_name_substitution.py"]
-evidence = "the browser tests failed on the 15.1 package only through the harness fault fixed since; rerun pending"
+evidence = "owner, 0.20.3.1, 4 Nov 2026: version page passes; beryllium://flags still shows \"Helium flag.\" (25 labels in chrome/browser/helium_flag_entries.h); the rename tool handles them from the next build"
 source = ["plan/01-PROJECT-CHARTER.md D2", "plan/01-PROJECT-CHARTER.md D8"]
 
 [[feature]]
@@ -474,9 +476,10 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
-tested = "written"
+tested = "passing"
 where = ["patches/branding/beryllium-webui-scheme.patch"]
 tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_beryllium_scheme_opens_internal_pages"]
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/01-PROJECT-CHARTER.md D2", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q11"]
 
 [[feature]]
@@ -488,9 +491,10 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
-tested = "written"
+tested = "passing"
 where = ["patches/platform/beryllium-paths-and-branding.patch"]
 tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_profile_and_cache_are_berylliums_own"]
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/01-PROJECT-CHARTER.md D2"]
 
 [[feature]]
@@ -588,7 +592,7 @@ implemented = "todo"
 built = "no"
 tested = "written"
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
-evidence = "records each process's mode with procstat; asserts nothing until renderers are confined"
+evidence = "owner, 0.20.3.1, 4 Nov 2026: browser, renderers, GPU, network and storage processes all report capability mode: no"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
 notes = "The imported FreeBSD sandbox code only lowers RLIMIT_DATA."
 
@@ -1147,10 +1151,10 @@ priority = "must"
 phase = 2
 implemented = "partial"
 built = "v0.20.3.1-1"
-tested = "written"
+tested = "passing"
 where = ["patches/security/beryllium-honest-gpu-sandbox-status.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_gpu_sandbox_claim_matches_kernel"]
-evidence = "failed on the 15.1 package (claimed true), which led to the fix in 0.20.3.1; rerun pending"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026: GPU process claims sandboxed=False, kernel says not in capability mode"
 source = ["plan/06-SECURITY-MODEL.md §10", "RT-17"]
 notes = "Done for beryllium://gpu; beryllium://sandbox and the process-level flag remain."
 
@@ -1376,12 +1380,14 @@ title = "Services off by default, Helium's servers never used"
 need = "Online services are off in a new profile and no setting or setup step sends anything to Helium's servers (services.helium.imput.net, helium.computer)."
 priority = "must"
 phase = 1
-implemented = "todo"
+implemented = "done"
 built = "no"
-tested = "planned"
-planned_test = "privacy capture through the setup page with its defaults accepted: no request to a Helium host"
+tested = "written"
+where = ["patches/privacy/beryllium-services-off-by-default.patch"]
+tests = ["freebsd/tests/browser/tests/test_60_privacy.py::test_services_off_in_a_new_profile",
+         "freebsd/tests/browser/tests/test_60_privacy.py::test_switched_on_without_server_contacts_no_one"]
 source = ["plan/01-PROJECT-CHARTER.md D3", "plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "helium/patches/helium/core/services-prefs.patch", "helium/patches/helium/core/onboarding-page.patch"]
-notes = "Not met in 0.20.3.1: Helium's default is helium.services.enabled=true with Helium's address, held back only until the user consents on the setup page. No Beryllium patch changes it. The idle privacy test passes because it skips the setup page."
+notes = "Fixed for the next build: services off in a new profile, no built-in server (Helium's address only if the user enters it in Settings). Release 0.20.3.1 still has Helium's default, held back until the user consents on the setup page."
 
 [[feature]]
 id = "P-SVC-02"
@@ -1453,7 +1459,7 @@ built = "v0.20.3.1-1"
 tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_60_privacy.py::test_idle_browser_contacts_no_one",
          "freebsd/tests/browser/tests/test_60_privacy.py::test_local_page_contacts_no_one"]
-evidence = "15.1 package, 3 Nov 2026; the test skips the setup page and sees only HTTP(S) through a proxy (not DNS or UDP)"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026; the test skips the setup page and sees only HTTP(S) through a proxy (not DNS or UDP)"
 source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6"]
 
 [[feature]]
@@ -1496,7 +1502,7 @@ built = "no"
 tested = "passing"
 where = ["freebsd/tests/browser/berytest/servers.py"]
 tests = ["freebsd/tests/browser/tests/test_60_privacy.py"]
-evidence = "15.1 package, 3 Nov 2026"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026"
 source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6", "plan/08-TESTING-AND-VERIFICATION.md §1"]
 
 [[feature]]
@@ -1676,7 +1682,7 @@ built = "v0.20.3.1-1"
 tested = "passing"
 where = ["helium/patches/ungoogled-chromium/disable-gcm.patch", "helium/patches/ungoogled-chromium/block-trk-and-subdomains.patch"]
 tests = ["freebsd/tests/browser/tests/test_60_privacy.py"]
-evidence = "idle and local page only, 15.1 package, 3 Nov 2026"
+evidence = "idle and local page only, owner, 0.20.3.1, 4 Nov 2026"
 source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3"]
 
 [[feature]]
@@ -2124,7 +2130,7 @@ built = "no"
 tested = "passing"
 where = ["freebsd/tests/browser/run"]
 tests = [".github/workflows/freebsd-checks.yml"]
-evidence = "harness runs in CI against Chrome; used on the owner's machine 3-4 Nov 2026"
+evidence = "owner, 0.20.3.1: full run 4 Nov 2026, 22 pass, 1 fail (flags label); harness also runs in CI against Chrome"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
 
 [[feature]]

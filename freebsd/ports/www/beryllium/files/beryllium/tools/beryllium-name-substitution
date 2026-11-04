@@ -9,7 +9,9 @@ fingerprints assume Helium's text), so it is a pure rename of Helium's
 result: user-visible "Helium" (and any remaining "Chrome"/"Chromium")
 becomes "Beryllium", and "helium://" (or "chrome://") becomes
 "beryllium://", in .grd/.grdp strings and their .xtb translations, with
-the translation fingerprints recomputed the same way Helium does.
+the translation fingerprints recomputed the same way Helium does. It then
+renames the "Helium flag." labels in chrome/browser/helium_flag_entries.h,
+which are C++ strings rather than .grd messages.
 
 Matches patches/branding/beryllium-webui-scheme.patch, which makes the
 display scheme "beryllium" (decision Q11, 1 November 2026). Internal
@@ -105,6 +107,42 @@ def sanity(util):
         assert modified == expected, f"sanity: {modified!r} != {expected!r}"
 
 
+# Helium marks its own entries on the flags page with "Helium flag." in C++
+# string literals, which the .grd rename above does not reach (the browser
+# test suite found it on beryllium://flags, 4 November 2026).
+FLAG_ENTRIES = os.path.join("chrome", "browser", "helium_flag_entries.h")
+FLAG_LABEL_RE = re.compile(r"\bHelium flag\.")
+
+
+def rename_flag_labels(tree):
+    """Rename the flag-page labels; returns how many were changed."""
+    path = os.path.join(tree, FLAG_ENTRIES)
+    if not os.path.isfile(path):
+        print(f"beryllium-name-substitution: warning: {FLAG_ENTRIES} not found; "
+              "Helium may have moved its flag entries", file=sys.stderr)
+        return 0
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    text, count = FLAG_LABEL_RE.subn("Beryllium flag.", text)
+    if count:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    print(f"beryllium-name-substitution: {count} flag labels in {FLAG_ENTRIES}")
+    return count
+
+
+def tree_argument(argv):
+    """The -t/--tree argument for a real --sub run, else None."""
+    if "--sub" not in argv or "--dry-run" in argv:
+        return None
+    for i, arg in enumerate(argv):
+        if arg in ("-t", "--tree") and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--tree="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def main():
     sys.path.insert(0, os.path.abspath(HELIUM_UTILS))
     import name_substitution_utils as util  # pylint: disable=import-outside-toplevel
@@ -114,7 +152,10 @@ def main():
     # Worker processes must inherit the swapped rules, so fork rather than
     # spawn a fresh interpreter (Python 3.14 defaults to forkserver).
     multiprocessing.set_start_method("fork", force=True)
+    tree = tree_argument(sys.argv[1:])
     ns.main()
+    if tree:
+        rename_flag_labels(tree)
 
 
 if __name__ == "__main__":

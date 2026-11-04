@@ -113,6 +113,7 @@ Beryllium/
                                       # (branding, binary rename, default theme, crash, paths)
     branding/                         # Beryllium naming, icons, credits
     ui/                               # fixes to Helium's interface code (not FreeBSD-specific)
+    privacy/                          # Beryllium's privacy defaults over Helium's (services off, no Helium servers)
     security/
       capsicum/                       # renderer and utility confinement
       launcher/                       # descriptor hygiene at child launch

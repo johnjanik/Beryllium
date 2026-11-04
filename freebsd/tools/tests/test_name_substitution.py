@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Tests for freebsd/tools/beryllium-name-substitution (regex layer only)."""
 
+import contextlib
 import hashlib
+import io
 import importlib.machinery
 import importlib.util
 import os
@@ -82,6 +84,38 @@ class SubstitutionTests(unittest.TestCase):
         self.assertTrue(hasattr(ns, "replacement_sanity"))
         self.assertTrue(hasattr(ns, "main"))
         self.assertTrue(hasattr(self.util, "replace_text"))
+
+
+class FlagLabelTests(unittest.TestCase):
+    def test_flag_labels_renamed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tree:
+            path = os.path.join(tree, berysub.FLAG_ENTRIES)
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as f:
+                f.write('"May cause UI clarity issues. Helium flag.",\n'
+                        '"Helium flag. Second line",\n"kHeliumFlag",\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(berysub.rename_flag_labels(tree), 2)
+            with open(path) as f:
+                text = f.read()
+            self.assertNotIn("Helium flag.", text)
+            self.assertIn("issues. Beryllium flag.", text)
+            self.assertIn("kHeliumFlag", text)
+
+    def test_missing_file_warns(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tree:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(berysub.rename_flag_labels(tree), 0)
+            self.assertIn("not found", err.getvalue())
+
+    def test_tree_argument(self):
+        self.assertEqual(berysub.tree_argument(["--sub", "-t", "/w"]), "/w")
+        self.assertEqual(berysub.tree_argument(["--sub", "--tree=/w"]), "/w")
+        self.assertIsNone(berysub.tree_argument(["--revert", "-t", "/w"]))
+        self.assertIsNone(berysub.tree_argument(["--sub", "--dry-run", "-t", "/w"]))
 
 
 if __name__ == "__main__":

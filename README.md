@@ -93,14 +93,18 @@ set it, and the launcher will not start the browser without it.
 - Wayland is recommended. Under X11, any program in your session can read
   input from and inject input into other windows.
 - Online services (extension proxy, `!bangs` list, filter-list and
-  component updates, dictionaries) stay off until you finish the setup page
-  (`beryllium://setup`), which asks whether to use them. **In this release,
-  allowing them there sends those requests to Helium's servers**, because
-  Beryllium runs no servers of its own yet. To keep them off, decline them
-  on the setup page, or turn them off later in Settings. Turning them off by
-  default, and never using Helium's servers, is the first open privacy item
-  (`P-SVC-01` in the [feature matrix](plan/13-FEATURE-MATRIX.md)). What
-  each service does is in [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
+  component updates, dictionaries) need a server, and Beryllium runs none
+  of its own yet. From the next release they are off, and no server is
+  built in: they work only after you turn them on and enter a server at
+  `beryllium://settings/privacy/services`, either your own instance of the
+  open-source services (HTTPS, or `http://localhost` for a test server on
+  your machine) or, as a deliberate choice, Helium's
+  (`https://services.helium.imput.net`).
+  **Release 0.20.3.1 behaves differently:** services stay off until you
+  finish the setup page (`beryllium://setup`), and if you allow them there,
+  those requests go to Helium's servers. To keep them off in 0.20.3.1,
+  decline them on the setup page. What each service does is in
+  [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
 - Managed policies go in `/usr/local/etc/beryllium/policies/managed/`.
 
 ### Known issues
