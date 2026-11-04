@@ -45,7 +45,7 @@ built = "v0.20.3.1-1"
 tested = "failing"
 tests = ["freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
          "freebsd/tests/browser/tests/test_90_stability.py::test_rapid_internal_navigation"]
-evidence = "owner, 0.20.3.1, 4 Nov 2026: rapid navigation passes; the pages test fails only because beryllium://flags labels Helium's flags \"Helium flag.\" (fixed for the next build, F-ID-01)"
+evidence = "owner, 0.20.3.2, 4 Nov 2026: rapid navigation passes; the pages test fails only on Helium's name in flag descriptions on beryllium://flags (F-ID-01)"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -464,7 +464,7 @@ where = ["patches/platform/beryllium-paths-and-branding.patch", "freebsd/tools/b
 tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_version_page_names_beryllium",
          "freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
          "freebsd/tools/tests/test_name_substitution.py"]
-evidence = "owner, 0.20.3.1, 4 Nov 2026: version page passes; beryllium://flags still shows \"Helium flag.\" (25 labels in chrome/browser/helium_flag_entries.h); the rename tool handles them from the next build"
+evidence = "owner, 0.20.3.2, 4 Nov 2026: the \"Helium flag.\" labels are gone, but flag descriptions still say Helium (\"Controls whether Helium asks...\"); the rename tool now renames the word in every string literal of the flag entries and the services notice (22 strings), for the next build"
 source = ["plan/01-PROJECT-CHARTER.md D2", "plan/01-PROJECT-CHARTER.md D8"]
 
 [[feature]]
@@ -1386,12 +1386,13 @@ priority = "must"
 phase = 1
 implemented = "done"
 built = "no"
-tested = "written"
+tested = "passing"
 where = ["patches/privacy/beryllium-services-off-by-default.patch"]
 tests = ["freebsd/tests/browser/tests/test_60_privacy.py::test_services_off_in_a_new_profile",
          "freebsd/tests/browser/tests/test_60_privacy.py::test_switched_on_without_server_contacts_no_one"]
+evidence = "owner, 0.20.3.2 package, suite run 4 Nov 2026: helium.services.enabled=False, no server; services on with consent and no server, 30 s idle: no host contacted"
 source = ["plan/01-PROJECT-CHARTER.md D3", "plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "helium/patches/helium/core/services-prefs.patch", "helium/patches/helium/core/onboarding-page.patch"]
-notes = "Fixed for the next build: services off in a new profile, no built-in server (Helium's address only if the user enters it in Settings). Release 0.20.3.1 still has Helium's default, held back until the user consents on the setup page."
+notes = "Fixed in 0.20.3.2: services off in a new profile, no built-in server (Helium's address only if the user enters it in Settings). Release 0.20.3.1 still has Helium's default, held back until the user consents on the setup page."
 
 [[feature]]
 id = "P-SVC-02"

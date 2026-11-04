@@ -10,8 +10,9 @@ result: user-visible "Helium" (and any remaining "Chrome"/"Chromium")
 becomes "Beryllium", and "helium://" (or "chrome://") becomes
 "beryllium://", in .grd/.grdp strings and their .xtb translations, with
 the translation fingerprints recomputed the same way Helium does. It then
-renames the "Helium flag." labels in chrome/browser/helium_flag_entries.h,
-which are C++ strings rather than .grd messages.
+renames "Helium" in the C++ string literals that are shown to users (flag
+names and descriptions, the services change notice), which are not .grd
+messages.
 
 Matches patches/branding/beryllium-webui-scheme.patch, which makes the
 display scheme "beryllium" (decision Q11, 1 November 2026). Internal
@@ -107,28 +108,51 @@ def sanity(util):
         assert modified == expected, f"sanity: {modified!r} != {expected!r}"
 
 
-# Helium marks its own entries on the flags page with "Helium flag." in C++
-# string literals, which the .grd rename above does not reach (the browser
-# test suite found it on beryllium://flags, 4 November 2026).
-FLAG_ENTRIES = os.path.join("chrome", "browser", "helium_flag_entries.h")
-FLAG_LABEL_RE = re.compile(r"\bHelium flag\.")
+# User-visible text that Helium keeps in C++ string literals, which the .grd
+# rename above does not reach: flag names and descriptions on the flags page
+# (the browser test suite found "Helium flag." and "Controls whether Helium
+# asks..." on beryllium://flags, 4 November 2026), and the services change
+# notice. Only the capitalised word "Helium" inside double-quoted literals is
+# renamed; lowercase flag ids (stored in the user's profile) and identifiers
+# such as kHeliumFoo are left alone.
+CPP_STRING_FILES = (
+    os.path.join("chrome", "browser", "helium_flag_entries.h"),
+    os.path.join("components", "helium_services", "schema.cc"),
+)
+FLAG_ENTRIES = CPP_STRING_FILES[0]
+CPP_STRING_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+HELIUM_WORD_RE = re.compile(r"\bHelium\b")
 
 
-def rename_flag_labels(tree):
-    """Rename the flag-page labels; returns how many were changed."""
-    path = os.path.join(tree, FLAG_ENTRIES)
-    if not os.path.isfile(path):
-        print(f"beryllium-name-substitution: warning: {FLAG_ENTRIES} not found; "
-              "Helium may have moved its flag entries", file=sys.stderr)
-        return 0
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    text, count = FLAG_LABEL_RE.subn("Beryllium flag.", text)
-    if count:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
-    print(f"beryllium-name-substitution: {count} flag labels in {FLAG_ENTRIES}")
-    return count
+def rename_in_string_literals(text):
+    """Returns (text, count) with "Helium" renamed inside string literals."""
+    count = 0
+
+    def literal(m):
+        nonlocal count
+        new, n = HELIUM_WORD_RE.subn("Beryllium", m.group(0))
+        count += n
+        return new
+    return CPP_STRING_RE.sub(literal, text), count
+
+
+def rename_cpp_strings(tree):
+    """Rename the user-visible C++ strings; returns how many were changed."""
+    total = 0
+    for rel in CPP_STRING_FILES:
+        path = os.path.join(tree, rel)
+        if not os.path.isfile(path):
+            print(f"beryllium-name-substitution: warning: {rel} not found; "
+                  "Helium may have moved it", file=sys.stderr)
+            continue
+        with open(path, encoding="utf-8") as f:
+            text, count = rename_in_string_literals(f.read())
+        if count:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        print(f"beryllium-name-substitution: {count} strings renamed in {rel}")
+        total += count
+    return total
 
 
 def tree_argument(argv):
@@ -155,7 +179,7 @@ def main():
     tree = tree_argument(sys.argv[1:])
     ns.main()
     if tree:
-        rename_flag_labels(tree)
+        rename_cpp_strings(tree)
 
 
 if __name__ == "__main__":

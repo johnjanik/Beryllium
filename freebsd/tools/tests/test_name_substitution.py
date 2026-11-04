@@ -86,29 +86,47 @@ class SubstitutionTests(unittest.TestCase):
         self.assertTrue(hasattr(self.util, "replace_text"))
 
 
-class FlagLabelTests(unittest.TestCase):
-    def test_flag_labels_renamed(self):
+class CppStringTests(unittest.TestCase):
+    ENTRIES = (
+        '    {"bookmark-open-all-confirmation",\n'
+        '     "Bookmark open-all confirmation",\n'
+        '     "Controls whether Helium asks for confirmation before opening 15 or more "\n'
+        '     "bookmarks. Helium flag.",\n'
+        '     kOsAll, FEATURE_VALUE_TYPE(features::kHeliumBookmarkConfirm)},\n'
+        '    {"helium-noise", "Helium Noise", "Quote \\"Helium\\" inside. HeliumLike stays.",\n'
+        '     kOsAll, SINGLE_VALUE_TYPE("helium-noise")},\n'
+        '// A comment about Helium outside any string.\n')
+
+    def test_only_capitalised_word_in_literals(self):
+        text, count = berysub.rename_in_string_literals(self.ENTRIES)
+        self.assertEqual(count, 4)
+        self.assertIn('"Controls whether Beryllium asks for confirmation', text)
+        self.assertIn('"bookmarks. Beryllium flag."', text)
+        self.assertIn('"Beryllium Noise"', text)
+        self.assertIn('Quote \\"Beryllium\\" inside. HeliumLike stays.', text)
+        for kept in ('"bookmark-open-all-confirmation"', '"helium-noise"',
+                     'features::kHeliumBookmarkConfirm', '// A comment about Helium outside'):
+            self.assertIn(kept, text)
+
+    def test_renames_files_in_tree(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tree:
-            path = os.path.join(tree, berysub.FLAG_ENTRIES)
-            os.makedirs(os.path.dirname(path))
-            with open(path, "w") as f:
-                f.write('"May cause UI clarity issues. Helium flag.",\n'
-                        '"Helium flag. Second line",\n"kHeliumFlag",\n')
+            for rel in berysub.CPP_STRING_FILES:
+                path = os.path.join(tree, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(self.ENTRIES)
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(berysub.rename_flag_labels(tree), 2)
-            with open(path) as f:
-                text = f.read()
-            self.assertNotIn("Helium flag.", text)
-            self.assertIn("issues. Beryllium flag.", text)
-            self.assertIn("kHeliumFlag", text)
+                self.assertEqual(berysub.rename_cpp_strings(tree), 8)
+            with open(os.path.join(tree, berysub.FLAG_ENTRIES)) as f:
+                self.assertNotIn("Helium flag.", f.read())
 
     def test_missing_file_warns(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tree:
             err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                self.assertEqual(berysub.rename_flag_labels(tree), 0)
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(berysub.rename_cpp_strings(tree), 0)
             self.assertIn("not found", err.getvalue())
 
     def test_tree_argument(self):
