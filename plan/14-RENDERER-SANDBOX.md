@@ -91,12 +91,13 @@ FreeBSD test bed, so an increment must be worth a build.
 
 ## 4. Open items
 
-- **Prototype evaluation (plan/09 Phase 2 item 0).** Alex S's
-  `chromium-sandbox` branch (`shkhln/freebsd-ports`, FreeBSD bug 269234)
-  has not been read: attaching that repository to the cloud session was
-  refused by the session's permission check on 4 November 2026. The owner
-  can allow it, or read it on the FreeBSD machine. Its sysctl and time-zone
-  findings and its known gaps should feed increment 2.
+- **Prototype evaluation (plan/09 Phase 2 item 0):** done 4 November 2026,
+  [15-CAPSICUM-PROTOTYPE-EVALUATION.md](15-CAPSICUM-PROTOTYPE-EVALUATION.md).
+  Decision: diverge on architecture, borrow the findings; its time-zone and
+  message-catalogue caching, the `libgcc_s` preload and `caph_limit_stdio()`
+  are in the lockdown patch for the build after 0.20.3.3.
+- **Time zones on 14.x and 15.x** may fall back to UTC in capability mode
+  (oracle results from CI machines, to recheck; plan/15 section 5).
 - **Kernel facts** come from the Capsicum oracle results in
   `freebsd/results/` (126 sysctls readable in capability mode on
   16.0-CURRENT); the survey marks each sysctl a process reads against that

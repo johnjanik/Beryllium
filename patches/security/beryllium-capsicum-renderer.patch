@@ -29,7 +29,13 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
     "beryllium-sandbox: renderer pid=N capability_mode=1";
   - with BerylliumCapsicumTrap also enabled, PROC_TRAPCAP_CTL, so the first
     call capability mode refuses ends the renderer with SIGTRAP and a
-    backtrace instead of failing quietly (for finding the next warm-up).
+    backtrace instead of failing quietly (for finding the next warm-up);
+  - from Alex S's 2026 Capsicum prototype for the FreeBSD port
+    (plan/15-CAPSICUM-PROTOTYPE-EVALUATION.md): caph_cache_tzdata() and
+    caph_cache_catpages() in the warm-up, dlopen of /lib/libgcc_s.so.1
+    (libthr loads it by path for unwinding when a thread exits), and
+    caph_limit_stdio() before cap_enter() (a failure there is logged, not
+    fatal).
   Later increments make it the default and fail closed in the production
   package (charter D5), add the descriptor allowlist, launcher hygiene,
   kernel attestation and status reporting.
@@ -210,10 +216,13 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -5,17 +5,26 @@
+@@ -4,18 +4,29 @@
+ 
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
++#include <capsicum_helpers.h>
  #include <dirent.h>
++#include <dlfcn.h>
 +#include <errno.h>
  #include <fcntl.h>
  #include <stdint.h>
@@ -237,7 +246,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -63,6 +72,77 @@
+@@ -63,6 +74,86 @@
  namespace sandbox {
  namespace policy {
  
@@ -264,6 +273,9 @@ security-review: required (sandbox setup, process confinement)
 +// Capsicum survey (4 November 2026): the memory and shared-memory sysctls
 +// and uname() are cached in base/system on FreeBSD once read; the executable
 +// path comes from kern.proc.pathname; time zone data from /etc/localtime.
++// From the 2026 Capsicum prototype for the FreeBSD port (plan/15): libc's
++// message catalogue, and libgcc_s, which libthr loads by path for unwinding
++// when a thread exits; loaded now, a later dlopen finds it in memory.
 +void WarmUpForCapabilityMode() {
 +  std::ignore = base::SysInfo::AmountOfTotalPhysicalMemory();
 +  std::ignore = base::SysInfo::MaxSharedMemorySize();
@@ -277,7 +289,9 @@ security-review: required (sandbox setup, process confinement)
 +  base::PathService::Get(base::DIR_EXE, &unused);
 +  base::PathService::Get(base::DIR_MODULE, &unused);
 +  base::PathService::Get(base::DIR_ASSETS, &unused);
-+  tzset();
++  caph_cache_tzdata();
++  caph_cache_catpages();
++  dlopen("/lib/libgcc_s.so.1", RTLD_LAZY);
 +  time_t now = time(nullptr);
 +  struct tm local;
 +  localtime_r(&now, &local);
@@ -295,6 +309,10 @@ security-review: required (sandbox setup, process confinement)
 +    if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
 +      PLOG(WARNING) << "beryllium-sandbox: PROC_TRAPCAP_CTL";
 +    }
++  }
++  // Standard input and output keep only the rights stdio needs.
++  if (caph_limit_stdio() != 0) {
++    PLOG(WARNING) << "beryllium-sandbox: caph_limit_stdio";
 +  }
 +  if (cap_enter() != 0) {
 +    return false;
@@ -315,7 +333,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +254,19 @@
+@@ -174,6 +265,19 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  

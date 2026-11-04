@@ -610,7 +610,7 @@ tested = "planned"
 where = ["patches/security/beryllium-capsicum-renderer.patch"]
 planned_test = "functional suite with the sandbox on and off; the capsicum survey (run capsicum --diagnose) lists what must move before lockdown"
 source = ["plan/06-SECURITY-MODEL.md §2", "plan/06-SECURITY-MODEL.md §3.1", "plan/03-ARCHITECTURE.md §4.5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R5"]
-notes = "Survey of 4 Nov 2026 on the owner's machine: memory and shared-memory sysctls, uname, executable path and time zone are warmed up and cached; the lockdown marker in the next build separates start-up from later activity."
+notes = "Survey of 4 Nov 2026 on the owner's machine: memory and shared-memory sysctls, uname, executable path and time zone are warmed up and cached; from the 2026 prototype (plan/15) also the message catalogue and libgcc_s. The lockdown marker in the next build separates start-up from later activity. Time zones on 14.x and 15.x may fall back to UTC (plan/15 section 5)."
 
 [[feature]]
 id = "S-REN-03"
