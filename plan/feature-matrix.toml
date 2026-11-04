@@ -1,0 +1,2323 @@
+# Beryllium feature matrix: the source of plan/13-FEATURE-MATRIX.md.
+# Edit this file, then run freebsd/tools/feature-matrix; CI runs --check.
+# Field rules: freebsd/tools/feature-matrix --help. Areas by id letter:
+# F functionality, P privacy, S security, B build/packaging/install,
+# R testing/release/maintenance. Rows appear in this file's order.
+
+[meta]
+as_of = "2026-11-04"
+release = "v0.20.3.1-1"
+next_phase = 2
+
+[meta.intro]
+F = "What a user does with the browser on FreeBSD. Evidence \"owner, 0.20.3.1\" means the maintainer's machine: FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop (driver 595.99.02), KDE Plasma on Wayland. \"15.1 package\" runs were made on the same machine on 3 November 2026, before the release; the browser suite has not yet been rerun in full on the release."
+P = "What Beryllium promises about the network and the user's data, and the privacy features it inherits from Helium and ungoogled-chromium."
+S = "The sandbox and hardening work, Beryllium's reason to exist. Nothing in this area confines a process yet: the release ships with no sandbox, and says so."
+B = "Building the port, the package, and installing, updating and removing it."
+R = "Test infrastructure, CI, releases, keeping up with Helium, Chromium and FreeBSD, and documentation."
+
+# ---------------------------------------------------------------------------
+# F: browser functionality
+
+[[feature]]
+id = "F-WEB-01"
+group = "Browsing"
+title = "Starts with a fresh profile"
+need = "Beryllium starts as a normal user with an empty profile and answers within 90 s."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_starts_and_answers"]
+evidence = "15.1 package, 3 Nov 2026; daily use on 0.20.3.1 (owner)"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §8", "plan/09-ROADMAP.md §3"]
+
+[[feature]]
+id = "F-WEB-02"
+group = "Browsing"
+title = "Pages, navigation and tabs"
+need = "Web pages and internal pages load and navigate without a crash or error page."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
+         "freebsd/tests/browser/tests/test_90_stability.py::test_rapid_internal_navigation"]
+evidence = "failed on the 15.1 package only through a harness fault (beryllium:// over DevTools), fixed since; rerun pending"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-03"
+group = "Browsing"
+title = "Stable under load"
+need = "Eight animated tabs at once run without a renderer crash."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tests/browser/tests/test_90_stability.py::test_many_busy_tabs"]
+evidence = "15.1 package, 3 Nov 2026"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-04"
+group = "Browsing"
+title = "Crash recovery"
+need = "A crashed renderer shows the error page and the tab reloads on request."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: crash a renderer (Page.crash), reload, page works"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-05"
+group = "Browsing"
+title = "Everyday basics"
+need = "Clipboard, cookies, CJK and emoji fonts, and private windows work."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: one check each"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-06"
+group = "Browsing"
+title = "Downloads"
+need = "A download is saved to the user's download folder; once renderers are sandboxed, through the browser process only."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: download a fixture file and compare its hash"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-07"
+group = "Browsing"
+title = "File chooser"
+need = "Opening and saving files goes through the desktop's file chooser, approved by the user."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: file input accepts a chosen file (needs a scripted chooser)"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-08"
+group = "Browsing"
+title = "Printing"
+need = "Print to PDF and to CUPS printers works (port option CUPS, on by default)."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: Page.printToPDF produces a valid PDF"
+where = ["freebsd/ports/www/beryllium/Makefile"]
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-WEB-09"
+group = "Browsing"
+title = "Built-in PDF viewer"
+need = "PDF files open in the browser's viewer."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+source = ["not in the plan: a user feature; the plan names PDF only as a sandbox workload"]
+
+[[feature]]
+id = "F-WEB-10"
+group = "Browsing"
+title = "Extensions"
+need = "Extensions install and run. With services off, the Web Store contacts Google directly; the user is told."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: install a local extension, check it runs"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4", "plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R24"]
+
+[[feature]]
+id = "F-WEB-11"
+group = "Browsing"
+title = "Profile migration"
+need = "A Helium profile from Linux, copied over, opens in Beryllium."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "functional suite: open a Helium Linux profile layout"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-MED-01"
+group = "Media"
+title = "Codecs"
+need = "H.264 with AAC, VP9, AV1 and Opus are supported and play (port option CODECS, on by default)."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "manual"
+tests = ["freebsd/tests/browser/tests/test_30_media.py::test_codec_support",
+         "freebsd/tests/browser/tests/test_30_media.py::test_play_h264_aac",
+         "freebsd/tests/browser/tests/test_30_media.py::test_play_vp9_opus",
+         "freebsd/tests/browser/tests/test_30_media.py::test_play_av1_opus"]
+evidence = "owner, 0.20.3.1: video plays, 4 Nov 2026; the suite's media group failed on the 15.1 package (the NVIDIA crash, F-MED-03) and has not been rerun"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-MED-02"
+group = "Media"
+title = "Media Source Extensions"
+need = "Adaptive streaming through Media Source plays AV1, VP9 and Opus, the way YouTube streams."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "manual"
+tests = ["freebsd/tests/browser/tests/test_30_media.py::test_mse_av1_mp4",
+         "freebsd/tests/browser/tests/test_30_media.py::test_mse_vp9_webm",
+         "freebsd/tests/browser/tests/test_30_media.py::test_mse_opus_webm"]
+evidence = "owner, 0.20.3.1: YouTube plays, 4 Nov 2026; suite rerun pending"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "F-MED-03"
+group = "Media"
+title = "Video does not crash with NVIDIA"
+need = "With NVIDIA's driver, decoded video is not written into GPU memory buffers, which crashed every video tab (also in the stock FreeBSD Chromium)."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["patches/platform/beryllium-bsd-nvidia-video-frames.patch"]
+tests = ["freebsd/tests/browser/tests/test_35_videodiag.py::test_which_switch_avoids_the_crash"]
+evidence = "owner, 0.20.3.1: YouTube plays, 4 Nov 2026"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+notes = "To report to the FreeBSD Chromium maintainers."
+
+[[feature]]
+id = "F-MED-04"
+group = "Media"
+title = "Live YouTube playback"
+need = "A YouTube video plays for 60 s without a crash or player error."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "manual"
+tests = ["freebsd/tests/browser/tests/test_80_youtube.py::test_watch_video"]
+evidence = "owner, 0.20.3.1, 4 Nov 2026; the --network test has not been rerun"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "F-MED-05"
+group = "Media"
+title = "Audio output"
+need = "Sound plays through sndio, the OSS/ALSA shim or PulseAudio (port option AUDIO)."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tests/browser/tests/test_30_media.py::test_mse_opus_webm"]
+evidence = "15.1 package, 3 Nov 2026 (Opus decodes and plays; the audio backend is not asserted)"
+where = ["freebsd/ports/www/beryllium/Makefile"]
+source = ["plan/01-PROJECT-CHARTER.md D6"]
+
+[[feature]]
+id = "F-MED-06"
+group = "Media"
+title = "Camera, microphone and screen sharing"
+need = "WebRTC calls can use the camera and microphone, and share the screen through PipeWire."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §4 (PipeWire option)", "not in the plan: camera and microphone"]
+
+[[feature]]
+id = "F-MED-07"
+group = "Media"
+title = "Widevine (DRM video)"
+need = "Optional Widevine through foreign-cdm (port option WIDEVINE, off by default)."
+priority = "should"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/Makefile", "freebsd/ports/www/beryllium/files/beryllium.in"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §7", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q9"]
+
+[[feature]]
+id = "F-GPU-01"
+group = "Graphics"
+title = "GPU acceleration and WebGL"
+need = "Compositing, rasterisation and WebGL are hardware accelerated where the driver allows."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas",
+         "freebsd/tests/browser/tests/test_40_rendering.py::test_gpu_info"]
+evidence = "15.1 package on NVIDIA, 3 Nov 2026; Intel and AMD untested"
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "F-GPU-02"
+group = "Graphics"
+title = "WebGPU"
+need = "WebGPU finds an adapter, or is turned off deliberately and documented."
+priority = "later"
+phase = 3
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "failing"
+where = ["freebsd/ports/www/beryllium/Makefile"]
+tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas"]
+evidence = "15.1 package, 3 Nov 2026: no adapter (the test records it, asserts nothing)"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11", "RT-07"]
+
+[[feature]]
+id = "F-GPU-03"
+group = "Graphics"
+title = "GPU identified"
+need = "The GPU's PCI vendor and device are known, so Chromium's driver-bug workarounds apply on FreeBSD (today vendor 0x0000)."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "rendering group: gpu-info.json shows a non-zero vendor id"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "F-GPU-04"
+group = "Graphics"
+title = "Hardware video decode"
+need = "VA-API decodes video on drivers that support it (it skips the NVIDIA device today)."
+priority = "should"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/Makefile"]
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/04-BUILD-AND-PORTING-PLAN.md §4"]
+
+[[feature]]
+id = "F-DSK-01"
+group = "Desktop session"
+title = "Native Wayland"
+need = "Beryllium runs as a native Wayland client, the recommended setup."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "manual"
+evidence = "owner, 0.20.3.1 on KDE Plasma Wayland, 4 Nov 2026"
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/04-BUILD-AND-PORTING-PLAN.md §8"]
+
+[[feature]]
+id = "F-DSK-02"
+group = "Desktop session"
+title = "No flicker under Wayland with NVIDIA"
+need = "Each frame is finished before the compositor shows it."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["patches/platform/beryllium-bsd-wayland-wait-for-gpu.patch"]
+evidence = "owner, 0.20.3.1: flicker gone, 4 Nov 2026"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+notes = "The proper fix is explicit sync (DRM syncobj or sync_file for NVIDIA on FreeBSD, offered by KWin)."
+
+[[feature]]
+id = "F-DSK-03"
+group = "Desktop session"
+title = "X11 session"
+need = "Beryllium runs under X11, and its input-capture weakness is stated to users."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite in an X11 session; videodiag already has an X11 row"
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/04-BUILD-AND-PORTING-PLAN.md §8", "RT-07"]
+
+[[feature]]
+id = "F-DSK-04"
+group = "Desktop session"
+title = "Desktop integration"
+need = "Menu entry, icons from 16 to 256 px, and registration as a web browser for the desktop."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["freebsd/ports/www/beryllium/files/beryllium.desktop.in", "freebsd/ports/www/beryllium/pkg-plist"]
+tests = ["freebsd/tools/tests/test_branding.py"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §7"]
+
+[[feature]]
+id = "F-DSK-05"
+group = "Desktop session"
+title = "Input methods, accessibility and scaling"
+need = "IBus and Fcitx input methods, screen readers (AT-SPI), and HiDPI and fractional scaling work."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+source = ["not in the plan"]
+
+[[feature]]
+id = "F-UI-01"
+group = "Interface"
+title = "Toolbar in every layout"
+need = "Toolbar buttons are visible and full height in every Helium layout, including vertical tabs and dynamic."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["patches/ui/beryllium-toolbar-buttons-zero-height.patch"]
+tests = ["freebsd/tests/browser/tests/test_70_ui.py::test_home_button_shows_in_every_layout"]
+evidence = "owner, 0.20.3.1: Home button shows in vertical tabs, 4 Nov 2026; the ui test found the bug on the 15.1 package and has not been rerun"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "F-UI-02"
+group = "Interface"
+title = "Onboarding page"
+need = "The first-run page is Beryllium's: it explains that online services are off and that updates come through pkg, and links nowhere Helium-specific."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["branding/chromium"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §8", "plan/01-PROJECT-CHARTER.md D3", "plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+notes = "Logo replaced; text unchanged; still links Helium's privacy policy and terms."
+
+[[feature]]
+id = "F-UI-03"
+group = "Interface"
+title = "Managed policies"
+need = "Administrators can set policies in /usr/local/etc/beryllium/policies/managed/."
+priority = "should"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["patches/platform/beryllium-paths-and-branding.patch"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §7"]
+
+[[feature]]
+id = "F-UI-04"
+group = "Interface"
+title = "chromedriver for automation"
+need = "Port option DRIVER installs beryllium-chromedriver."
+priority = "should"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["freebsd/ports/www/beryllium/Makefile"]
+tests = ["freebsd/tools/tests/test_port_makefile.py"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §3"]
+
+[[feature]]
+id = "F-ID-01"
+group = "Identity"
+title = "Called Beryllium everywhere"
+need = "Package, binary, window, menu entry and interface say Beryllium; no Helium name or logo appears (credits aside)."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["patches/platform/beryllium-paths-and-branding.patch", "freebsd/tools/beryllium-name-substitution"]
+tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_version_page_names_beryllium",
+         "freebsd/tests/browser/tests/test_20_pages.py::test_internal_pages",
+         "freebsd/tools/tests/test_name_substitution.py"]
+evidence = "the browser tests failed on the 15.1 package only through the harness fault fixed since; rerun pending"
+source = ["plan/01-PROJECT-CHARTER.md D2", "plan/01-PROJECT-CHARTER.md D8"]
+
+[[feature]]
+id = "F-ID-02"
+group = "Identity"
+title = "beryllium:// pages"
+need = "Internal pages are shown and typed as beryllium://; there is no helium:// alias."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["patches/branding/beryllium-webui-scheme.patch"]
+tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_beryllium_scheme_opens_internal_pages"]
+source = ["plan/01-PROJECT-CHARTER.md D2", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q11"]
+
+[[feature]]
+id = "F-ID-03"
+group = "Identity"
+title = "Own profile and paths"
+need = "Profile in ~/.config/beryllium, files in /usr/local/share/beryllium and /usr/local/etc/beryllium; Chromium's and Helium's folders are not touched."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["patches/platform/beryllium-paths-and-branding.patch"]
+tests = ["freebsd/tests/browser/tests/test_10_startup.py::test_profile_and_cache_are_berylliums_own"]
+source = ["plan/01-PROJECT-CHARTER.md D2"]
+
+[[feature]]
+id = "F-ID-04"
+group = "Identity"
+title = "Artwork"
+need = "Art set v2 replaces every Helium logo and icon; the sheet's three-orbit icons are not used."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["artwork", "branding/tools/make-chromium-branding"]
+tests = ["freebsd/tools/tests/test_branding.py"]
+evidence = "CI on every push"
+source = ["plan/01-PROJECT-CHARTER.md D2", "plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+notes = "A vector master is still to make."
+
+[[feature]]
+id = "F-ID-05"
+group = "Identity"
+title = "Attribution and licences"
+need = "GPL notices kept; the credits page and package description state the derivation from Helium and the non-affiliation; artwork CC BY 4.0 and the trademark notice are in place."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["freebsd/ports/www/beryllium/pkg-descr", "TRADEMARKS.md", "LICENSES/CC-BY-4.0.txt"]
+tests = ["freebsd/tools/tests/test_branding.py"]
+source = ["plan/01-PROJECT-CHARTER.md D2", "plan/08-TESTING-AND-VERIFICATION.md §3"]
+notes = "The browser's credits page is unchanged."
+
+[[feature]]
+id = "F-ID-06"
+group = "Identity"
+title = "Search-engine icon licence"
+need = "The search-engine icon pack is confirmed redistributable, or the package is marked RESTRICTED, or the pack is dropped."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/10-RISKS-AND-OPEN-QUESTIONS.md Q5"]
+
+[[feature]]
+id = "F-PLT-01"
+group = "Platforms"
+title = "Runs on FreeBSD 15.x"
+need = "A package built in a 15.x jail runs on 15.x without the V8 SIGTRAP seen with the stock Chromium (R21)."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "no"
+tested = "planned"
+planned_test = "browser suite in a 15.x bhyve guest"
+source = ["plan/10-RISKS-AND-OPEN-QUESTIONS.md R21", "plan/02-BASELINE-FINDINGS.md §2"]
+
+[[feature]]
+id = "F-PLT-02"
+group = "Platforms"
+title = "Runs on FreeBSD 14.x"
+need = "A package built in a 14.x jail runs on 14.x."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "no"
+tested = "planned"
+planned_test = "browser suite in a 14.x bhyve guest"
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q4"]
+
+[[feature]]
+id = "F-PLT-03"
+group = "Platforms"
+title = "aarch64"
+need = "Packages for 64-bit ARM, once CI covers it."
+priority = "later"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/01-PROJECT-CHARTER.md D6"]
+
+# ---------------------------------------------------------------------------
+# S: security
+
+[[feature]]
+id = "S-REN-01"
+group = "Capsicum renderer sandbox"
+title = "Renderers in capability mode"
+need = "Every production renderer enters Capsicum capability mode before it handles web content, and the browser checks it with the kernel."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
+evidence = "records each process's mode with procstat; asserts nothing until renderers are confined"
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
+notes = "The imported FreeBSD sandbox code only lowers RLIMIT_DATA."
+
+[[feature]]
+id = "S-REN-02"
+group = "Capsicum renderer sandbox"
+title = "Warm-up before lockdown"
+need = "Everything a renderer needs from the system (uname, memory size, time zones, fonts, locale, libraries) is read before cap_enter."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "functional suite run with the sandbox on and off; oracle probes misc.localtime, proc.dlopen, id.vm_page_count"
+source = ["plan/06-SECURITY-MODEL.md §2", "plan/06-SECURITY-MODEL.md §3.1", "plan/03-ARCHITECTURE.md §4.5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R5"]
+
+[[feature]]
+id = "S-REN-03"
+group = "Capsicum renderer sandbox"
+title = "Descriptor inventory"
+need = "A diagnostic build records every descriptor a renderer holds, per workload: who opened it, why, its rights and the test that proves it is needed."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "diagnostic build with PROC_TRAPCAP_CTL over the functional workloads; feeds S-REN-04"
+source = ["helium-freebsd-security-port-spec.md §6.2", "plan/06-SECURITY-MODEL.md §2"]
+
+[[feature]]
+id = "S-REN-04"
+group = "Capsicum renderer sandbox"
+title = "Descriptor allowlist"
+need = "A renderer's descriptors equal a committed allowlist (stdio, the Mojo socketpair, resource paks, V8 snapshot, passed shared memory and fonts); anything extra aborts."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: descriptor set equals freebsd/sandbox/renderer-fds.json; a descriptor added by an update is caught"
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.2", "RT-14"]
+
+[[feature]]
+id = "S-REN-05"
+group = "Capsicum renderer sandbox"
+title = "Least rights on each descriptor"
+need = "Every descriptor a renderer keeps is limited with cap_rights_limit, and its ioctls and fcntls to an allowlist."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: rights per descriptor (procstat -f -C) match the policy"
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.2"]
+
+[[feature]]
+id = "S-REN-06"
+group = "Capsicum renderer sandbox"
+title = "No file system access"
+need = "A renderer holds no directory, profile, cookie, cache or download descriptor; path opens fail; user files arrive only as handles the browser passes."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: no directory descriptors outside the allowlist; forbidden opens fail with the oracle's errno"
+source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
+
+[[feature]]
+id = "S-REN-07"
+group = "Capsicum renderer sandbox"
+title = "No network access"
+need = "A renderer has no socket except its Mojo channel; connect, bind, sendto and name lookups fail."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: socket creation and connect fail; oracle net.* probes"
+source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §6.3"]
+
+[[feature]]
+id = "S-REN-08"
+group = "Capsicum renderer sandbox"
+title = "Children stay confined"
+need = "A renderer cannot exec or load libraries by path, and any child it makes inherits capability mode."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: child of a renderer stays confined; oracle proc.fork_inherits, proc.execve, proc.dlopen"
+source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
+
+[[feature]]
+id = "S-REN-09"
+group = "Capsicum renderer sandbox"
+title = "Fail closed"
+need = "In the production package any sandbox setup failure ends the renderer; the separate beryllium-devel package may run unconfined and says NOT SANDBOXED."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: injected setup failure is fatal and logged; no fallback to an unrestricted renderer"
+where = ["freebsd/ports/www/beryllium-devel/Makefile"]
+source = ["helium-freebsd-security-port-spec.md §2.3", "plan/06-SECURITY-MODEL.md §3.4", "plan/01-PROJECT-CHARTER.md D5"]
+notes = "The devel port exists; the build flag beryllium_sandbox_required does not."
+
+[[feature]]
+id = "S-REN-10"
+group = "Capsicum renderer sandbox"
+title = "No escape-hatch switches"
+need = "The production package ignores --no-sandbox, launcher prefixes, --js-flags, site-isolation and web-security switches, remote debugging and --load-extension, and its wrapper adds none."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "sandbox suite: switch-table diff; --no-sandbox has no effect in production"
+where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.4", "RT-12"]
+notes = "Only the wrapper part is done. Remote debugging and --load-extension are not in the RT-12 list yet."
+
+[[feature]]
+id = "S-REN-11"
+group = "Capsicum renderer sandbox"
+title = "Attacker hook for testing"
+need = "A devel-only switch runs the red-team probes inside each confined process type; it is absent from production builds."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "build test proving the hook is absent from production"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §6", "plan/08-TESTING-AND-VERIFICATION.md §2.2"]
+
+[[feature]]
+id = "S-REN-12"
+group = "Capsicum renderer sandbox"
+title = "Site isolation"
+need = "Each site gets its own renderer process."
+priority = "should"
+phase = 2
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "functional suite: two sites in two tabs run in two renderers (procstat)"
+source = ["helium-freebsd-security-port-spec.md §13.3", "plan/06-SECURITY-MODEL.md §11"]
+
+[[feature]]
+id = "S-KRN-01"
+group = "Kernel facts"
+title = "Capsicum kernel oracle"
+need = "Each supported kernel's behaviour in capability mode is measured by 89 probes and the results recorded; the sandbox suite's expected errors come from it."
+priority = "must"
+phase = 0
+implemented = "done"
+built = "no"
+tested = "passing"
+where = ["freebsd/tests/capsicum-standalone/cap-oracle.c"]
+tests = ["freebsd/tests/capsicum-standalone/run-oracle.sh"]
+evidence = "CI on 14.5 and 15.1-p3; owner on 16.0-CURRENT, 1 Nov 2026 (freebsd/results/oracle-*-20261101.json)"
+source = ["helium-freebsd-security-port-spec.md §13.1", "plan/08-TESTING-AND-VERIFICATION.md §2.1", "RT-02"]
+
+[[feature]]
+id = "S-KRN-02"
+group = "Kernel facts"
+title = "Readable sysctls reviewed"
+need = "The sysctls a capability-mode process can still read are listed and reviewed; a new one fails the comparison."
+priority = "should"
+phase = 2
+implemented = "partial"
+built = "no"
+tested = "planned"
+planned_test = "oracle sysctl sweep compared with freebsd/sandbox/caprd-sysctls.json"
+where = ["freebsd/tests/capsicum-standalone/cap-oracle.c"]
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §10", "RT-01"]
+notes = "The sweep runs; the reviewed list is not committed."
+
+[[feature]]
+id = "S-KRN-03"
+group = "Kernel facts"
+title = "Kernel advisory check"
+need = "At start the browser compares the kernel with a list of security advisories (FreeBSD-SA-26:28.capsicum first) and warns on an unpatched kernel."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "release gate: kernel advisories addressed; oracle proc.sigqueue_other"
+source = ["helium-freebsd-security-port-spec.md §13.2", "plan/08-TESTING-AND-VERIFICATION.md §3", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R8"]
+
+[[feature]]
+id = "S-SHM-01"
+group = "Shared memory and descriptors"
+title = "Anonymous shared memory"
+need = "Shared memory is created with memfd_create and seals (SHM_ANON as fallback), never in a named namespace."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "oracle mem.shm_anon, mem.memfd_seal, mem.shm_named; functional suite"
+source = ["plan/06-SECURITY-MODEL.md §3.3", "plan/03-ARCHITECTURE.md §4.4", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R6"]
+
+[[feature]]
+id = "S-SHM-02"
+group = "Shared memory and descriptors"
+title = "Read-only memory stays read-only"
+need = "The browser limits a shared-memory descriptor's rights before passing it, so a renderer cannot map a read-only region writable."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: a renderer cannot mmap a passed read-only region writable; oracle mem.ro_twin"
+source = ["plan/06-SECURITY-MODEL.md §3.3", "plan/12-WORK-PLAN-AND-RED-TEAM.md §10"]
+
+[[feature]]
+id = "S-SHM-03"
+group = "Shared memory and descriptors"
+title = "Fonts through the browser"
+need = "Renderers get font files as descriptors from the font service; no font directory access and no LD_PRELOAD interceptor in production."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "functional suite: fonts including CJK and emoji render with the sandbox on"
+source = ["plan/03-ARCHITECTURE.md §4.3", "plan/03-ARCHITECTURE.md §4.5"]
+
+[[feature]]
+id = "S-SHM-04"
+group = "Shared memory and descriptors"
+title = "No shared socket directories"
+need = "Display and audio sockets are connected before lockdown; no confined process holds a directory where other programs' sockets live."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: no reach to shared socket directories; a renderer cannot connect to the X11 or Wayland socket"
+source = ["plan/03-ARCHITECTURE.md §4.3", "RT-06", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R15"]
+
+[[feature]]
+id = "S-SHM-05"
+group = "Shared memory and descriptors"
+title = "No persistence through caches"
+need = "The GPU shader cache is per session and owned by the browser, or off in a hardened mode."
+priority = "should"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: no persistence through caches"
+source = ["plan/06-SECURITY-MODEL.md §5", "RT-08"]
+
+[[feature]]
+id = "S-IPC-01"
+group = "Launcher and IPC"
+title = "Clean descriptors at launch"
+need = "The launcher limits the rights of descriptors it passes, and every child closes all others with closefrom before it runs."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "oracle fd.closefrom, fd.dev_fd_complete; sandbox suite allowlist diff"
+source = ["plan/06-SECURITY-MODEL.md §4", "plan/03-ARCHITECTURE.md §4.2"]
+
+[[feature]]
+id = "S-IPC-02"
+group = "Launcher and IPC"
+title = "Clean environment for children"
+need = "Each child process type gets an allowlisted environment: no LD_* variables in production, no secrets, no socket paths."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: children carry no secrets in their environment (procstat -e)"
+source = ["plan/06-SECURITY-MODEL.md §4", "RT-05"]
+
+[[feature]]
+id = "S-IPC-03"
+group = "Launcher and IPC"
+title = "IPC review"
+need = "Children receive only Mojo and shared-memory descriptors, identity comes from the channel, and the imported BSD IPC and process-host patches are reviewed."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/PATCH-MATRIX.md"]
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §4"]
+notes = "The patch matrix flags the files; no review is recorded."
+
+[[feature]]
+id = "S-IPC-04"
+group = "Launcher and IPC"
+title = "Helper programs launched cleanly"
+need = "Native-messaging hosts and xdg-open handlers, which the browser starts, follow the same descriptor and environment rules."
+priority = "should"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["not in the plan: found while building this matrix"]
+
+[[feature]]
+id = "S-IPC-05"
+group = "Launcher and IPC"
+title = "Fuzzing of FreeBSD-specific interfaces"
+need = "MojoLPM fuzzers cover the renderer-reachable interfaces that the FreeBSD patches add or change."
+priority = "should"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §6"]
+
+[[feature]]
+id = "S-PRC-01"
+group = "Other processes"
+title = "Utility, PDF, print and media processes"
+need = "Utility processes (PDF, print, data decoder, media) are confined like renderers, each with its own descriptor allowlist."
+priority = "must"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: every utility process of a class claimed sandboxed is in capability mode; one test per class"
+source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §5"]
+
+[[feature]]
+id = "S-PRC-02"
+group = "Other processes"
+title = "GPU process"
+need = "The GPU process is confined with pre-opened device nodes and a measured ioctl allowlist, or listed as unconfined with the NVIDIA residual risk published."
+priority = "must"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite per class; attacker hook in the GPU process; ktrace across workloads"
+source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R10"]
+
+[[feature]]
+id = "S-PRC-03"
+group = "Other processes"
+title = "Network process"
+need = "The network process is confined with directory capabilities, or its partial confinement is documented."
+priority = "must"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite per class; libnv and cap_net fuzz target in CI"
+source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §5", "RT-14"]
+
+[[feature]]
+id = "S-PRC-04"
+group = "Other processes"
+title = "Audio process"
+need = "The audio process holds a pre-opened /dev/dsp with an ioctl allowlist or a pre-connected sndio or PulseAudio socket, or is listed as a limitation."
+priority = "must"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite per class"
+source = ["plan/06-SECURITY-MODEL.md §5", "plan/03-ARCHITECTURE.md §4.2"]
+
+[[feature]]
+id = "S-PRC-05"
+group = "Other processes"
+title = "Widevine (CDM) process"
+need = "The Widevine process is confined, or runs unconfined only when the user opts in, with a warning."
+priority = "must"
+phase = 3
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/06-SECURITY-MODEL.md §5"]
+
+[[feature]]
+id = "S-PRC-06"
+group = "Other processes"
+title = "Browser process"
+need = "The browser process runs without root or SUID, is unconfined by design, and that risk is stated."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/pkg-plist"]
+source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §11"]
+
+[[feature]]
+id = "S-PRC-07"
+group = "Other processes"
+title = "No crash uploader or self-updater"
+need = "No crash handler uploads anything and no in-browser or SUID updater exists; updates come through pkg."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["patches/platform/beryllium-bsd-no-crashpad.patch"]
+tests = ["freebsd/tools/tests/test_helium_bsd_crashpad_calls.py", "freebsd/tools/helium-bsd-crashpad-calls"]
+evidence = "CI on every push"
+source = ["helium-freebsd-security-port-spec.md §11.3", "plan/03-ARCHITECTURE.md §4.2"]
+
+[[feature]]
+id = "S-PRC-08"
+group = "Other processes"
+title = "Authority matrix"
+need = "Every process class is either confined with tests or listed with its risk and an owner."
+priority = "must"
+phase = 3
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["plan/03-ARCHITECTURE.md"]
+source = ["plan/06-SECURITY-MODEL.md §5", "plan/03-ARCHITECTURE.md §4.2"]
+notes = "The target table exists in plan/03 section 4.2."
+
+[[feature]]
+id = "S-HRD-01"
+group = "Process hardening"
+title = "Children cannot be traced or gain privileges"
+need = "Each confined child disables tracing (PROC_TRACE_CTL) and sets no-new-privileges before cap_enter."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: ptrace of a child fails; oracle hard.trace_disable, hard.no_new_privs"
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §6"]
+
+[[feature]]
+id = "S-HRD-02"
+group = "Process hardening"
+title = "Browser cannot be traced"
+need = "The production browser disables tracing of itself."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: the browser process cannot be traced; oracle proc.ptrace_other"
+source = ["plan/06-SECURITY-MODEL.md §4", "RT-03"]
+
+[[feature]]
+id = "S-HRD-03"
+group = "Process hardening"
+title = "No forking, no core dumps"
+need = "Confined processes get RLIMIT_NPROC 1 and RLIMIT_CORE 0 at lockdown."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "sandbox suite: fork denied, no core dumps; oracle proc.fork_nproc1"
+where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+source = ["plan/06-SECURITY-MODEL.md §6", "RT-15"]
+notes = "The wrapper sets ulimit -c 0 for the whole browser; the per-process limits are not done."
+
+[[feature]]
+id = "S-HRD-04"
+group = "Process hardening"
+title = "W^X in children"
+need = "The launcher forbids writable and executable mappings in children where V8 and WebAssembly tolerate it."
+priority = "should"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "V8 and WebAssembly pages under enforcement; oracle hard.wxorx_after_exec"
+source = ["plan/06-SECURITY-MODEL.md §3.1", "RT-16"]
+
+[[feature]]
+id = "S-HRD-05"
+group = "Process hardening"
+title = "No signals to other processes"
+need = "Confined processes cannot signal or inspect unrelated processes, on kernels with the FreeBSD-SA-26:28 fix."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: signals to unrelated processes fail, including sigqueue; oracle proc.kill_other"
+source = ["helium-freebsd-security-port-spec.md §13.1", "plan/06-SECURITY-MODEL.md §6"]
+
+[[feature]]
+id = "S-RES-01"
+group = "Resource limits"
+title = "Limits per process type"
+need = "Each process type has measured memory and descriptor limits, kept with the workloads that justify them."
+priority = "should"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "resources suite: memory and descriptor tests"
+where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+source = ["helium-freebsd-security-port-spec.md §8.1", "plan/06-SECURITY-MODEL.md §7"]
+notes = "Only the imported single RLIMIT_DATA."
+
+[[feature]]
+id = "S-RES-02"
+group = "Resource limits"
+title = "Behaviour when resources run out"
+need = "Which limit fires and which process dies is recorded for CPU, memory and descriptor exhaustion, and the profile stays intact."
+priority = "should"
+phase = 4
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "resources suite: CPU, memory, descriptors, window.open storms, profile integrity check"
+source = ["helium-freebsd-security-port-spec.md §8.2", "plan/08-TESTING-AND-VERIFICATION.md §2.5"]
+
+[[feature]]
+id = "S-RES-03"
+group = "Resource limits"
+title = "rctl profiles"
+need = "Documented rctl rule sets for desktop, constrained and jail use; never installed automatically."
+priority = "later"
+phase = 4
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "resources suite in a jail with rctl"
+source = ["helium-freebsd-security-port-spec.md §8.2", "plan/06-SECURITY-MODEL.md §7"]
+
+[[feature]]
+id = "S-STA-01"
+group = "Sandbox status"
+title = "Browser refuses an unconfined renderer"
+need = "The browser reads each child's capability-mode flag from the kernel; a production renderer that is not confined gets no navigation and is killed."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: the browser refuses an unconfined renderer; oracle kernel_attestation"
+source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5", "RT-04"]
+
+[[feature]]
+id = "S-STA-02"
+group = "Sandbox status"
+title = "Honest sandbox claims"
+need = "Every place the browser says a process is sandboxed reflects what the kernel says."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "written"
+where = ["patches/security/beryllium-honest-gpu-sandbox-status.patch"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_gpu_sandbox_claim_matches_kernel"]
+evidence = "failed on the 15.1 package (claimed true), which led to the fix in 0.20.3.1; rerun pending"
+source = ["plan/06-SECURITY-MODEL.md §10", "RT-17"]
+notes = "Done for beryllium://gpu; beryllium://sandbox and the process-level flag remain."
+
+[[feature]]
+id = "S-STA-03"
+group = "Sandbox status"
+title = "FreeBSD sandbox status page"
+need = "beryllium://sandbox shows FreeBSD rows computed at runtime from the kernel."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: beryllium://sandbox matches procstat"
+source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5"]
+
+[[feature]]
+id = "S-STA-04"
+group = "Sandbox status"
+title = "Lockdown log"
+need = "One log line per process at lockdown: type, stage, result, error, number of unexpected descriptors; no URLs or paths."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: failure injection produces the expected line"
+source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.5"]
+
+[[feature]]
+id = "S-STA-05"
+group = "Sandbox status"
+title = "Published sandbox status"
+need = "Each release publishes which processes are confined and tested, configured but untested, or not confined."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["README.md", "freebsd/ports/www/beryllium/files/pkg-message.in"]
+source = ["helium-freebsd-security-port-spec.md §2.3", "plan/09-ROADMAP.md §9"]
+
+[[feature]]
+id = "S-STA-06"
+group = "Sandbox status"
+title = "Baseline of the stock Chromium"
+need = "The per-process sandbox state of the stock FreeBSD Chromium is recorded, as the comparison for Beryllium."
+priority = "must"
+phase = 0
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/tools/baseline-collect.sh", "freebsd/results/baseline-16.0-CURRENT-20261101.md"]
+source = ["helium-freebsd-security-port-spec.md §15", "plan/09-ROADMAP.md §2"]
+notes = "The machine part is recorded; the per-process part (with Chromium open) is not."
+
+[[feature]]
+id = "S-JAL-01"
+group = "Optional jail"
+title = "Whole-browser jail example"
+need = "Example configuration for running Beryllium in a jail (thin nullfs jail, ZFS profile dataset, minimal devfs, own user), with the display and network trade-offs documented."
+priority = "later"
+phase = 4
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "jail integration test (spec Phase 4)"
+source = ["helium-freebsd-security-port-spec.md §7.1", "plan/06-SECURITY-MODEL.md §8"]
+
+[[feature]]
+id = "S-JAL-02"
+group = "Optional jail"
+title = "Machine identifiers not linkable"
+need = "Host UUID, host id and host name readable in capability mode are randomised per jail or refused."
+priority = "later"
+phase = 4
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "sandbox suite: machine identifiers (RT-01)"
+source = ["plan/06-SECURITY-MODEL.md §8", "plan/07-PRIVACY-INVARIANTS-PLAN.md §4", "RT-01"]
+
+[[feature]]
+id = "S-JAL-03"
+group = "Optional jail"
+title = "No system-wide side effects"
+need = "The package installs no jail, rctl, MAC or /etc configuration and needs no root to run."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/pkg-plist"]
+source = ["helium-freebsd-security-port-spec.md §2.2", "helium-freebsd-security-port-spec.md §7.1"]
+notes = "The wrapper does require kern.ipc.shm_allow_removed=1, a system-wide setting the user makes; its risk is not yet analysed."
+
+[[feature]]
+id = "S-MAC-01"
+group = "MAC study"
+title = "mac_beryllium decision memo"
+need = "A memo decides whether a MAC module should narrow what capability-mode processes can reach (Unix sockets only, a sysctl allowlist, hidden processes), with cost and rollback."
+priority = "study"
+phase = 5
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/06-SECURITY-MODEL.md §9", "RT-02"]
+
+[[feature]]
+id = "S-MAC-02"
+group = "MAC study"
+title = "Kernel fuzzing in capability mode"
+need = "A syzkaller executor that calls cap_enter fuzzes the kernel surface confined processes can reach."
+priority = "study"
+phase = 5
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §6", "RT-02"]
+
+[[feature]]
+id = "S-SUP-01"
+group = "Supply chain and hardening"
+title = "Review of imported FreeBSD patches"
+need = "Each imported FreeBSD patch on a security-relevant path has a review record, and CI refuses an unreviewed change there."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "written"
+where = ["freebsd/tools/import-bsd-patches", "freebsd/ports/www/beryllium/BSD-PATCH-REVIEW.md"]
+tests = [".github/workflows/freebsd-checks.yml"]
+source = ["plan/08-TESTING-AND-VERIFICATION.md §3", "RT-10"]
+notes = "217 of 1,696 patches are on review paths; none reviewed yet; CI reports the debt without failing."
+
+[[feature]]
+id = "S-SUP-02"
+group = "Supply chain and hardening"
+title = "Allocator hardening and CFI"
+need = "Allocator and control-flow hardening flags are recorded per build; PartitionAlloc as malloc and BackupRefPtr enabled; CFI attempted."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/tools/gnargs-from-flags", "flags.freebsd.gn"]
+source = ["plan/06-SECURITY-MODEL.md §11", "RT-09"]
+notes = "Recorded, not enabled."
+
+[[feature]]
+id = "S-SUP-03"
+group = "Supply chain and hardening"
+title = "Binary hardening audit"
+need = "ASLR, stack protector, PIE and RELRO are on, and no diagnostics are weakened."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "build suite: readelf checks on the staged binary"
+source = ["helium-freebsd-security-port-spec.md §11.2"]
+
+[[feature]]
+id = "S-SUP-04"
+group = "Supply chain and hardening"
+title = "Base tarball cross-check"
+need = "The Chromium source tarball is cross-checked against Google's for each version."
+priority = "should"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/distinfo"]
+source = ["RT-10"]
+
+[[feature]]
+id = "S-SUP-05"
+group = "Supply chain and hardening"
+title = "Red team before each release"
+need = "The sandbox and privacy suites run for every Chromium update, and someone other than the author spends a week attacking each release."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["helium-freebsd-security-port-spec.md §14", "plan/12-WORK-PLAN-AND-RED-TEAM.md §6"]
+
+[[feature]]
+id = "S-DSP-01"
+group = "Display server risks"
+title = "GPU process and X11"
+need = "Measure whether the GPU process can present without its own X connection; otherwise publish that under X11 it is effectively unsandboxed, and recommend Wayland."
+priority = "must"
+phase = 3
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "sandbox suite: no input injection or capture on X11 from the GPU process"
+where = ["freebsd/ports/www/beryllium/files/pkg-message.in"]
+source = ["plan/06-SECURITY-MODEL.md §5", "RT-07"]
+notes = "Wayland is recommended in the package message and README; nothing is measured."
+
+[[feature]]
+id = "S-DSP-02"
+group = "Display server risks"
+title = "Residual risks published"
+need = "Release notes list what the sandbox does not cover: the unconfined browser process, kernel and driver bugs, readable machine identifiers, X11, hardening not enabled."
+priority = "must"
+phase = 6
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["README.md"]
+source = ["plan/06-SECURITY-MODEL.md §11", "helium-freebsd-security-port-spec.md §2.3"]
+
+# ---------------------------------------------------------------------------
+# P: privacy
+
+[[feature]]
+id = "P-SVC-01"
+group = "Online services"
+title = "Services off by default, Helium's servers never used"
+need = "Online services are off in a new profile and no setting or setup step sends anything to Helium's servers (services.helium.imput.net, helium.computer)."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "privacy capture through the setup page with its defaults accepted: no request to a Helium host"
+source = ["plan/01-PROJECT-CHARTER.md D3", "plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "helium/patches/helium/core/services-prefs.patch", "helium/patches/helium/core/onboarding-page.patch"]
+notes = "Not met in 0.20.3.1: Helium's default is helium.services.enabled=true with Helium's address, held back only until the user consents on the setup page. No Beryllium patch changes it. The idle privacy test passes because it skips the setup page."
+
+[[feature]]
+id = "P-SVC-02"
+group = "Online services"
+title = "Security components stay current"
+need = "Certificate revocation lists, Certificate Transparency logs and the uBlock component are updated from a source Beryllium controls."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "release gate; privacy suite with a hostile mock origin (bad packages rejected, no downgrade)"
+source = ["plan/10-RISKS-AND-OPEN-QUESTIONS.md R13", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q10", "plan/09-ROADMAP.md §9"]
+notes = "These components age in every installed copy until this is done."
+
+[[feature]]
+id = "P-SVC-03"
+group = "Online services"
+title = "Features that need hosted services"
+need = "!bangs, filter-list updates, spellcheck dictionaries and the extension proxy work again through services Beryllium hosts, with the user's consent."
+priority = "later"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "privacy capture scenarios: !bang search, uBlock asset update, extension install"
+source = ["plan/10-RISKS-AND-OPEN-QUESTIONS.md Q10", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R24", "plan/07-PRIVACY-INVARIANTS-PLAN.md §3"]
+
+[[feature]]
+id = "P-SVC-04"
+group = "Online services"
+title = "No crash report uploads, and the settings say so"
+need = "Nothing is uploaded after a crash, and Helium's crash-reporting setting is hidden or shown as unavailable on FreeBSD."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["patches/platform/beryllium-bsd-no-crashpad.patch"]
+tests = ["freebsd/tools/tests/test_helium_bsd_crashpad_calls.py"]
+evidence = "CI on every push (no upload path compiled)"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "helium/patches/helium/core/crash-reporting-prefs.patch"]
+notes = "The setting is still shown and does nothing."
+
+[[feature]]
+id = "P-SVC-05"
+group = "Online services"
+title = "No browser update checks"
+need = "The browser never contacts an update server; pkg is the update channel, and the settings and setup text say so."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "privacy capture: no request to updates.helium.computer in any scenario"
+where = ["helium/patches/helium/core/add-updater-preference.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3"]
+notes = "Helium's updater is built only for macOS and Windows; the text about updates is not changed yet."
+
+[[feature]]
+id = "P-NET-01"
+group = "Network silence"
+title = "Quiet when idle"
+need = "A fresh browser left idle, and then showing a local page, contacts no outside host."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tests/browser/tests/test_60_privacy.py::test_idle_browser_contacts_no_one",
+         "freebsd/tests/browser/tests/test_60_privacy.py::test_local_page_contacts_no_one"]
+evidence = "15.1 package, 3 Nov 2026; the test skips the setup page and sees only HTTP(S) through a proxy (not DNS or UDP)"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6"]
+
+[[feature]]
+id = "P-NET-02"
+group = "Network silence"
+title = "Full network capture against a baseline"
+need = "Nine scenarios (setup with defaults, 5 min idle, navigation, filter update, extension install, !bang search, component update, crash, private window) run in a capture jail, and every destination is compared with the last release."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "privacy suite: VNET jail with pf and tcpdump, (scenario, host, port) tuples diffed with the baseline"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6", "plan/08-TESTING-AND-VERIFICATION.md §2.3", "helium-freebsd-security-port-spec.md §13.4"]
+
+[[feature]]
+id = "P-NET-03"
+group = "Network silence"
+title = "Google only for extension installs"
+need = "With the extension proxy off, the only outside destination is clients2.google.com, and only when installing an extension; the user is told."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "privacy capture: extension install scenario"
+where = ["helium/patches/helium/core/proxy-extension-downloads.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3", "plan/07-PRIVACY-INVARIANTS-PLAN.md §6"]
+notes = "Behaviour inherited; the disclosure is not written."
+
+[[feature]]
+id = "P-NET-04"
+group = "Network silence"
+title = "Privacy logs without content"
+need = "Privacy test logs hold only host and port, never page content."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "no"
+tested = "passing"
+where = ["freebsd/tests/browser/berytest/servers.py"]
+tests = ["freebsd/tests/browser/tests/test_60_privacy.py"]
+evidence = "15.1 package, 3 Nov 2026"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6", "plan/08-TESTING-AND-VERIFICATION.md §1"]
+
+[[feature]]
+id = "P-BLD-01"
+group = "Build-time guards"
+title = "Helium's privacy build flags kept"
+need = "The 13 privacy build keys (no Google API keys, Safe Browsing off, no reporting, mDNS, remoting or field trials) keep Helium's values; Beryllium's flags and port options cannot change them."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/tools/gnargs-from-flags", "freebsd/privacy/gn-privacy-keys.json"]
+tests = ["freebsd/tools/tests/test_gnargs.py"]
+evidence = "CI on every push, on the repository and on the port's copy"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §2", "helium-freebsd-security-port-spec.md §10.1"]
+
+[[feature]]
+id = "P-BLD-02"
+group = "Build-time guards"
+title = "Every Helium patch applied"
+need = "Every patch in Helium's series applies, and Beryllium's refreshed copies keep each one's privacy intent."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["patches/helium-refresh", "freebsd/tools/sync-port"]
+evidence = "the port build stops on any failed patch (seven Poudriere builds); the ten refreshed copies were reviewed by hand"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.3", "helium-freebsd-security-port-spec.md §10.2"]
+notes = "Nothing yet checks automatically that a refreshed patch still makes upstream's privacy change."
+
+[[feature]]
+id = "P-BLD-03"
+group = "Build-time guards"
+title = "Flag and configuration checks between releases"
+need = "Helium's own flag and configuration validators run in CI, and a privacy-key change from one release to the next fails unless the changelog explains it."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §5"]
+
+[[feature]]
+id = "P-BLD-04"
+group = "Build-time guards"
+title = "Only Beryllium's policy directory"
+need = "The browser reads managed policies only from /usr/local/etc/beryllium/policies/managed, and no other system policy directory."
+priority = "should"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "package check: no other policy directory referenced; functional check that a policy there applies"
+where = ["patches/platform/beryllium-paths-and-branding.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §5"]
+
+[[feature]]
+id = "P-BLD-05"
+group = "Build-time guards"
+title = "Privacy inventory document"
+need = "freebsd/PRIVACY-INVARIANTS.md lists every network behaviour, endpoint, preference default and its test, with one row per removed Google service."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §1", "helium-freebsd-security-port-spec.md §10.1"]
+
+[[feature]]
+id = "P-FPR-01"
+group = "Fingerprinting"
+title = "Presents as Linux x86_64"
+need = "User-Agent, client hints and navigator.platform (window and worker) say Linux x86_64, never FreeBSD."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "fingerprint page in window and worker, compared with the baseline every release"
+where = ["freebsd/ports/www/beryllium/files/patch-components_embedder__support_user__agent__utils.cc"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §4a", "RT-13"]
+notes = "The User-Agent and client hints do; two code paths can still reveal FreeBSD (the uname() fallback in navigator.platform and the OS string builder) and need patches."
+
+[[feature]]
+id = "P-FPR-02"
+group = "Fingerprinting"
+title = "No local address through WebRTC"
+need = "WebRTC exposes only the public interface and mDNS names, never local addresses."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "ICE candidate probe on the fingerprint page"
+where = ["helium/patches/helium/core/webrtc-default-handling-policy.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §4a", "RT-13"]
+
+[[feature]]
+id = "P-FPR-03"
+group = "Fingerprinting"
+title = "Fonts and TCP signature"
+need = "Installed fonts stay close to a common Linux setup; the FreeBSD TCP signature is documented with optional pf settings, not claimed as solved."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "font probe on the fingerprint page"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §4a", "RT-13"]
+
+[[feature]]
+id = "P-FPR-04"
+group = "Fingerprinting"
+title = "Fingerprinting noise"
+need = "Canvas, WebAudio and hardwareConcurrency carry per-site noise by default, with a setting and per-site exceptions."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/helium/core/noise/core.patch", "helium/patches/helium/core/noise/canvas.patch"]
+source = ["README.md"]
+
+[[feature]]
+id = "P-FPR-05"
+group = "Fingerprinting"
+title = "Optional anti-fingerprinting switches"
+need = "Flags for client-rect noise, generic WebGL renderer info, reduced system info, no client hints, no TLS GREASE and referrer trimming work."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/ungoogled-chromium/add-flag-to-reduce-system-info.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-FPR-06"
+group = "Fingerprinting"
+title = "Looks like a common browser"
+need = "The browser brand list says Google Chrome and Accept-Language is reduced."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "fingerprint page: client hints and headers"
+where = ["helium/patches/helium/core/spoof-chrome-ua-brand.patch", "helium/patches/helium/core/reduce-accept-language-headers.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-01"
+group = "Inherited protections"
+title = "uBlock Origin built in"
+need = "Helium's uBlock Origin is installed as a built-in component with its bundled filter lists, active from the first start, and blocks CNAME-cloaked trackers."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "component present and active; a blocking test page; a crafted CNAME domain"
+where = ["helium/patches/helium/core/ublock-install-as-component.patch", "helium/patches/helium/core/ublock-dns-uncloaking.patch"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §8", "plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+notes = "Filter lists are not updated while services are off (P-SVC-02, P-SVC-03)."
+
+[[feature]]
+id = "P-HEL-02"
+group = "Inherited protections"
+title = "Google background services removed"
+need = "No GCM, Google sign-in, domain reliability, network time, field trials, RLZ, update pings or similar background traffic; leftover Google URLs are made unreachable."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["helium/patches/ungoogled-chromium/disable-gcm.patch", "helium/patches/ungoogled-chromium/block-trk-and-subdomains.patch"]
+tests = ["freebsd/tests/browser/tests/test_60_privacy.py"]
+evidence = "idle and local page only, 15.1 package, 3 Nov 2026"
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3"]
+
+[[feature]]
+id = "P-HEL-03"
+group = "Inherited protections"
+title = "Safe Browsing off"
+need = "No Google reputation lookups or reports; the trade-off is written up for users."
+priority = "must"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "passing"
+tests = ["freebsd/tools/tests/test_gnargs.py"]
+evidence = "build flag safe_browsing_mode=0 checked in CI"
+source = ["helium-freebsd-security-port-spec.md §10.1"]
+notes = "The trade-off write-up is not done."
+
+[[feature]]
+id = "P-HEL-04"
+group = "Inherited protections"
+title = "Ad, tracking and AI features off"
+need = "Privacy Sandbox, Topics, Protected Audience, AI features and history clusters are disabled."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/ungoogled-chromium/disable-privacy-sandbox.patch", "helium/patches/helium/core/disable-ad-topics-and-etc.patch", "helium/patches/ungoogled-chromium/disable-ai.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-05"
+group = "Inherited protections"
+title = "Private defaults"
+need = "No preloading or search suggestions, third-party cookies blocked, password manager and autofill off, no profile import on first start."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/inox-patchset/modify-default-prefs.patch", "helium/patches/helium/core/disable-password-manager.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-06"
+group = "Inherited protections"
+title = "HTTPS-First and Certificate Transparency"
+need = "HTTPS-First is on and Certificate Transparency is enforced."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/helium/core/prefer-https-by-default.patch", "helium/patches/ungoogled-chromium/enable-certificate-transparency-and-add-flag.patch"]
+source = ["helium/patches/series"]
+notes = "The CT log list ages until P-SVC-02 is done."
+
+[[feature]]
+id = "P-HEL-07"
+group = "Inherited protections"
+title = "Network privacy options"
+need = "Encrypted Client Hello, secure DNS presets the user chooses, and the Global Privacy Control signal (off by default) work."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/helium/core/network/disable-ech-flag.patch", "helium/patches/helium/core/network/dns-providers.patch", "helium/patches/helium/core/network/global-privacy-control-pref.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-08"
+group = "Inherited protections"
+title = "Fewer identity APIs"
+need = "WebOTP, email verification and digital credentials are off; the FedCM sign-in bubble is restricted."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/helium/core/disable-non-standard-auth-features.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-09"
+group = "Inherited protections"
+title = "Private search defaults"
+need = "DuckDuckGo is the default search engine, one engine list for every region, and no engine icons fetched from the network."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["helium/patches/helium/core/search/engine-defaults.patch"]
+source = ["helium/patches/series"]
+
+[[feature]]
+id = "P-HEL-10"
+group = "Inherited protections"
+title = "Private windows hard to detect"
+need = "Private windows get the same storage quota as normal ones, and a flag can clear data on exit."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "privacy capture: private window scenario"
+where = ["helium/patches/helium/core/increase-incognito-storage-quota.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §6"]
+
+[[feature]]
+id = "P-HEL-11"
+group = "Inherited protections"
+title = "Sync only to a provider the user sets"
+need = "Encrypted sync works only with a provider the user configures; there is no default provider and no Google sync."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "Phase 1 check: no default provider URL; no sync traffic in the capture"
+where = ["helium/patches/helium/core/sync/disable-google-backed-sync-integrations.patch"]
+source = ["plan/07-PRIVACY-INVARIANTS-PLAN.md §3"]
+
+# ---------------------------------------------------------------------------
+# B: build, packaging and install
+
+[[feature]]
+id = "B-PRT-01"
+group = "Port and build"
+title = "Poudriere port"
+need = "www/beryllium builds in Poudriere, applying the FreeBSD patch set, Helium's series and Beryllium's patches in a fixed order."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/ports/www/beryllium/Makefile", "patches/series"]
+tests = ["freebsd/tools/tests/test_port_makefile.py"]
+evidence = "owner's Poudriere build for 16.0-CURRENT, 3 Nov 2026 (the released package)"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §1", "plan/05-PATCH-STRATEGY.md §3"]
+
+[[feature]]
+id = "B-PRT-02"
+group = "Port and build"
+title = "Pinned sources and port inputs in sync"
+need = "Chromium, Helium and every dependency are pinned by hash, Helium matches the submodule, and the port's copy of Beryllium's inputs matches the repository."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/ports/www/beryllium/distinfo", "freebsd/tools/sync-port"]
+tests = [".github/workflows/freebsd-checks.yml"]
+evidence = "sync-port --check in CI on every push"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §2", "RT-10"]
+
+[[feature]]
+id = "B-PRT-03"
+group = "Port and build"
+title = "Generated build arguments"
+need = "GN arguments are generated from Helium's flags, Beryllium's FreeBSD flags and the port options."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/tools/gnargs-from-flags", "flags.freebsd.gn"]
+tests = ["freebsd/tools/tests/test_gnargs.py"]
+evidence = "CI on every push"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §4"]
+
+[[feature]]
+id = "B-PRT-04"
+group = "Port and build"
+title = "FreeBSD patch import with provenance"
+need = "The FreeBSD Chromium patch set is imported by a tool that records where it came from."
+priority = "must"
+phase = 0
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/tools/import-bsd-patches", "freebsd/ports/www/beryllium/files/IMPORTED-FROM"]
+source = ["plan/09-ROADMAP.md §2", "plan/11-MAINTENANCE-AND-RELEASE.md §3"]
+
+[[feature]]
+id = "B-PRT-05"
+group = "Port and build"
+title = "Conflicts between patch layers handled"
+need = "Helium patches that clash with FreeBSD context are refreshed copies, and a stale refresh fails CI; the three-layer conflict matrix is kept."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["patches/helium-refresh", "freebsd/PATCH-MATRIX.md"]
+tests = ["freebsd/tools/tests/test_patch_matrix.py"]
+evidence = "CI on every push"
+source = ["plan/05-PATCH-STRATEGY.md §7a", "plan/09-ROADMAP.md §2"]
+
+[[feature]]
+id = "B-PRT-06"
+group = "Port and build"
+title = "Helium code checked for FreeBSD"
+need = "CI fails when Helium adds a Linux-only condition or a Crashpad call that FreeBSD has not been reviewed for."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/tools/helium-linux-conditions", "freebsd/helium-linux-conditions.json", "freebsd/tools/helium-bsd-crashpad-calls"]
+tests = ["freebsd/tools/tests/test_helium_linux_conditions.py", "freebsd/tools/tests/test_helium_bsd_crashpad_calls.py"]
+evidence = "CI on every push"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "B-PRT-07"
+group = "Port and build"
+title = "Versioning"
+need = "The version is Helium's version plus Beryllium's revision (0.20.3.1); a new build raises the revision so pkg sees an update."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["revision.txt", "freebsd/tools/sync-port"]
+tests = [".github/workflows/freebsd-checks.yml"]
+evidence = "sync-port --check in CI"
+source = ["plan/01-PROJECT-CHARTER.md D7"]
+
+[[feature]]
+id = "B-PRT-08"
+group = "Port and build"
+title = "Builds for FreeBSD 14 and 15"
+need = "The port builds cleanly in 14.x and 15.x jails."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "manual"
+where = ["freebsd/ports/README.md"]
+evidence = "15.1 built 3 Nov 2026 (before the fixes in 0.20.3.1); 14.x never built"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §6", "plan/08-TESTING-AND-VERIFICATION.md §3"]
+
+[[feature]]
+id = "B-PRT-09"
+group = "Port and build"
+title = "Build checks"
+need = "Patches apply without fuzz; portlint, check-plist and stage-qa pass; the build fails on a Linux binary in the toolchain."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "build suite (freebsd/tests/build/)"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.6", "plan/04-BUILD-AND-PORTING-PLAN.md §3", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R20"]
+
+[[feature]]
+id = "B-PRT-10"
+group = "Port and build"
+title = "Build manifest"
+need = "Each build records the Beryllium, Helium and Chromium commits, GN arguments, compiler and linker versions, and patch and distfile hashes."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/tools/build-manifest"]
+source = ["helium-freebsd-security-port-spec.md §11.2", "plan/08-TESTING-AND-VERIFICATION.md §2.6"]
+notes = "Missing: the Beryllium commit, compiler versions, distfile hashes."
+
+[[feature]]
+id = "B-PRT-11"
+group = "Port and build"
+title = "Development package"
+need = "beryllium-devel has its own name, conflicts with the production package, and is the only build where the sandbox may fail open."
+priority = "must"
+phase = 2
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/ports/www/beryllium-devel/Makefile"]
+source = ["plan/01-PROJECT-CHARTER.md D5", "plan/04-BUILD-AND-PORTING-PLAN.md §1"]
+notes = "Only renames today."
+
+[[feature]]
+id = "B-PRT-12"
+group = "Port and build"
+title = "Reproducible builds"
+need = "Two builders produce the same package from the same source."
+priority = "later"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.6"]
+
+[[feature]]
+id = "B-PKG-01"
+group = "Package and install"
+title = "Complete package"
+need = "The packing list is complete: binaries, resources, icons 16 to 256 px, desktop file, man page."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "passing"
+where = ["freebsd/ports/www/beryllium/pkg-plist"]
+tests = ["freebsd/tools/tests/test_branding.py"]
+evidence = "Poudriere stage for the released package; CI checks the icon entries"
+source = ["helium-freebsd-security-port-spec.md §11.1"]
+
+[[feature]]
+id = "B-PKG-02"
+group = "Package and install"
+title = "Launcher"
+need = "The beryllium wrapper checks kern.ipc.shm_allow_removed, turns off core dumps and adds no sandbox switches."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+evidence = "owner, 0.20.3.1, 4 Nov 2026"
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §7"]
+
+[[feature]]
+id = "B-PKG-03"
+group = "Package and install"
+title = "Package message"
+need = "pkg-message states the sandbox status, the update channel, kernel requirements and advisories, Wayland versus X11, the services situation and how to report bugs."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "v0.20.3.1-1"
+tested = "none"
+where = ["freebsd/ports/www/beryllium/files/pkg-message.in"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §7"]
+notes = "Lacks advisories and bug reporting; its services line is wrong (P-SVC-01)."
+
+[[feature]]
+id = "B-PKG-04"
+group = "Package and install"
+title = "Installer"
+need = "install.sh installs the release package for the machine's FreeBSD version after a SHA-256 check, or builds from source, and can remove Beryllium; --dry-run changes nothing."
+priority = "must"
+phase = 6
+implemented = "done"
+built = "no"
+tested = "passing"
+where = ["install.sh"]
+tests = ["freebsd/tools/tests/test_install_sh.py"]
+evidence = "CI with stand-ins; owner's dry run against the v0.20.3.1-1 release, 4 Nov 2026"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "B-PKG-05"
+group = "Package and install"
+title = "Install, upgrade and remove cleanly"
+need = "The package installs, upgrades to a newer revision and removes without leftovers, keeping the user's profile."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "v0.20.3.1-1"
+tested = "planned"
+planned_test = "on a test machine: install, upgrade to the next revision, pkg delete, check for leftovers"
+where = ["freebsd/ports/www/beryllium/pkg-plist"]
+source = ["plan/04-BUILD-AND-PORTING-PLAN.md §8"]
+notes = "Install verified; an upgrade needs a second release."
+
+[[feature]]
+id = "B-PKG-06"
+group = "Package and install"
+title = "Packages for 14.x and 15.x"
+need = "Release packages are published for the supported stable branches, not only 16.0-CURRENT."
+priority = "must"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/01-PROJECT-CHARTER.md D6", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q4"]
+
+[[feature]]
+id = "B-PKG-07"
+group = "Package and install"
+title = "Signed package repository"
+need = "Packages come from a signed pkg repository, with the key kept off the build machine; pkg upgrade then updates Beryllium."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §5", "helium-freebsd-security-port-spec.md §11.3"]
+notes = "Today: SHA256SUMS over HTTPS, checked by install.sh."
+
+[[feature]]
+id = "B-PKG-08"
+group = "Package and install"
+title = "Stale build warning"
+need = "A build that is too old tells the user to update."
+priority = "should"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §1", "RT-11"]
+
+[[feature]]
+id = "B-PKG-09"
+group = "Package and install"
+title = "Separate debug symbols"
+need = "Debug symbols ship separately (a -dbg package or archive), not in the main package."
+priority = "should"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §5"]
+notes = "The SYMBOLS option keeps symbols in the main package today."
+
+[[feature]]
+id = "B-PKG-10"
+group = "Package and install"
+title = "In the FreeBSD ports tree"
+need = "The port is offered to the FreeBSD ports tree after the renderer sandbox is done."
+priority = "later"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md Q7"]
+
+# ---------------------------------------------------------------------------
+# R: testing, release and maintenance
+
+[[feature]]
+id = "R-TST-01"
+group = "Test suites"
+title = "Browser test suite"
+need = "freebsd/tests/browser drives the installed browser in throwaway profiles and writes a report users can attach to a bug."
+priority = "must"
+phase = 1
+implemented = "done"
+built = "no"
+tested = "passing"
+where = ["freebsd/tests/browser/run"]
+tests = [".github/workflows/freebsd-checks.yml"]
+evidence = "harness runs in CI against Chrome; used on the owner's machine 3-4 Nov 2026"
+source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "R-TST-02"
+group = "Test suites"
+title = "Sandbox suite"
+need = "The sandbox tests (08 section 2.2) run against each build and turn every S row's planned test into a real one."
+priority = "must"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.2"]
+
+[[feature]]
+id = "R-TST-03"
+group = "Test suites"
+title = "Functional coverage"
+need = "Every functional item in plan/08 section 2.4 has a test, and the functional tests also run with the sandbox off in the devel package."
+priority = "should"
+phase = 2
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/tests/browser/tests"]
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+
+[[feature]]
+id = "R-TST-04"
+group = "Test suites"
+title = "Resource suite"
+need = "The resource tests (08 section 2.5) measure limits and exhaustion."
+priority = "should"
+phase = 2
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §2.5"]
+
+[[feature]]
+id = "R-TST-05"
+group = "Test suites"
+title = "Linux CI"
+need = "CI checks build arguments, port sync, Helium drift, review debt, shell scripts, the browser harness and this matrix on every push, with actions pinned by commit."
+priority = "must"
+phase = 6
+implemented = "done"
+built = "no"
+tested = "passing"
+where = [".github/workflows/freebsd-checks.yml"]
+tests = ["freebsd/tools/tests/test_feature_matrix.py"]
+evidence = "GitHub Actions on every push"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §4", "RT-10"]
+
+[[feature]]
+id = "R-TST-06"
+group = "Test suites"
+title = "FreeBSD test machines"
+need = "Self-hosted FreeBSD CI with Poudriere, and bhyve guests for 14.x and 15.x with Xorg and Wayland desktops."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/08-TESTING-AND-VERIFICATION.md §4"]
+
+[[feature]]
+id = "R-REL-01"
+group = "Releases"
+title = "Publishing releases"
+need = "publish-release names packages per FreeBSD version, writes SHA256SUMS and notes naming the source commit, and creates the GitHub release."
+priority = "must"
+phase = 6
+implemented = "done"
+built = "no"
+tested = "passing"
+where = ["freebsd/tools/publish-release"]
+tests = ["freebsd/tools/tests/test_install_sh.py::test_dry_run_layout_and_notes"]
+evidence = "v0.20.3.1-1 published 4 Nov 2026"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §3"]
+
+[[feature]]
+id = "R-REL-02"
+group = "Releases"
+title = "Release notes and changelog"
+need = "Each release has a changelog entry and notes with the Chromium security fixes it carries, sandbox and privacy changes, and how far it lags upstream."
+priority = "must"
+phase = 6
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["freebsd/tools/publish-release"]
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §1", "plan/11-MAINTENANCE-AND-RELEASE.md §3"]
+notes = "Notes link the README; there is no changelog."
+
+[[feature]]
+id = "R-REL-03"
+group = "Releases"
+title = "Licence and component manifest"
+need = "Each release ships a licence and component manifest."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "planned"
+planned_test = "licence manifest check in the release gate"
+source = ["helium-freebsd-security-port-spec.md §11.3", "plan/08-TESTING-AND-VERIFICATION.md §3"]
+
+[[feature]]
+id = "R-REL-04"
+group = "Releases"
+title = "Security fixes within 72 hours"
+need = "A package follows each Helium security release within 72 hours, measured, for a month before the first public release."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §1", "plan/09-ROADMAP.md §9", "RT-11"]
+
+[[feature]]
+id = "R-REL-05"
+group = "Releases"
+title = "Update procedure"
+need = "A written procedure takes Beryllium to a new Helium and Chromium release, including re-importing the FreeBSD patches, and has been run on a newer tag."
+priority = "must"
+phase = 6
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["plan/11-MAINTENANCE-AND-RELEASE.md", "freebsd/tools/import-bsd-patches"]
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §3", "plan/05-PATCH-STRATEGY.md §7"]
+
+[[feature]]
+id = "R-REL-06"
+group = "Releases"
+title = "Security policy and advisories"
+need = "SECURITY.md (supported versions, private reporting, response times) and freebsd/ADVISORIES.md (kernel advisories the browser checks) exist."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §4", "plan/11-MAINTENANCE-AND-RELEASE.md §6"]
+
+[[feature]]
+id = "R-REL-07"
+group = "Releases"
+title = "Handover test"
+need = "Someone other than the author follows the written procedure to a signed package."
+priority = "must"
+phase = 6
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §7", "plan/09-ROADMAP.md §9"]
+
+[[feature]]
+id = "R-DOC-01"
+group = "Documentation"
+title = "User documentation"
+need = "README covers status, install, the per-process sandbox table, known issues and limitations (crash reporting, updates, Widevine, X11, services)."
+priority = "must"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "none"
+where = ["README.md", "freebsd/tests/browser/README.md"]
+source = ["plan/09-ROADMAP.md §3"]
+notes = "Known limitations cover WebGPU and NVIDIA only."
+
+[[feature]]
+id = "R-DOC-02"
+group = "Documentation"
+title = "Build guide"
+need = "A step-by-step Poudriere guide another person can follow."
+priority = "must"
+phase = 6
+implemented = "done"
+built = "no"
+tested = "manual"
+where = ["freebsd/ports/README.md"]
+evidence = "followed by the owner for the 15.1 and 16.0-CURRENT builds"
+source = ["plan/11-MAINTENANCE-AND-RELEASE.md §5"]
+
+[[feature]]
+id = "R-DOC-03"
+group = "Documentation"
+title = "Upstream bug reports"
+need = "Problems that also affect the stock FreeBSD Chromium are reported to its maintainers (first: the NVIDIA video crash)."
+priority = "should"
+phase = 1
+implemented = "todo"
+built = "no"
+tested = "none"
+source = ["plan/05-PATCH-STRATEGY.md §8", "plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]

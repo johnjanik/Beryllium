@@ -34,6 +34,8 @@ jobs:
         run: ./freebsd/tools/helium-linux-conditions
       - name: Helium Crashpad calls defined on FreeBSD
         run: ./freebsd/tools/helium-bsd-crashpad-calls
+      - name: Feature matrix backed by the repository and up to date
+        run: ./freebsd/tools/feature-matrix --check
       - name: Privacy key check on the port's own copy
         run: >
           ./freebsd/tools/gnargs-from-flags check

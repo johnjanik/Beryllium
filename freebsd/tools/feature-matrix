@@ -64,7 +64,7 @@ LEGEND = """\
 | Phase | roadmap phase (plan/09): 0 baseline, 1 native build, 2 Capsicum renderer, 3 other processes, 4 jail and resources, 5 MAC study, 6 release engineering |
 | Implemented | **done**; **partial**; **todo**; **inherited**: Chromium or Helium code Beryllium keeps as it is; **disabled**: present but off in Beryllium (the row says why) |
 | Built | the release whose package contains it, or **no** |
-| Tested | **passing** / **failing**: an automated test ran on FreeBSD (Evidence says where and when); **manual**: checked by hand; **written**: the test exists but has not run on FreeBSD; **planned**: the plan names a test, not written yet; **none**: no test planned |
+| Tested | **passing** / **failing**: the test's latest recorded run on FreeBSD (Evidence names the build, machine and date); **manual**: checked by hand (Evidence); **written**: the test exists, with no passing run recorded on the current release; **planned**: the plan names a test, not written yet; **none**: no test planned |
 """
 
 

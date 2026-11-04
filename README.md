@@ -33,7 +33,7 @@ Current release: **Beryllium 0.20.3.1**, based on Chromium 156.0.8078.79.
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
 - **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland.
 - **Works:** browsing; video playback, including YouTube; WebGL; the toolbar in all of Helium's layouts; Beryllium's own name, icons, `beryllium://` pages and profile folder.
-- **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server (test suite, `privacy` group).
+- **Privacy check:** a fresh browser, idle and showing a local page before the setup page is completed, contacts no outside server (test suite, `privacy` group).
 - **Not yet:** any process sandbox; WebGPU (no adapter is found).
 
 ### Sandbox status of this release
@@ -93,9 +93,14 @@ set it, and the launcher will not start the browser without it.
 - Wayland is recommended. Under X11, any program in your session can read
   input from and inject input into other windows.
 - Online services (extension proxy, `!bangs` list, filter-list and
-  component updates, dictionaries) are off by default, because the project
-  runs no servers for them yet. What that changes for each feature is in
-  [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
+  component updates, dictionaries) stay off until you finish the setup page
+  (`beryllium://setup`), which asks whether to use them. **In this release,
+  allowing them there sends those requests to Helium's servers**, because
+  Beryllium runs no servers of its own yet. To keep them off, decline them
+  on the setup page, or turn them off later in Settings. Turning them off by
+  default, and never using Helium's servers, is the first open privacy item
+  (`P-SVC-01` in the [feature matrix](plan/13-FEATURE-MATRIX.md)). What
+  each service does is in [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
 - Managed policies go in `/usr/local/etc/beryllium/policies/managed/`.
 
 ### Known issues
@@ -168,9 +173,10 @@ From Helium's open-source patch set, Beryllium keeps:
 
 What differs:
 
-- Beryllium does not use Helium's service endpoints; its online services
-  are off until Beryllium hosts its own instance of the open-source
-  services.
+- Beryllium is not meant to use Helium's service endpoints, and will host
+  its own instance of the open-source services. In this release that is not
+  enforced yet: see the online services note under
+  [Using Beryllium](#using-beryllium).
 - Updates come through `pkg`.
 - Crash reports are never uploaded: there is no crash reporter on FreeBSD.
 
@@ -198,7 +204,9 @@ What differs:
 | 5. MAC module study | Decision memo, prototype if justified | planned |
 | 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite) |
 
-Details are in the [roadmap](plan/09-ROADMAP.md) and the rest of
+Every feature the project must implement, build and test, with its status,
+is in the [feature matrix](plan/13-FEATURE-MATRIX.md). Details are in the
+[roadmap](plan/09-ROADMAP.md) and the rest of
 [`plan/`](plan/00-INDEX.md); the engineering specification is
 [helium-freebsd-security-port-spec.md](helium-freebsd-security-port-spec.md).
 

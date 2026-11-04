@@ -3,7 +3,7 @@
 **Project:** Beryllium, an independent privacy-focused browser built natively for FreeBSD from code derived from the Helium browser, with a FreeBSD security model (Capsicum renderer confinement, optional jails, resource controls, MAC module study) and the inherited privacy features preserved. Beryllium is not affiliated with Helium.
 **Repository:** https://github.com/johnjanik/Beryllium (standalone platform repository; the upstream code is a pinned git submodule from https://github.com/imputnet/helium, currently tag `0.20.3`, Chromium 156.0.8078.79)
 **Spec:** [helium-freebsd-security-port-spec.md](../helium-freebsd-security-port-spec.md) (the engineering specification these documents implement)
-**Snapshot date:** 18 October 2026, with facts re-checked and owner decisions recorded on 1 November 2026 (see document 12). No browser code has been written; these are plans.
+**Snapshot date:** 18 October 2026, with facts re-checked and owner decisions recorded on 1 November 2026 (see document 12). Since then the port builds and runs: release v0.20.3.1-1 (4 November 2026) is published, and document 13 tracks what is implemented, built and tested for every feature.
 
 ## Reading order
 
@@ -21,6 +21,7 @@
 | 10 | [Risks and open questions](10-RISKS-AND-OPEN-QUESTIONS.md) | 22 risks with triggers and mitigations, 9 decisions for the project owner, facts to re-verify on day one |
 | 11 | [Maintenance and release](11-MAINTENANCE-AND-RELEASE.md) | Cadence driven by three upstream clocks, roles, the per-release procedure, advisory checklist, package distribution, security policy, the handover test |
 | 12 | [Work plan and red-team review](12-WORK-PLAN-AND-RED-TEAM.md) | Facts re-checked on 1 November 2026, sprint plan split between cloud sessions and the FreeBSD machine, amendments to documents 01 to 11, 15 red-team findings with evidence and tests, the probe catalogue and attacker payload hook |
+| 13 | [Feature matrix](13-FEATURE-MATRIX.md) | Every functional, privacy, security, build and release feature with its priority, phase, and implement, build and test status; generated from `feature-matrix.toml` by `freebsd/tools/feature-matrix`, which CI uses to reject claims the repository cannot back |
 
 ## The findings that shape everything else
 
@@ -29,7 +30,7 @@
 3. **Versions line up.** On 1 November 2026 the pin is Helium 0.20.3 on Chromium 156.0.8078.79 and FreeBSD's `www/chromium` is at 156.0.8078.47_1, so the first BSD import is a copy of the FreeBSD set plus point-release fixes. (At the 18 October snapshot the pin was 0.19.4 on 155 and FreeBSD was at 154.)
 4. **Helium's tooling already runs inside a FreeBSD port** (`www/ungoogled-chromium` proves it) but that port's hand-copied patch set and flags are why it lags three majors. Beryllium generates its GN arguments and imports the BSD set mechanically.
 5. **Upstream Helium will not carry a FreeBSD platform** (issue 773 closed as not planned). The owner decided on 1 November 2026 that Beryllium is an independent project that does not associate itself with Helium: own name, no use of Helium's service endpoints, no upstream contributions planned.
-6. **Privacy differences:** no in-app update checks (not compiled on BSD; `pkg` updates), no crash uploads (Crashpad never starts on BSD), and the services switch off by default until Beryllium hosts its own services instance (document 07 section 3 lists the consequences). The rest of the inherited privacy posture carries over unchanged.
+6. **Privacy differences:** no in-app update checks (not compiled on BSD; `pkg` updates), no crash uploads (Crashpad never starts on BSD), and the services switch off by default until Beryllium hosts its own services instance (document 07 section 3 lists the consequences). The last is not implemented yet: release 0.20.3.1 keeps Helium's default and address, held back only until the user consents on the setup page (document 13, P-SVC-01). The rest of the inherited privacy posture carries over unchanged.
 7. **The red-team review (document 12) changed the design in several places:** machine identifiers readable in capability mode, kernel-attested sandbox status, environment scrubbing, no shared socket directories, allocator hardening, a reframed MAC study and a freshness target.
 
 ## Decisions that need the project owner
