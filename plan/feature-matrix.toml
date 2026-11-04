@@ -594,7 +594,7 @@ tested = "written"
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
 evidence = "owner, 0.20.3.1, 4 Nov 2026: browser, renderers, GPU, network and storage processes all report capability mode: no"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
-notes = "The imported FreeBSD sandbox code only lowers RLIMIT_DATA."
+notes = "Renderers never reach the FreeBSD sandbox code; the lockdown point is RendererMainPlatformDelegate::EnableSandbox() (plan/14 section 2)."
 
 [[feature]]
 id = "S-REN-02"
@@ -606,8 +606,9 @@ phase = 2
 implemented = "todo"
 built = "no"
 tested = "planned"
-planned_test = "functional suite run with the sandbox on and off; oracle probes misc.localtime, proc.dlopen, id.vm_page_count"
+planned_test = "functional suite with the sandbox on and off; the capsicum survey (run capsicum --diagnose) lists what must move before lockdown"
 source = ["plan/06-SECURITY-MODEL.md §2", "plan/06-SECURITY-MODEL.md §3.1", "plan/03-ARCHITECTURE.md §4.5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R5"]
+notes = "The survey records every sysctl and path the renderer uses after start, marked against the oracle's list of sysctls readable in capability mode."
 
 [[feature]]
 id = "S-REN-03"
@@ -616,11 +617,14 @@ title = "Descriptor inventory"
 need = "A diagnostic build records every descriptor a renderer holds, per workload: who opened it, why, its rights and the test that proves it is needed."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
-tested = "planned"
-planned_test = "diagnostic build with PROC_TRAPCAP_CTL over the functional workloads; feeds S-REN-04"
+tested = "written"
+where = ["freebsd/tests/browser/tests/test_55_capsicum.py",
+         "freebsd/tests/browser/berytest/capsicum.py"]
+tests = ["freebsd/tools/tests/test_capsicum_survey.py"]
 source = ["helium-freebsd-security-port-spec.md §6.2", "plan/06-SECURITY-MODEL.md §2"]
+notes = "Done with ktrace (-t pny: capability failures, lookups, sysctls) and procstat on the release build instead of a diagnostic build: descriptors, environment names and limits per process per workload. Not yet run on FreeBSD."
 
 [[feature]]
 id = "S-REN-04"
@@ -1098,10 +1102,10 @@ phase = 2
 implemented = "partial"
 built = "v0.20.3.1-1"
 tested = "planned"
-planned_test = "resources suite: memory and descriptor tests"
 where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+planned_test = "resources suite: memory and descriptor tests"
 source = ["helium-freebsd-security-port-spec.md §8.1", "plan/06-SECURITY-MODEL.md §7"]
-notes = "Only the imported single RLIMIT_DATA."
+notes = "Only the imported RLIMIT_DATA, and only in the GPU and utility processes: renderers never reach the FreeBSD sandbox code (plan/14 section 1)."
 
 [[feature]]
 id = "S-RES-02"

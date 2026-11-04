@@ -57,8 +57,9 @@ def options(argv):
                     help="let crashing processes write core dumps (runs the browser binary "
                          "directly, not the launcher) and add lldb backtraces to the report")
     ap.add_argument("--diagnose", action="store_true",
-                    help="also replay video playback under different browser switches to "
-                         "find which part of the video path crashes (several minutes)")
+                    help="also run the diagnostic groups: videodiag (video playback under "
+                         "different switches) and capsicum (what each process does that "
+                         "Capsicum capability mode would refuse, traced with ktrace)")
     ap.add_argument("--my-settings", nargs="?", const="~/.config/beryllium", default=None,
                     metavar="DIR",
                     help="ui group: also check the toolbar with a copy of your own settings "

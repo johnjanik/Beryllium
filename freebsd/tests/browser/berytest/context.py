@@ -59,6 +59,14 @@ class Context:
             self._fixtures = FixtureServer(directory)
         return self._fixtures
 
+    def add_fixture(self, name, data):
+        """Write a file the fixture server serves; returns its URL."""
+        self.fixtures()
+        mode = "wb" if isinstance(data, bytes) else "w"
+        with open(os.path.join(self._fixture_dir, name), mode) as f:
+            f.write(data)
+        return self._fixtures.url(name)
+
     def media(self):
         """({name: mime}, {name: why missing}) for the generated clips."""
         if self._media is None:

@@ -47,7 +47,7 @@ def _high_fd(fd):
 
 class Browser:
     def __init__(self, ctx, name, args=(), headless=None, user_data_dir=False,
-                 prefs=None, env=None, settings_from=None):
+                 prefs=None, env=None, settings_from=None, wrapper=None):
         self.ctx = ctx
         self.name = name
         self.binary = find_binary(ctx.options.browser)
@@ -63,6 +63,8 @@ class Browser:
         self.args = list(args)
         self.prefs = prefs
         self.settings_from = settings_from
+        # A command the browser runs under, e.g. ["ktrace", "-i", ...].
+        self.wrapper = list(wrapper or [])
         self.extra_env = env or {}
         self.log_path = ctx.artifact(f"{name}.stderr.log")
         self.proc = None
@@ -81,7 +83,7 @@ class Browser:
             cmd.append(f"--user-data-dir={self.user_data_dir}")
         cmd += self.ctx.options.browser_args + self.args
         cmd.append("about:blank")
-        return cmd
+        return self.wrapper + cmd
 
     def environment(self):
         env = {k: os.environ[k] for k in KEEP_ENV if k in os.environ}

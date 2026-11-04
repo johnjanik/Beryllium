@@ -22,6 +22,7 @@
 | 11 | [Maintenance and release](11-MAINTENANCE-AND-RELEASE.md) | Cadence driven by three upstream clocks, roles, the per-release procedure, advisory checklist, package distribution, security policy, the handover test |
 | 12 | [Work plan and red-team review](12-WORK-PLAN-AND-RED-TEAM.md) | Facts re-checked on 1 November 2026, sprint plan split between cloud sessions and the FreeBSD machine, amendments to documents 01 to 11, 15 red-team findings with evidence and tests, the probe catalogue and attacker payload hook |
 | 13 | [Feature matrix](13-FEATURE-MATRIX.md) | Every functional, privacy, security, build and release feature with its priority, phase, and implement, build and test status; generated from `feature-matrix.toml` by `freebsd/tools/feature-matrix`, which CI uses to reject claims the repository cannot back |
+| 14 | [Renderer sandbox working notes](14-RENDERER-SANDBOX.md) | Phase 2 in practice: what the FreeBSD sandbox code does today (renderers never reach it), the lockdown point, the build-by-build increments, starting with the Capsicum survey |
 
 ## The findings that shape everything else
 
