@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Beryllium's feature matrix: every functional, privacy, security, build and
+release feature the project must implement, build and test, with its status.
+
+The data lives in plan/feature-matrix.toml; plan/13-FEATURE-MATRIX.md is
+generated from it. Edit the TOML, then:
+
+  feature-matrix            write plan/13-FEATURE-MATRIX.md
+  feature-matrix --check    exit 1 if the data breaks a rule below or the
+                            Markdown is out of date (CI runs this)
+  feature-matrix --open [--phase N] [--area S]
+                            list features not yet implemented or not yet
+                            tested, e.g. the work list for a phase
+
+A row may not claim more than the repository shows:
+  - every path it names (code, tests, sources) must exist, and a test named
+    as path::name must contain that name;
+  - "done" or "partial" needs the code that does it ("where");
+  - a test status of written, passing or failing needs a test ("tests"),
+    and passing, failing or manual needs "evidence" (who ran it, where, when);
+  - "planned" needs the planned test described ("planned_test");
+  - "built" is "no" or the release tag the feature shipped in, and a
+    feature that is not implemented cannot have shipped;
+  - an RT-xx source must exist in plan/12-WORK-PLAN-AND-RED-TEAM.md.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+try:
+    import tomllib
+except ImportError:  # Python < 3.11
+    sys.exit("feature-matrix: needs Python 3.11 or newer (tomllib)")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+DATA = os.path.join(REPO, "plan", "feature-matrix.toml")
+OUT = os.path.join(REPO, "plan", "13-FEATURE-MATRIX.md")
+REDTEAM = os.path.join(REPO, "plan", "12-WORK-PLAN-AND-RED-TEAM.md")
+
+AREAS = {
+    "F": "Browser functionality",
+    "P": "Privacy",
+    "S": "Security",
+    "B": "Build, packaging and install",
+    "R": "Testing, release and maintenance",
+}
+PRIORITIES = ("must", "should", "later", "study")
+IMPLEMENTED = ("todo", "partial", "done", "inherited", "disabled")
+TESTED = ("none", "planned", "written", "passing", "failing", "manual")
+ID_RE = re.compile(r"^([FPSBR])-[A-Z]{2,4}-[0-9]{2}$")
+RELEASE_RE = re.compile(r"^v[0-9]+(\.[0-9]+)+-[0-9]+$")
+FIELDS = {"id", "group", "title", "need", "priority", "phase", "implemented",
+          "built", "tested", "where", "tests", "planned_test", "evidence",
+          "source", "notes"}
+
+LEGEND = """\
+| Column | Values |
+|---|---|
+| Priority | **must**: needed for the first release (plan/09); **should**: wanted for it; **later**: after it; **study**: decide first |
+| Phase | roadmap phase (plan/09): 0 baseline, 1 native build, 2 Capsicum renderer, 3 other processes, 4 jail and resources, 5 MAC study, 6 release engineering |
+| Implemented | **done**; **partial**; **todo**; **inherited**: Chromium or Helium code Beryllium keeps as it is; **disabled**: present but off in Beryllium (the row says why) |
+| Built | the release whose package contains it, or **no** |
+| Tested | **passing** / **failing**: the test's latest recorded run on FreeBSD (Evidence names the build, machine and date); **manual**: checked by hand (Evidence); **written**: the test exists, with no passing run recorded on the current release; **planned**: the plan names a test, not written yet; **none**: no test planned |
+"""
+
+
+class Problem(Exception):
+    pass
+
+
+def load(path=DATA):
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("meta", {}), data.get("feature", [])
+
+
+def as_list(value):
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def ref_path(ref):
+    """'plan/06-SECURITY-MODEL.md §3.1' -> 'plan/06-SECURITY-MODEL.md';
+    'a/b.py::Class.test' -> 'a/b.py'. None for references that are not paths."""
+    head = ref.split("::", 1)[0].split(" ", 1)[0].split("#", 1)[0]
+    if "/" in head or head.endswith((".md", ".py", ".patch", ".sh", ".gn", ".json")):
+        return head
+    return None
+
+
+def check(meta, features, repo=REPO, redteam_text=None):
+    problems = []
+    if redteam_text is None:
+        try:
+            with open(os.path.join(repo, "plan", "12-WORK-PLAN-AND-RED-TEAM.md"),
+                      encoding="utf-8") as f:
+                redteam_text = f.read()
+        except OSError:
+            redteam_text = ""
+    seen = set()
+    for i, ft in enumerate(features):
+        fid = ft.get("id", f"#{i + 1}")
+        def bad(msg):
+            problems.append(f"{fid}: {msg}")
+        unknown = set(ft) - FIELDS
+        if unknown:
+            bad(f"unknown field(s) {', '.join(sorted(unknown))}")
+        m = ID_RE.match(fid)
+        if not m:
+            bad("id must look like S-REN-01 (area letter F, P, S, B or R)")
+        if fid in seen:
+            bad("duplicate id")
+        seen.add(fid)
+        for key in ("group", "title", "need"):
+            if not str(ft.get(key, "")).strip():
+                bad(f"missing {key}")
+        if ft.get("priority") not in PRIORITIES:
+            bad(f"priority must be one of {', '.join(PRIORITIES)}")
+        if not isinstance(ft.get("phase"), int) or not 0 <= ft["phase"] <= 6:
+            bad("phase must be a number from 0 to 6")
+        impl = ft.get("implemented")
+        if impl not in IMPLEMENTED:
+            bad(f"implemented must be one of {', '.join(IMPLEMENTED)}")
+        tested = ft.get("tested")
+        if tested not in TESTED:
+            bad(f"tested must be one of {', '.join(TESTED)}")
+        built = ft.get("built", "no")
+        if built != "no" and not RELEASE_RE.match(str(built)):
+            bad('built must be "no" or a release tag such as v0.20.3.1-1')
+        if built != "no" and impl == "todo":
+            bad("cannot have shipped in a release while implemented is todo")
+        if impl in ("done", "partial") and not as_list(ft.get("where")):
+            bad(f'implemented "{impl}" needs "where" (the code that does it)')
+        if impl == "disabled" and not str(ft.get("notes", "")).strip():
+            bad('implemented "disabled" needs "notes" saying why')
+        tests = as_list(ft.get("tests"))
+        if tested in ("written", "passing", "failing") and not tests:
+            bad(f'tested "{tested}" needs "tests"')
+        if tested in ("passing", "failing", "manual") and not str(ft.get("evidence", "")).strip():
+            bad(f'tested "{tested}" needs "evidence" (who ran it, where, when)')
+        if tested == "planned" and not str(ft.get("planned_test", "")).strip():
+            bad('tested "planned" needs "planned_test"')
+        for ref in as_list(ft.get("where")) + tests + as_list(ft.get("source")):
+            path = ref_path(ref)
+            if path is None:
+                continue
+            full = os.path.join(repo, path)
+            if not os.path.exists(full):
+                bad(f"{ref}: {path} does not exist")
+            elif "::" in ref and os.path.isfile(full):
+                name = ref.split("::", 1)[1].split(".")[-1].strip()
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    if name not in f.read():
+                        bad(f"{ref}: {path} has no {name}")
+        for ref in as_list(ft.get("source")):
+            for rt in re.findall(r"\bRT-[0-9]{2}\b", ref):
+                if rt not in redteam_text:
+                    bad(f"{rt} is not in plan/12-WORK-PLAN-AND-RED-TEAM.md")
+    return problems
+
+
+def cell(text):
+    return str(text).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def code_list(refs):
+    return "<br>".join(f"`{cell(r)}`" for r in refs)
+
+
+def tested_cell(ft):
+    tested = ft["tested"]
+    parts = [f"**{tested}**"]
+    tests = as_list(ft.get("tests"))
+    if tests:
+        parts.append(code_list(tests))
+    if tested == "planned":
+        parts.append(cell(ft["planned_test"]))
+    if ft.get("evidence"):
+        parts.append(cell(ft["evidence"]))
+    return "<br>".join(parts)
+
+
+def counts(features):
+    rows = []
+    for key, name in AREAS.items():
+        fs = [f for f in features if f["id"][0] == key]
+        if not fs:
+            continue
+        must = [f for f in fs if f["priority"] == "must"]
+        implemented = [f for f in must if f["implemented"] in ("done", "inherited")]
+        tested = [f for f in must if f["tested"] in ("passing", "manual")]
+        rows.append(f"| {name} | {len(fs)} | {len(must)} | {len(implemented)} | {len(tested)} |")
+    return rows
+
+
+def render(meta, features):
+    lines = [
+        "# Beryllium: Feature Matrix",
+        "",
+        "<!-- Generated by freebsd/tools/feature-matrix from plan/feature-matrix.toml."
+        " Do not edit by hand. -->",
+        "",
+        f"Status as of {meta.get('as_of', '?')}, latest release "
+        f"{meta.get('release', 'none')}. Every feature the project must implement, "
+        "build and test, with where it is specified, the code that does it, and "
+        "the test that proves it. Edit `plan/feature-matrix.toml` and run "
+        "`freebsd/tools/feature-matrix`; CI rejects a row that claims a test, code "
+        "or source the repository does not have.",
+        "",
+        "## Summary",
+        "",
+        "| Area | Features | Must for first release | of which implemented | of which tested |",
+        "|---|---|---|---|---|",
+    ]
+    lines += counts(features)
+    lines += ["", "\"Implemented\" counts done and inherited; \"tested\" counts passing and manual.", ""]
+    nxt = int(meta.get("next_phase", 2))
+    open_next = [f for f in features if f["phase"] == nxt and f["priority"] in ("must", "should")
+                 and (f["implemented"] not in ("done", "inherited", "disabled")
+                      or f["tested"] not in ("passing", "manual"))]
+    if open_next:
+        lines += [f"## Next: phase {nxt}", "",
+                  f"Open must and should items in phase {nxt}, in matrix order "
+                  f"(`freebsd/tools/feature-matrix --open --phase {nxt}`):", ""]
+        for f in open_next:
+            lines.append(f"- `{f['id']}` {cell(f['title'])} ({f['priority']}; "
+                         f"implemented: {f['implemented']}, tested: {f['tested']})")
+        lines.append("")
+    lines += ["## Legend", "", LEGEND]
+    for key, name in AREAS.items():
+        fs = [f for f in features if f["id"][0] == key]
+        if not fs:
+            continue
+        lines += [f"## {name}", ""]
+        intro = meta.get("intro", {}).get(key)
+        if intro:
+            lines += [intro.strip(), ""]
+        groups = []
+        for f in fs:
+            if f["group"] not in groups:
+                groups.append(f["group"])
+        for g in groups:
+            lines += [f"### {g}", "",
+                      "| ID | Feature | Priority | Phase | Implemented | Built | Tested | Source |",
+                      "|---|---|---|---|---|---|---|---|"]
+            for f in (f for f in fs if f["group"] == g):
+                feature = f"**{cell(f['title'])}.** {cell(f['need'])}"
+                if f.get("notes"):
+                    feature += f" *{cell(f['notes'])}*"
+                impl = f"**{f['implemented']}**"
+                if as_list(f.get("where")):
+                    impl += "<br>" + code_list(as_list(f["where"]))
+                source = "<br>".join(cell(s) for s in as_list(f.get("source")))
+                lines.append(f"| `{f['id']}` | {feature} | {f['priority']} | {f['phase']} | "
+                             f"{impl} | {cell(f.get('built', 'no'))} | {tested_cell(f)} | {source} |")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def open_items(features, phase=None, area=None):
+    out = []
+    for f in features:
+        if phase is not None and f["phase"] != phase:
+            continue
+        if area and f["id"][0] != area:
+            continue
+        if f["implemented"] in ("done", "inherited", "disabled") and \
+                f["tested"] in ("passing", "manual"):
+            continue
+        out.append(f"{f['id']}  [{f['priority']}, phase {f['phase']}, implemented "
+                   f"{f['implemented']}, tested {f['tested']}]  {f['title']}")
+    return out
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--open", action="store_true")
+    ap.add_argument("--phase", type=int)
+    ap.add_argument("--area", choices=sorted(AREAS))
+    ap.add_argument("--data", default=DATA)
+    ap.add_argument("--out", default=OUT)
+    o = ap.parse_args(argv)
+    meta, features = load(o.data)
+    problems = check(meta, features)
+    if problems:
+        print("feature-matrix: problems in " + os.path.relpath(o.data, REPO) + ":")
+        for p in problems:
+            print("  " + p)
+        return 1
+    if o.open:
+        for line in open_items(features, o.phase, o.area):
+            print(line)
+        return 0
+    text = render(meta, features)
+    if o.check:
+        try:
+            with open(o.out, encoding="utf-8") as f:
+                current = f.read()
+        except OSError:
+            current = ""
+        if current != text:
+            print(f"feature-matrix: {os.path.relpath(o.out, REPO)} is out of date; "
+                  "run freebsd/tools/feature-matrix")
+            return 1
+        print(f"feature-matrix: OK ({len(features)} features)")
+        return 0
+    with open(o.out, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"feature-matrix: wrote {os.path.relpath(o.out, REPO)} ({len(features)} features)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

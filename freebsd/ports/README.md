@@ -6,8 +6,9 @@ Google's official Chromium `-lite` tarball, the imported FreeBSD patch set
 `helium` submodule pins), and Beryllium's own patches (`files/beryllium/`).
 `www/beryllium-devel` is the same build under a separate package name.
 
-Status: **builds a package**. The seventh build (3 November 2026, 15.1
-jail) completed: `Built: 1`. The package has not been run or tested yet.
+Status: **builds and runs**. The 16.0-CURRENT build of 3 November 2026 is
+released as v0.20.3.1-1; what works and what is tested is in
+`plan/13-FEATURE-MATRIX.md`.
 
 `install.sh --build` at the top of the repository runs the steps below
 for you (with `--dry-run` to see them first). Follow them by hand to
