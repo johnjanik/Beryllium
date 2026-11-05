@@ -58,7 +58,9 @@ and Helium 0.20.3.
   share as deleted files in `/tmp`, so page content could reach the disk
   and any process holding one could rewrite or resize it. It is now
   anonymous memory, sealed against resizing, and read-only where it should
-  be, enforced by Capsicum rights.
+  be, enforced by Capsicum rights. One unnamed writable file per renderer
+  remains, from a part of Chromium not yet identified (see
+  [Known issues](#known-issues)).
 - **Experimental renderer lockdown**, off by default (below).
 
 ### Sandbox status of this release
@@ -88,9 +90,9 @@ beryllium --enable-features=BerylliumCapsicumRenderer
 
 and every renderer enters Capsicum capability mode before it handles a
 web page: it can no longer open files by path, open new network
-connections or signal other processes, and it holds no directory and no
-writable file. If the lockdown fails, the renderer ends instead of running
-unconfined. To check it while pages are open:
+connections or signal other processes, and it holds no directory. One
+writable file remains in each renderer (see [Known issues](#known-issues)).
+If the lockdown fails, the renderer ends instead of running unconfined. To check it while pages are open:
 
 ```sh
 procstat -s $(pgrep -f -- --type=renderer)
@@ -165,6 +167,11 @@ set it, and the launcher will not start the browser without it.
 ### Known issues
 
 - **WebGPU** finds no adapter.
+- **One unnamed file per renderer.** Each renderer still holds one
+  writable file that has no name any more, most likely a deleted
+  temporary file, with or without the experimental lockdown. Which part of
+  Chromium creates it is not yet known; the test suite's sandbox group
+  reports it (`test_renderers_hold_no_directories_or_writable_files`).
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:

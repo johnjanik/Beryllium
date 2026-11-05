@@ -594,7 +594,7 @@ built = "no"
 tested = "manual"
 where = ["patches/security/beryllium-capsicum-renderer.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_per_process"]
-evidence = "owner, 0.20.3.3 with --enable-features=BerylliumCapsicumRenderer, 4 Nov 2026: every renderer in capability mode (procstat), the whole suite passes; trap mode stops renderers at their first refused call (cpuset_getaffinity); owner, 0.20.3.4, 5 Nov 2026: the same, and no inherited directory or profile file left"
+evidence = "owner, 0.20.3.3 with --enable-features=BerylliumCapsicumRenderer, 4 Nov 2026: every renderer in capability mode (procstat), the whole suite passes; trap mode stops renderers at their first refused call (cpuset_getaffinity); owner, 0.20.3.4, 5 Nov 2026: the same, and no inherited directory or profile file left; owner, 0.20.3.6, 5 Nov 2026: every renderer in capability mode, the suite passes apart from the descriptor test (one unnamed file per renderer)"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
 notes = "Opt-in. Not yet a sandbox: in 0.20.3.3 renderers inherited directories (/, /usr...) and writable profile files, gone in 0.20.3.4 (S-IPC-01); they still hold shared memory as writable unlinked files in /tmp, replaced by sealed memfds with limited rights in 0.20.3.5 (S-SHM-01, S-SHM-02)."
 
@@ -670,9 +670,9 @@ where = ["patches/security/beryllium-close-inherited-descriptors.patch",
          "patches/security/beryllium-capsicum-renderer.patch",
          "patches/security/beryllium-anonymous-shared-memory.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
-evidence = "owner, 0.20.3.4, 5 Nov 2026, with and without the lockdown: no renderer holds a directory or profile file; the test fails on 5 to 9 writable unlinked files per renderer, which are shared memory regions"
+evidence = "owner, 0.20.3.4 and 0.20.3.6, 5 Nov 2026, with and without the lockdown: no renderer holds a directory or profile file; the test fails on 5 to 9 unnamed writable files per renderer in 0.20.3.4 (shared memory regions) and on one in 0.20.3.6, of unknown origin"
 source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
-notes = "0.20.3.3: inherited directories. 0.20.3.4: gone (S-IPC-01); shared memory files remain, replaced in 0.20.3.5 (S-SHM-01). Path opens and user-file handles are still to check."
+notes = "0.20.3.3: inherited directories. 0.20.3.4: gone (S-IPC-01); shared memory files remain, replaced in 0.20.3.5 (S-SHM-01). 0.20.3.6: one unnamed writable file per renderer left; the test now reports its file system, inode, size and holders to identify it. Path opens and user-file handles are still to check."
 
 [[feature]]
 id = "S-REN-07"
@@ -808,12 +808,13 @@ priority = "must"
 phase = 2
 implemented = "done"
 built = "no"
-tested = "written"
+tested = "passing"
 where = ["patches/security/beryllium-anonymous-shared-memory.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderer_shared_memory_is_anonymous_and_limited",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
+evidence = "owner, 0.20.3.6, 5 Nov 2026, with and without the lockdown: renderers hold their shared memory as memfd objects (test_renderer_shared_memory_is_anonymous_and_limited passes) and the whole suite passes otherwise; one unnamed writable file per renderer remains, not from PlatformSharedMemoryRegion (S-REN-06)"
 source = ["plan/06-SECURITY-MODEL.md §3.3", "plan/03-ARCHITECTURE.md §4.4", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R6"]
-notes = "Until 0.20.3.4 every region was an unlinked file in TMPDIR (the Linux memfd path was Linux-only), so renderers held writable files and page content reached a disk file system. In 0.20.3.5: memfd_create, sealed against shrinking and growing, no file fallback. The oracle (mem.memfd_seal, mem.shm_named) shows memfd with seals works in capability mode and named objects do not, on 14.5, 15.1 and 16.0. Not yet compiled."
+notes = "Until 0.20.3.4 every region was an unlinked file in TMPDIR (the Linux memfd path was Linux-only), so renderers held writable files and page content reached a disk file system. From 0.20.3.5: memfd_create, sealed against shrinking and growing, no file fallback. The oracle (mem.memfd_seal, mem.shm_named) shows memfd with seals works in capability mode and named objects do not, on 14.5, 15.1 and 16.0."
 
 [[feature]]
 id = "S-SHM-02"
@@ -824,11 +825,12 @@ priority = "must"
 phase = 2
 implemented = "done"
 built = "no"
-tested = "written"
+tested = "passing"
 where = ["patches/security/beryllium-anonymous-shared-memory.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderer_shared_memory_is_anonymous_and_limited"]
+evidence = "owner, 0.20.3.6, 5 Nov 2026: procstat -C in renderers shows writable regions with read, write, seek, mmap read-write, fstat and fcntl only, read-only twins with read, seek, mmap read-only, fstat and fcntl; no ftruncate or executable mapping anywhere"
 source = ["plan/06-SECURITY-MODEL.md §3.3", "plan/12-WORK-PLAN-AND-RED-TEAM.md §10"]
-notes = "The read-only twin is a dup limited to CAP_MMAP_R, CAP_FSTAT and CAP_FCNTL (F_GETFL only); the writable descriptor to CAP_MMAP_RW, CAP_FSTAT and CAP_FCNTL; Chromium's access-mode check reads the rights. The oracle (mem.ro_twin_map_rw, _mprotect, _map_exec, _introspect) shows on 14.5, 15.1 and 16.0 that the twin cannot be mapped writable or executable or upgraded with mprotect. The suite test checks the rights of every shared memory descriptor in renderers. Not yet compiled."
+notes = "The read-only twin is a dup limited to CAP_MMAP_R, CAP_FSTAT and CAP_FCNTL (F_GETFL only); the writable descriptor to CAP_MMAP_RW, CAP_FSTAT and CAP_FCNTL; Chromium's access-mode check reads the rights. The oracle (mem.ro_twin_map_rw, _mprotect, _map_exec, _introspect) shows on 14.5, 15.1 and 16.0 that the twin cannot be mapped writable or executable or upgraded with mprotect. The suite test checks the rights of every shared memory descriptor in renderers."
 
 [[feature]]
 id = "S-SHM-03"

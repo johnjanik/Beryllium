@@ -223,21 +223,27 @@ class CapsicumSurvey(unittest.TestCase):
                        "include them, run again after: doas sysctl "
                        "security.bsd.unprivileged_proc_debug=1 (and set it back after).\n\n")
         kept = []
+        temp_dirs = capsicum.TEMP_DIRS + ((os.environ["TMPDIR"].rstrip("/"),)
+                                          if os.environ.get("TMPDIR") else ())
         with subprocess.Popen(["kdump", "-f", trace], stdout=subprocess.PIPE, text=True,
                               errors="replace") as proc:
-            parsed_lines = []
+            parsed_lines, nami = [], []
             for line in proc.stdout:
                 m = capsicum.KDUMP_RE.match(line)
+                if m and m.group(3) == "NAMI":
+                    nami.append(line)
                 if m and types.get(int(m.group(1))) != "browser":
                     parsed_lines.append(line)
                     kept.append(line)
+        temps = capsicum.temp_files(nami, types, temp_dirs)
         kdump = capsicum.parse_kdump(parsed_lines)
         summary = capsicum.summarise(kdump, types, readable)
         text = (f"Capsicum survey, {time.strftime('%Y-%m-%d %H:%M:%S')}, kernel "
                 f"{platform.release()}, browser {getattr(ctx, 'browser_version', {}).get('product', '?')}\n"
                 "Workloads (name: page title when done):\n"
                 + "".join(f"  {r}\n" for r in ran) + "\n" + fd_note
-                + capsicum.report(summary, samples, readable_from))
+                + capsicum.report(summary, samples, readable_from)
+                + "\n" + capsicum.temp_files_report(temps))
         with open(ctx.artifact("capsicum-survey.txt"), "w") as f:
             f.write(text)
         with open(ctx.artifact("capsicum-survey.json"), "w") as f:

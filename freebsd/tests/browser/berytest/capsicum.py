@@ -112,6 +112,48 @@ def parse_kdump(lines):
     return procs
 
 
+TEMP_DIRS = ("/tmp", "/var/tmp")
+
+
+def temp_file_name(path, temp_dirs=TEMP_DIRS):
+    """A file directly in a temporary directory, with mkstemp's six random
+    characters replaced by XXXXXX when they look random (a digit or mixed
+    case), or None for any other path."""
+    head, _, name = path.rstrip("/").rpartition("/")
+    if not name or head not in temp_dirs:
+        return None
+    tail = name[-6:]
+    if (len(name) > 6 and tail.isalnum()
+            and (any(c.isdigit() for c in tail) or (tail.lower() != tail and tail.upper() != tail))):
+        name = name[:-6] + "XXXXXX"
+    return f"{head}/{name}"
+
+
+def temp_files(lines, types, temp_dirs=TEMP_DIRS):
+    """{process type: Counter(temp file pattern)} from kdump NAMI records,
+    every process included (the browser too): who makes temporary files."""
+    out = collections.defaultdict(collections.Counter)
+    for line in lines:
+        m = KDUMP_RE.match(line)
+        if not m or m.group(3) != "NAMI":
+            continue
+        name = temp_file_name(_unquote(m.group(4)), temp_dirs)
+        if name:
+            out[types.get(int(m.group(1)), "unknown")][name] += 1
+    return out
+
+
+def temp_files_report(found):
+    lines = ["== Temporary files (path lookups directly in a temporary directory, "
+             "every process, the browser included)", ""]
+    if not found:
+        lines.append("None.")
+    for ptype in sorted(found, key=lambda t: (t != "browser", t)):
+        for name, n in found[ptype].most_common():
+            lines.append(f"  {ptype:<32} {n:>5}  {name}")
+    return "\n".join(lines) + "\n"
+
+
 def _run(args):
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=20).stdout
@@ -213,6 +255,27 @@ def shared_memory_problems(rights_by_fd):
             out.append(f"fd {fd} shared memory can {', '.join(bad)} "
                        f"(rights: {rights_summary(r['rights'])})")
     return out
+
+
+def file_identities(pid, text=None):
+    """{fd: {mount, inode, mode, size, rw}} for the vnodes in fstat -p:
+    the file system and inode identify a file that has no name any more."""
+    text = text if text is not None else _run(["fstat", "-p", str(pid)])
+    out = {}
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        if len(f) >= 9 and f[3].isdigit():
+            out[f[3]] = {"mount": f[4], "inode": f[5], "mode": f[6], "size": f[7], "rw": f[8]}
+    return out
+
+
+def describe_file(ident, holders=()):
+    """One line for an unnamed file: where it lives, its size, who else holds it."""
+    if not ident:
+        return "(fstat could not identify it)"
+    also = ", ".join(f"{t} pid {p} fd {fd}" for t, p, fd in holders) or "no other Beryllium process"
+    return (f"on {ident['mount']}, inode {ident['inode']}, {ident['size']} bytes, "
+            f"mode {ident['mode']}; also held by: {also}")
 
 
 ENV_NAME_RE = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=")

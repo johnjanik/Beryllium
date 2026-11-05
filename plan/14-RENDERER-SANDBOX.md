@@ -131,6 +131,22 @@ FreeBSD test bed, so an increment must be worth a build.
    themselves (Mojo's broker asks the browser; the survey finds no
    creation attempt after the lockdown), and with memfd they could. New
    test: `test_renderer_shared_memory_is_anonymous_and_limited`.
+   **Results, 0.20.3.6 (5 November 2026), with and without the lockdown:**
+   the whole suite passes (video, WebGL, many busy tabs, the toolbar) apart
+   from the descriptor test. Renderers hold their shared memory as memfd
+   objects with exactly the intended rights: writable regions read, write,
+   seek, map read-write, fstat and F_GETFL (no ftruncate, no executable
+   mapping, no chmod or chown); read-only twins read, seek, map read-only,
+   fstat and F_GETFL. Of the five to nine unnamed writable files per
+   renderer in 0.20.3.4, one remains in every renderer, so something other
+   than `PlatformSharedMemoryRegion` makes it. The FreeBSD port also lets
+   renderers and the GPU process create unsafe regions themselves
+   (`patch-content_app_initialize__mojo__core.cc`), which memfd now allows
+   in capability mode too. To identify the remaining file without a
+   rebuild, the descriptor test now reports its file system, inode, size
+   and mode and every other Beryllium process holding it (`fstat`), and the
+   survey lists the files each process type, the browser included, looks
+   up directly in a temporary directory.
 5. **Attestation and status:** the browser checks each renderer's
    capability mode with the kernel and refuses an unconfined one;
    `beryllium://sandbox` shows the kernel's answer; the release's sandbox

@@ -53,6 +53,22 @@ PROCSTAT_C = """\
  4242 beryllium           25 h rw------ rd,wr,se,mm,fe,fy,ft,cd,cm,cn,ct,fk,mmx -   anon
  4242 beryllium            9 v r------- -                                -   /usr/local/share/beryllium/resources.pak
 """
+# fstat -p: vnodes have FD MOUNT INUM MODE SZ R/W; sockets and pipes do not.
+FSTAT = """\
+USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W
+john     beryllium   4242 text /usr/local 77001 -r-xr-xr-x 210000000  r
+john     beryllium   4242    0 /dev          25 crw-rw-rw-     null  r
+john     beryllium   4242    4* local stream fffff80012345678 <-> fffff80012345000
+john     beryllium   4242   21 /tmp       99123 -rw-------  2097152 rw
+"""
+KDUMP_TEMP = """\
+ 7777 beryllium NAMI  "/tmp/.org.chromium.Chromium.a1B2c3"
+ 7777 beryllium NAMI  "/tmp/.org.chromium.Chromium.Zz9Yy8"
+ 5151 beryllium NAMI  "/tmp/.glAJD8Uk"
+ 4242 beryllium NAMI  "/tmp/berytest.abc/home/.config/beryllium/Local State"
+ 4242 beryllium NAMI  "/usr/local/share/beryllium/resources.pak"
+ 4242 beryllium NAMI  "/tmp"
+"""
 MARKER_HEX = " ".join(f"{b:02x}" for b in b"BERYLLIUM-LOCKDOWN")
 KDUMP_MARKED = f"""\
  6000 beryllium NAMI  "/libexec/ld-elf.so.1"
@@ -165,6 +181,30 @@ class Parse(unittest.TestCase):
         # 19 (writable, limited) and 24 (read-only twin) pass; 3 is a socket.
         self.assertEqual(problems, ["fd 25 shared memory can truncate, map executable, "
                                     "execute, chmod, chown (rights: all)"])
+
+    def test_file_identities(self):
+        ids = capsicum.file_identities(4242, FSTAT)
+        self.assertEqual(sorted(ids), ["0", "21"])  # not text, not the socket
+        self.assertEqual(ids["21"], {"mount": "/tmp", "inode": "99123", "mode": "-rw-------",
+                                     "size": "2097152", "rw": "rw"})
+        self.assertEqual(capsicum.describe_file(ids["21"], [("browser", 7777, "88")]),
+                         "on /tmp, inode 99123, 2097152 bytes, mode -rw-------; "
+                         "also held by: browser pid 7777 fd 88")
+        self.assertIn("could not identify", capsicum.describe_file(None))
+
+    def test_temp_files(self):
+        self.assertEqual(capsicum.temp_file_name("/tmp/.org.chromium.Chromium.a1B2c3"),
+                         "/tmp/.org.chromium.Chromium.XXXXXX")
+        self.assertIsNone(capsicum.temp_file_name("/tmp/berytest.abc/home/x"))
+        self.assertIsNone(capsicum.temp_file_name("/tmp"))
+        self.assertEqual(capsicum.temp_file_name("/tmp/.X11-unix"), "/tmp/.X11-unix")
+        found = capsicum.temp_files(KDUMP_TEMP.splitlines(), {7777: "browser", 5151: "GPU"})
+        self.assertEqual(dict(found["browser"]), {"/tmp/.org.chromium.Chromium.XXXXXX": 2})
+        self.assertEqual(dict(found["GPU"]), {"/tmp/.glXXXXXX": 1})
+        self.assertNotIn("unknown", found)
+        text = capsicum.temp_files_report(found)
+        self.assertLess(text.index("browser"), text.index("GPU"))
+        self.assertIn("None.", capsicum.temp_files_report({}))
 
     def test_environment_values_never_kept(self):
         names = capsicum.environment_names(4242, PROCSTAT_E)

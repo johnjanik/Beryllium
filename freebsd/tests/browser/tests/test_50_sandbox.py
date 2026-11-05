@@ -66,18 +66,34 @@ class SandboxHonesty(BrowserTest):
         """No renderer holds a directory or a writable file (S-IPC-01, S-REN-06)."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
-        problems, read = [], 0
+        problems, details, read = [], [], 0
+        # Every vnode of every Beryllium process, by file system and inode, so a
+        # file that has no name any more can still be traced to who else holds it.
+        files = {p["id"]: capsicum.file_identities(p["id"]) for p in procs}
+        holders = {}
+        for p in procs:
+            for fd, ident in files[p["id"]].items():
+                holders.setdefault((ident["mount"], ident["inode"]), []).append(
+                    (p["type"], p["id"], fd))
         for p in procs:
             if p["type"] != "renderer":
                 continue
             fds = capsicum.descriptors(p["id"])
             if fds:
                 read += 1
-            problems += [f"renderer {p['id']}: {x}" for x in capsicum.risky_descriptors(fds)]
+            for x in capsicum.risky_descriptors(fds):
+                problems.append(f"renderer {p['id']}: {x}")
+                details.append(problems[-1])
+                if "no name" in x:
+                    fd = x.split()[1]
+                    ident = files[p["id"]].get(fd)
+                    others = [h for h in holders.get((ident["mount"], ident["inode"]), [])
+                              if h[1] != p["id"]] if ident else []
+                    details.append("    " + capsicum.describe_file(ident, others))
         if not read:
             self.skipTest("procstat could not read renderer descriptors "
                           "(security.bsd.unprivileged_proc_debug=0?)")
-        self.note("\n".join(problems) or f"{read} renderers: none")
+        self.note("\n".join(details) or f"{read} renderers: none")
         self.assertEqual(problems, [], "renderers hold descriptors they must not")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
