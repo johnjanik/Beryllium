@@ -1,6 +1,7 @@
 # Round 0: vector reconstruction of the art set v2 emblem (draft)
 
-**Date:** 5 November 2026. **Status:** draft for review. Nothing here is
+**Date:** 5 November 2026. **Status:** reviewed; see the outcome below
+and [round 1](../2026-11-05-round-1/README.md). Nothing here is
 used by the build, and `artwork/` and `branding/` are unchanged. Approved
 masters move into `artwork/` only through a separate integration change
 (the generator in `branding/tools/`, its tests and the port), after the
@@ -84,3 +85,9 @@ Copyright 2026 Beryllium Browser contributors, CC BY 4.0, like the rest of
 the artwork. The Beryllium name and logo are reserved
 ([TRADEMARKS.md](../../TRADEMARKS.md)). Letter outlines are from Inter
 (SIL Open Font License 1.1). The tools are GPL-3.0.
+
+## Outcome (owner, 5 November 2026)
+
+1. Faithful enough: this reconstruction is the master.
+2. Small icons are flat.
+3. Letters stay in Inter Bold; round 1 regenerates the masters with it.

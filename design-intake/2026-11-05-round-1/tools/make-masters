@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Vector masters of the Beryllium logo (round 1): emblem, small orb mark
+and the "Beryllium Browser" wordmark, rebuilt from art set v2.
+
+Geometry was measured from artwork/logo/beryllium-emblem.png (414 x 466 px):
+each orbit is the ellipse fitted (direct least squares) to its four visible
+band segments, then made mirror-symmetric; the orb circle, electron centres
+and tube thickness come from the same image. Coordinates below are in those
+emblem pixels and are mapped onto a 1024 canvas.
+Usage: make_master.py OUTDIR
+"""
+import math, os, sys
+from fontTools.ttLib import TTFont
+from fontTools.pens.svgPathPen import SVGPathPen
+from fontTools.pens.transformPen import TransformPen
+from fontTools.pens.boundsPen import BoundsPen
+
+FONTS = "/usr/share/fonts/opentype/inter"
+FONT = os.environ.get("BERYLLIUM_FONT", f"{FONTS}/Inter-Bold.otf")
+FONT_REGULAR = os.environ.get("BERYLLIUM_FONT_REGULAR", f"{FONTS}/Inter-Regular.otf")
+OUT = sys.argv[1] if len(sys.argv) > 1 else "out"
+os.makedirs(OUT, exist_ok=True)
+
+# ---- geometry, emblem px ----
+AXIS_X, MID_Y = 204.0, 233.0      # mirror axis; vertical centre of the composition
+ORBIT_DX, ORBIT_Y = 6.0, 235.2    # orbit A centre at AXIS_X + DX, B at AXIS_X - DX
+ORBIT_A, ORBIT_B = 234.0, 80.8    # semi-axes
+ORBIT_TILT = 54.2                 # degrees below horizontal (A falls to the right)
+ORB_Y, ORB_R = 246.0, 141.0       # orb centre (x on the axis) and outer radius
+E_TOP, E_BOT = (162.0, 40.0), (169.0, 427.0)   # electron offsets from the axis, y
+E_R = 36.0                        # electron outer radius
+TUBE = 28.0                       # tube thickness, outline included
+CAP = 0.71                        # cap height of "Be" in orb radii
+TRACK = -0.02                     # em
+
+C = 1024
+S = 2.06
+def X(x): return C / 2 + (x - AXIS_X) * S
+def Y(y): return C / 2 + (y - MID_Y) * S
+def f(v): return f"{v:.2f}".rstrip("0").rstrip(".")
+
+OCX, OCY, R = X(AXIS_X), Y(ORB_Y), ORB_R * S
+RE, T = E_R * S, TUBE * S
+ELECTRONS = [(X(AXIS_X - E_TOP[0]), Y(E_TOP[1])), (X(AXIS_X + E_TOP[0]), Y(E_TOP[1])),
+             (X(AXIS_X - E_BOT[0]), Y(E_BOT[1])), (X(AXIS_X + E_BOT[0]), Y(E_BOT[1]))]
+
+def letters_path(cx, cy, r, cap=CAP):
+    font = TTFont(FONT); gs = font.getGlyphSet(); cmap = font.getBestCmap()
+    upem = font["head"].unitsPerEm; caph = font["OS/2"].sCapHeight
+    s = cap * r / caph
+    x = 0; boxes = []
+    for ch in "Be":
+        g = gs[cmap[ord(ch)]]; bp = BoundsPen(gs); g.draw(bp)
+        boxes.append((bp.bounds[0] + x, bp.bounds[1], bp.bounds[2] + x, bp.bounds[3]))
+        x += g.width + TRACK * upem
+    ox = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
+    oy = (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2
+    pen = SVGPathPen(gs, ntos=lambda v: f"{v:.2f}")
+    x = 0
+    for ch in "Be":
+        g = gs[cmap[ord(ch)]]
+        g.draw(TransformPen(pen, (s, 0, 0, -s, cx + (x - ox) * s, cy + oy * s)))
+        x += g.width + TRACK * upem
+    return pen.getCommands()
+
+def orbit(which, grow=0.0, **attrs):
+    """Ellipse A (falls to the right) or B (its mirror); grow offsets both axes."""
+    cx = X(AXIS_X + (ORBIT_DX if which == "A" else -ORBIT_DX))
+    ang = ORBIT_TILT if which == "A" else 180 - ORBIT_TILT
+    a = " ".join(f'{k.replace("_", "-")}="{v}"' for k, v in attrs.items())
+    return (f'<ellipse cx="{f(cx)}" cy="{f(Y(ORBIT_Y))}" rx="{f(ORBIT_A * S + grow)}" '
+            f'ry="{f(ORBIT_B * S + grow)}" transform="rotate({f(ang)} {f(cx)} {f(Y(ORBIT_Y))})" '
+            f'fill="none" {a}/>')
+
+# ---- palette: sampled from the art, provisional ----
+OUTLINE = "#6E0605"
+BAND = "#E3150A"
+FLAT_RIM, FLAT_ORB, WHITE = "#A00806", "#F40602", "#FFFFFF"
+
+def tube(which, mode):
+    if mode == "color":
+        return "\n".join([
+            orbit(which, stroke=OUTLINE, stroke_width=f(T)),
+            orbit(which, stroke=BAND, stroke_width=f(T * 0.78)),
+            orbit(which, stroke="#FF6A0E", stroke_width=f(T * 0.42)),
+            orbit(which, grow=T * 0.13, stroke="#FFF1B8", stroke_width=f(T * 0.1), stroke_opacity="0.9"),
+        ])
+    if mode == "flat":
+        return "\n".join([orbit(which, stroke=FLAT_RIM, stroke_width=f(T)),
+                          orbit(which, stroke=FLAT_ORB, stroke_width=f(T * 0.6))])
+    return orbit(which, stroke="currentColor", stroke_width=f(T * 0.8))
+
+def defs_color(cx, cy, r):
+    return f'''<defs>
+  <radialGradient id="body" cx="0.42" cy="0.44" r="0.62">
+    <stop offset="0" stop-color="#F81E05"/>
+    <stop offset="0.5" stop-color="#E40904"/>
+    <stop offset="0.82" stop-color="#A50306"/>
+    <stop offset="1" stop-color="#6E0206"/>
+  </radialGradient>
+  <radialGradient id="keylight" cx="0.3" cy="0.26" r="0.36">
+    <stop offset="0" stop-color="#FFF7C4"/>
+    <stop offset="0.3" stop-color="#FFC43A" stop-opacity="0.95"/>
+    <stop offset="0.65" stop-color="#FF5A06" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="#FF3A06" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="bounce" cx="0.72" cy="0.8" r="0.34">
+    <stop offset="0" stop-color="#FFC22A"/>
+    <stop offset="0.45" stop-color="#FF8406" stop-opacity="0.8"/>
+    <stop offset="1" stop-color="#FF5A06" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="ring" x1="0.2" y1="0.15" x2="0.8" y2="0.9">
+    <stop offset="0" stop-color="#FFFFF4"/>
+    <stop offset="0.55" stop-color="#FFF0D8"/>
+    <stop offset="1" stop-color="#FFD27A"/>
+  </linearGradient>
+  <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+  </linearGradient>
+  <linearGradient id="reflect" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+    <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.85"/>
+    <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.1"/>
+  </linearGradient>
+  <radialGradient id="ball" cx="0.34" cy="0.3" r="0.75">
+    <stop offset="0" stop-color="#FFE9A0"/>
+    <stop offset="0.2" stop-color="#FF8C14"/>
+    <stop offset="0.52" stop-color="#F0260A"/>
+    <stop offset="0.85" stop-color="#B8070A"/>
+    <stop offset="1" stop-color="#8E0408"/>
+  </radialGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+    <feDropShadow dx="{f(r*0.012)}" dy="{f(r*0.024)}" stdDeviation="{f(r*0.016)}" flood-color="#4A0002" flood-opacity="0.6"/>
+  </filter>
+  <clipPath id="bodyclip"><circle cx="{f(cx)}" cy="{f(cy)}" r="{f(r*0.905)}"/></clipPath>
+</defs>'''
+
+def reflection(cx, cy, r, a0=196, a1=262, rr=0.8):
+    """A highlight along the inner rim, upper left (angles clockwise from +x)."""
+    p0 = (cx + r * rr * math.cos(math.radians(a0)), cy + r * rr * math.sin(math.radians(a0)))
+    p1 = (cx + r * rr * math.cos(math.radians(a1)), cy + r * rr * math.sin(math.radians(a1)))
+    return f"M{f(p0[0])} {f(p0[1])}A{f(r*rr)} {f(r*rr)} 0 0 1 {f(p1[0])} {f(p1[1])}"
+
+def orb(cx, cy, r, mode, letters):
+    c = f'cx="{f(cx)}" cy="{f(cy)}"'
+    if mode == "color":
+        return f'''<circle {c} r="{f(r)}" fill="{OUTLINE}"/>
+<circle {c} r="{f(r*0.972)}" fill="#E00A06"/>
+<circle {c} r="{f(r*0.946)}" fill="url(#ring)"/>
+<circle {c} r="{f(r*0.905)}" fill="url(#body)"/>
+<g clip-path="url(#bodyclip)">
+  <circle {c} r="{f(r*0.905)}" fill="url(#bounce)"/>
+  <circle {c} r="{f(r*0.905)}" fill="url(#keylight)"/>
+  <ellipse cx="{f(cx)}" cy="{f(cy - r*0.62)}" rx="{f(r*0.74)}" ry="{f(r*0.36)}" fill="url(#sheen)"/>
+</g>
+<path d="{reflection(cx, cy, r)}" fill="none" stroke="url(#reflect)" stroke-width="{f(r*0.06)}" stroke-linecap="round"/>
+<path d="{letters}" fill="#FFFFFF" filter="url(#shadow)"/>'''
+    if mode == "flat":
+        return f'''<circle {c} r="{f(r)}" fill="{FLAT_RIM}"/>
+<circle {c} r="{f(r*0.93)}" fill="{FLAT_ORB}"/>
+<path d="{letters}" fill="{WHITE}"/>'''
+    return (f'<path fill="currentColor" fill-rule="evenodd" d="M{f(cx-r)} {f(cy)}a{f(r)} {f(r)} 0 1 0 {f(2*r)} 0'
+            f'a{f(r)} {f(r)} 0 1 0 {f(-2*r)} 0Z {letters}"/>')
+
+def ball(x, y, mode):
+    c = f'cx="{f(x)}" cy="{f(y)}"'
+    if mode == "color":
+        hx, hy = x - RE * 0.34, y - RE * 0.36
+        return (f'<circle {c} r="{f(RE)}" fill="{OUTLINE}"/>'
+                f'<circle {c} r="{f(RE*0.9)}" fill="#FFE9D0"/>'
+                f'<circle {c} r="{f(RE*0.84)}" fill="url(#ball)"/>'
+                f'<ellipse cx="{f(hx)}" cy="{f(hy)}" rx="{f(RE*0.27)}" ry="{f(RE*0.15)}" '
+                f'transform="rotate(-38 {f(hx)} {f(hy)})" fill="#FFFFFF" fill-opacity="0.9"/>')
+    if mode == "flat":
+        return (f'<circle {c} r="{f(RE)}" fill="{FLAT_RIM}"/>'
+                f'<circle {c} r="{f(RE*0.78)}" fill="{FLAT_ORB}"/>')
+    return f'<circle {c} r="{f(RE*0.92)}" fill="currentColor"/>'
+
+def svg(body, defs="", color=False):
+    col = ' color="#000000"' if color else ""
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{C}" height="{C}" viewBox="0 0 {C} {C}"{col}>\n'
+            f'<!-- {NOTE} -->\n{defs}\n{body}\n</svg>\n')
+
+NOTE = ("Beryllium Browser logo, round-1 vector master, generated by make-masters. "
+        "Copyright 2026 Beryllium Browser contributors, CC BY 4.0. "
+        "Letters: Inter outlines (SIL Open Font License 1.1). "
+        "The Beryllium name and logo are reserved, see TRADEMARKS.md.")
+
+def emblem(mode):
+    L = letters_path(OCX, OCY, R)
+    balls = "\n".join(ball(x, y, mode) for x, y in ELECTRONS)
+    if mode == "mono":
+        gap = T * 0.32
+        cut = f'<circle cx="{f(OCX)}" cy="{f(OCY)}" r="{f(R + gap)}" fill="#000"/>'
+        defs = f'''<defs>
+  <mask id="behindorb" maskUnits="userSpaceOnUse"><rect width="{C}" height="{C}" fill="#fff"/>{cut}</mask>
+  <mask id="behindB" maskUnits="userSpaceOnUse"><rect width="{C}" height="{C}" fill="#fff"/>
+    {orbit("B", stroke="#000", stroke_width=f(T*0.8 + 2*gap))}{cut}</mask>
+</defs>'''
+        body = (f'<g mask="url(#behindB)">{tube("A", mode)}</g>\n'
+                f'<g mask="url(#behindorb)">{tube("B", mode)}</g>\n'
+                + orb(OCX, OCY, R, mode, L) + "\n" + balls)
+        return svg(body, defs, color=True)
+    body = tube("A", mode) + "\n" + tube("B", mode) + "\n" + orb(OCX, OCY, R, mode, L) + "\n" + balls
+    return svg(body, defs_color(OCX, OCY, R) if mode == "color" else "")
+
+def small_orb(mode):
+    r = C / 2 - C * 0.03
+    L = letters_path(C / 2, C / 2, r)
+    if mode == "color":
+        return svg(orb(C / 2, C / 2, r, mode, L), defs_color(C / 2, C / 2, r))
+    return svg(orb(C / 2, C / 2, r, mode, L), "", color=(mode == "mono"))
+
+# ---- wordmark: emblem | rule | "Beryllium" (Bold) over "Browser" (Regular) ----
+# Layout in the art lockup's pixels (artwork/wordmark/beryllium-lockup.png,
+# 479 x 136): emblem 132 high, rule 19 px to its right, text 29 px after the
+# rule; there "Beryllium" has cap height 51 on baseline 70 and "Browser" 43
+# on 123. Inter is wider than the art's face in bold and narrower in regular,
+# so here the text is a little smaller (47 and 40) and the lines are
+# left-aligned at natural spacing instead of justified.
+INK = "#060606"
+WM = dict(height=136, emblem_top=2, emblem_h=132, gap1=19, rule_w=3, rule_top=10,
+          rule_bottom=126, gap2=29, line1=("Beryllium", "bold", 47, 67, -0.02),
+          line2=("Browser", "regular", 40, 120, -0.01), pad=4, scale=4)
+
+def shaped_path(path, text, cap, x0, baseline, track):
+    import uharfbuzz as hb
+    tt = TTFont(path); gs = tt.getGlyphSet(); order = tt.getGlyphOrder()
+    upem = tt["head"].unitsPerEm; s = cap / tt["OS/2"].sCapHeight
+    face = hb.Face(hb.Blob.from_file_path(path)); font = hb.Font(face)
+    buf = hb.Buffer(); buf.add_str(text); buf.guess_segment_properties()
+    hb.shape(font, buf, {"kern": True, "liga": True})
+    pen = SVGPathPen(gs, ntos=lambda v: f"{v:.2f}")
+    x = 0.0; right = x0
+    for info, pos in zip(buf.glyph_infos, buf.glyph_positions):
+        g = gs[order[info.codepoint]]
+        gx = x0 + (x + pos.x_offset) * s
+        g.draw(TransformPen(pen, (s, 0, 0, -s, gx, baseline - pos.y_offset * s)))
+        bp = BoundsPen(gs); g.draw(bp)
+        if bp.bounds:
+            right = max(right, gx + bp.bounds[2] * s)
+        x += pos.x_advance + track * upem
+    return pen.getCommands(), right
+
+def emblem_parts():
+    """Defs and body of the colour emblem, plus its bounding box (canvas units)."""
+    L = letters_path(OCX, OCY, R)
+    body = (tube("A", "color") + "\n" + tube("B", "color") + "\n" + orb(OCX, OCY, R, "color", L)
+            + "\n" + "\n".join(ball(x, y, "color") for x, y in ELECTRONS))
+    x0 = X(AXIS_X - E_BOT[0]) - RE; x1 = X(AXIS_X + E_BOT[0]) + RE
+    y0 = Y(E_TOP[1]) - RE; y1 = Y(E_BOT[1]) + RE
+    return defs_color(OCX, OCY, R), body, (x0, y0, x1, y1)
+
+def wordmark(on):
+    ink = INK if on == "light" else "#FFFFFF"
+    k = WM["scale"]
+    defs, body, (bx0, by0, bx1, by1) = emblem_parts()
+    es = WM["emblem_h"] * k / (by1 - by0)
+    ew = (bx1 - bx0) * es
+    ex, ey = WM["pad"] * k, WM["emblem_top"] * k
+    rule_x = ex + ew + WM["gap1"] * k
+    text_x = rule_x + WM["rule_w"] * k + WM["gap2"] * k
+    paths, right = [], text_x
+    for text, weight, cap, base, track in (WM["line1"], WM["line2"]):
+        d, r = shaped_path(FONT if weight == "bold" else FONT_REGULAR, text, cap * k, text_x, base * k, track)
+        paths.append(d); right = max(right, r)
+    w, h = right + WM["pad"] * k, WM["height"] * k
+    out = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{f(w / k)}" height="{f(h / k)}" viewBox="0 0 {f(w)} {f(h)}">\n'
+           f'<!-- {NOTE} -->\n{defs}\n'
+           f'<g transform="translate({f(ex)} {f(ey)}) scale({es:.6f}) translate({f(-bx0)} {f(-by0)})">\n{body}\n</g>\n'
+           f'<rect x="{f(rule_x)}" y="{f(WM["rule_top"] * k)}" width="{f(WM["rule_w"] * k)}" '
+           f'height="{f((WM["rule_bottom"] - WM["rule_top"]) * k)}" fill="{ink}"/>\n'
+           f'<path fill="{ink}" d="{paths[0]}"/>\n<path fill="{ink}" d="{paths[1]}"/>\n</svg>\n')
+    return out
+
+for on in ("light", "dark"):
+    open(f"{OUT}/beryllium-wordmark-on-{on}.svg", "w").write(wordmark(on))
+
+for mode in ("color", "flat", "mono"):
+    open(f"{OUT}/beryllium-emblem-{mode}.svg", "w").write(emblem(mode))
+    open(f"{OUT}/beryllium-orb-{mode}.svg", "w").write(small_orb(mode))
+print("wrote", sorted(os.listdir(OUT)))

@@ -10,4 +10,5 @@ tools); the name and logo are reserved ([TRADEMARKS.md](../TRADEMARKS.md)).
 
 | Round | Date | Contents | Status |
 |---|---|---|---|
-| [round-0](2026-11-05-round-0/README.md) | 5 Nov 2026 | Vector reconstruction of the art set v2 emblem and small mark: colour, flat, one-colour | draft, for review |
+| [round-0](2026-11-05-round-0/README.md) | 5 Nov 2026 | Vector reconstruction of the art set v2 emblem and small mark: colour, flat, one-colour | approved as the master; letters changed to Inter Bold in round 1 |
+| [round-1](2026-11-05-round-1/README.md) | 5 Nov 2026 | Masters with Inter Bold, hand-fitted flat icons (16 to 32 px), the full icon set, vector wordmark for light and dark backgrounds | for review |
