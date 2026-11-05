@@ -71,9 +71,9 @@ files named below.
 | `pages` | 20 internal pages load without a crash or error page, and none says "Helium" (except the credits) | |
 | `videodiag` | with `--diagnose`: video playback under ten switch sets, as a table (the last forces the GPU memory buffer path Beryllium turns off with NVIDIA) | `video-diagnosis.txt` |
 | `media` | codec support (VP9, AV1, Opus, H.264, AAC); H.264, VP9 and AV1 clips play; AV1, VP9 and Opus through Media Source Extensions, the way YouTube streams | `media-codecs.json` |
-| `capsicum` | with `--diagnose`: what capability mode would refuse, per process type, and each process's descriptors (the input to the renderer sandbox) | `capsicum-survey.txt`, `.json`, `capsicum-kdump.txt.gz` |
+| `capsicum` | with `--diagnose`: what capability mode would refuse, per process type, and each process's descriptors with their Capsicum rights (the input to the renderer sandbox) | `capsicum-survey.txt`, `.json`, `capsicum-kdump.txt.gz` |
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
-| `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17) | |
+| `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17); renderers hold no directory or writable file, and their shared memory is anonymous with limited rights (`procstat -f`, `procstat -C`) | |
 | `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host (a local proxy records and refuses every connection) | `privacy-*.txt` |
 | `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |

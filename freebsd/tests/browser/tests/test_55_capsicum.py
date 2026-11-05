@@ -189,6 +189,7 @@ class CapsicumSurvey(unittest.TestCase):
                                         "limits": capsicum.limits(pid)}
                 s["workloads"].append(workload)
                 s["fds"] = capsicum.descriptors(pid)
+                s["rights"] = capsicum.rights(pid)
 
         try:
             sample("start")

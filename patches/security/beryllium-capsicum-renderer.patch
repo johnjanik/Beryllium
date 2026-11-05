@@ -20,7 +20,9 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
     0 in capability mode instead of ending the process;
   - a utrace(2) marker ("BERYLLIUM-LOCKDOWN") at the lockdown point, always,
     so the survey can split each renderer's trace into before and after
-    the lockdown; utrace is a no-op unless the process is traced;
+    the lockdown; with the feature on it is the last call before
+    cap_enter(), after the descriptor sweep; utrace is a no-op unless the
+    process is traced;
   - cap_enter(), checked with cap_getmode(), only when the feature
     BerylliumCapsicumRenderer is enabled
     (--enable-features=BerylliumCapsicumRenderer). Daily use is unchanged
@@ -51,15 +53,25 @@ Stage: 4 (Beryllium series). Depends on the imported FreeBSD patches
   patch-base_system_sys__info__freebsd.cc and
   patch-base_system_sys__info__posix.cc (stage 2).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled: the next Poudriere build is the first.
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Built and
+  run since 0.20.3.3.
 Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
   test_50_sandbox shows renderers in capability mode and the rest of the
   suite shows what still breaks. Owner's machine, 0.20.3.3, 4 November
   2026: with the feature, every renderer in capability mode and the whole
   suite passing; the survey's after-lockdown list holds only
-  cpuset_getaffinity (18) and one open.
+  cpuset_getaffinity (18) and one open. 0.20.3.4, 5 November 2026: every
+  renderer in capability mode, no directory left to sweep, and the suite
+  passing except test_renderers_hold_no_directories_or_writable_files
+  (shared-memory files; beryllium-anonymous-shared-memory.patch); no open
+  after the lockdown any more (probably the libgcc_s preload); the 18
+  cpuset_getaffinity calls are most likely libc's
+  sysconf(_SC_NPROCESSORS_ONLN), which asks the root cpuset first (refused
+  in capability mode) and falls back to the processor count from the ELF
+  auxiliary vector. The marker then came before the descriptor sweep,
+  whose kern.proc.filedesc reads (2 per renderer) the survey counted as
+  after; it now comes after.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -258,7 +270,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -63,6 +76,128 @@
+@@ -63,6 +76,131 @@
  namespace sandbox {
  namespace policy {
  
@@ -278,7 +290,9 @@ security-review: required (sandbox setup, process confinement)
 +// then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
 +// splits each process's trace there, separating what happens before the
 +// lockdown (allowed) from what happens after it (must work in capability
-+// mode). utrace is a no-op unless the process is traced.
++// mode). It is the last call before cap_enter(), so the lockdown's own
++// preparation (the descriptor sweep reads kern.proc.filedesc) counts as
++// before. utrace is a no-op unless the process is traced.
 +constexpr char kLockdownMarker[] = "BERYLLIUM-LOCKDOWN";
 +
 +// What a renderer must read before capability mode refuses it, found by the
@@ -350,8 +364,8 @@ security-review: required (sandbox setup, process confinement)
 +// |closed_directories| receives how many directory descriptors were closed.
 +bool LockDownRenderer(int* closed_directories) {
 +  WarmUpForCapabilityMode();
-+  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (!base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer)) {
++    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +    return true;
 +  }
 +  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
@@ -368,6 +382,7 @@ security-review: required (sandbox setup, process confinement)
 +  if (caph_limit_stdio() != 0) {
 +    PLOG(WARNING) << "beryllium-sandbox: caph_limit_stdio";
 +  }
++  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (cap_enter() != 0) {
 +    return false;
 +  }
@@ -387,7 +402,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +309,22 @@
+@@ -174,6 +312,22 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  

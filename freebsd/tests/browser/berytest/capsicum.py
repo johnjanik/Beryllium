@@ -153,7 +153,65 @@ def risky_descriptors(fds):
         if d["vtype"] == "d":
             out.append(f"fd {d['fd']} directory {d['name']}")
         elif int(d["fd"]) > 2 and "w" in d["flags"] and d["vtype"] == "r":
-            out.append(f"fd {d['fd']} writable file {d['name']}")
+            name = d["name"].strip()
+            if name in ("", "-"):
+                # No path: an unlinked file. Before the memfd patch, Chromium's
+                # shared memory on FreeBSD was exactly that, in TMPDIR.
+                out.append(f"fd {d['fd']} writable file with no name (unlinked)")
+            else:
+                out.append(f"fd {d['fd']} writable file {name}")
+    return out
+
+
+# Rights only a descriptor nobody limited has all of: fchdir, fchroot,
+# fexecve, fsck, ftruncate, fchmod, fchown (procstat -C short names).
+UNLIMITED_MARKERS = {"cd", "ct", "fe", "fk", "ft", "cm", "cn"}
+
+
+def rights(pid, text=None):
+    """{fd: {type, rights, name}} from procstat -C -f: each descriptor's
+    Capsicum rights in procstat's short names (rd read, wr write, mm mmap,
+    mmr/mrw/mmx map read/read-write/executable, ft ftruncate, fs fstat, fc
+    fcntl, cm fchmod...). "-" in procstat means none; a descriptor nobody
+    limited has all of them."""
+    rows = _table(text if text is not None else _run(["procstat", "-C", "-f", str(pid)]))
+    out = {}
+    for r in rows:
+        fd = r.get("FD", "")
+        if not fd.isdigit():
+            continue
+        caps = r.get("CAPABILITIES", "-")
+        out[fd] = {"type": r.get("T", ""),
+                   "rights": [] if caps == "-" else caps.split(","),
+                   "name": r.get("NAME", "").strip()}
+    return out
+
+
+def rights_summary(names):
+    """Short form for reports: "all" for an unlimited descriptor."""
+    if UNLIMITED_MARKERS <= set(names):
+        return "all"
+    return ",".join(names) or "none"
+
+
+# What no holder of a shared memory descriptor should be able to do
+# (S-SHM-01, S-SHM-02): the region's size is sealed, and nothing maps it
+# executable or changes its owner or mode.
+SHM_FORBIDDEN = (("ft", "truncate"), ("mmx", "map executable"),
+                 ("fe", "execute"), ("cm", "chmod"), ("cn", "chown"))
+
+
+def shared_memory_problems(rights_by_fd):
+    """Shared memory descriptors (type h) holding a forbidden right."""
+    out = []
+    for fd in sorted(rights_by_fd, key=int):
+        r = rights_by_fd[fd]
+        if r["type"] != "h":
+            continue
+        bad = [why for abbr, why in SHM_FORBIDDEN if abbr in r["rights"]]
+        if bad:
+            out.append(f"fd {fd} shared memory can {', '.join(bad)} "
+                       f"(rights: {rights_summary(r['rights'])})")
     return out
 
 
@@ -272,6 +330,9 @@ def report(summary, samples, readable_from=None):
         t = summary.get(ptype, empty)
         count = len(t["pids"]) or sum(1 for s in samples.values() if s.get("type") == ptype)
         lines += [f"== {ptype} ({count} processes)", ""]
+        if ptype == "unknown":
+            lines += ["Processes the browser never listed: they started and ended between "
+                      "two samples (a renderer that wrote the marker was a renderer).", ""]
         note = (f"readable in capability mode per {readable_from}" if readable_from
                 else "no oracle result for this kernel to say which are readable")
         blocked = set(t["sysctl_blocked"]) if t.get("sysctl_blocked") is not None else None
@@ -293,18 +354,21 @@ def report(summary, samples, readable_from=None):
                 lines.append("No capability failures recorded.")
                 lines.append("")
             _failures(lines, t["cap"], t["cap_paths"],
-                      "Would be refused in capability mode (no lockdown marker in this "
-                      "build, so start-up and later are mixed):")
+                      "Would be refused in capability mode (this process type has no "
+                      "lockdown point yet, so start-up and later are mixed):")
             _sysctls(lines, t["sysctl"], blocked, note, "Sysctls read")
         sample = next((samples[pid] for pid in t["pids"] if pid in samples), None)
         if sample is None:
             sample = next((s for s in samples.values() if s.get("type") == ptype), None)
         if sample:
-            lines.append(f"Descriptors of pid {sample['pid']} (procstat -f, after "
+            lines.append(f"Descriptors of pid {sample['pid']} (procstat -f and -C, after "
                          f"{', '.join(sample.get('workloads', [])) or 'start'}):")
+            caps = sample.get("rights", {})
             for d in sample.get("fds", []):
+                r = caps.get(d["fd"])
+                tail = f"  [{rights_summary(r['rights'])}]" if r else ""
                 lines.append(f"  {d['fd']:>5} {d['type']:<2}{d.get('vtype', ''):<2} "
-                             f"{d['flags']:<10} {d['name']}")
+                             f"{d['flags']:<10} {d['name'].rstrip()}{tail}")
             lines.append(f"Environment variable names: {', '.join(sample.get('env', [])) or '(none)'}")
             lim = sample.get("limits", {})
             if lim:

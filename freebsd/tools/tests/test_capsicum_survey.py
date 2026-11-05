@@ -42,6 +42,17 @@ PROCSTAT_L = """\
  4242 beryllium        coredumpsize                0 B              0 B
  4242 beryllium        cputime              infinity         infinity
 """
+# procstat -C -f: rights in short names, right-aligned, "-" for none; an
+# unlimited descriptor lists every right (abridged here to the markers).
+PROCSTAT_C = """\
+  PID COMM                FD T FLAGS    CAPABILITIES                     PRO NAME
+ 4242 beryllium         text v r------- -                                -   /usr/local/share/beryllium/beryllium
+ 4242 beryllium            3 s rw------ rd,wr,se,mm,cr,fe,fy,ft,cd,cf,cm,cn,ct,fk UDS 0 0
+ 4242 beryllium           19 h rw------ rd,wr,se,mm,fc,fs,prd,pwr,mmr,mmw,mrw -   memfd:shared-memory-region
+ 4242 beryllium           24 h rw------     rd,se,mm,fc,fs,prd,mmr -   memfd:shared-memory-region
+ 4242 beryllium           25 h rw------ rd,wr,se,mm,fe,fy,ft,cd,cm,cn,ct,fk,mmx -   anon
+ 4242 beryllium            9 v r------- -                                -   /usr/local/share/beryllium/resources.pak
+"""
 MARKER_HEX = " ".join(f"{b:02x}" for b in b"BERYLLIUM-LOCKDOWN")
 KDUMP_MARKED = f"""\
  6000 beryllium NAMI  "/libexec/ld-elf.so.1"
@@ -133,6 +144,28 @@ class Parse(unittest.TestCase):
         self.assertEqual(risky, ["fd 20 directory /",
                                  "fd 64 writable file /home/u/.config/beryllium/LOG"])
 
+    def test_unnamed_writable_file_is_called_unlinked(self):
+        text = PROCSTAT_F + " 4242 beryllium           21 v r rw------   1       0 -   -                 \n"
+        self.assertEqual(capsicum.risky_descriptors(capsicum.descriptors(4242, text)),
+                         ["fd 21 writable file with no name (unlinked)"])
+
+    def test_rights(self):
+        r = capsicum.rights(4242, PROCSTAT_C)
+        self.assertEqual(sorted(r, key=int), ["3", "9", "19", "24", "25"])  # no "text"
+        self.assertEqual(r["19"]["type"], "h")
+        self.assertEqual(r["19"]["name"], "memfd:shared-memory-region")
+        self.assertIn("mrw", r["19"]["rights"])
+        self.assertEqual(r["9"]["rights"], [])
+        self.assertEqual(capsicum.rights_summary(r["3"]["rights"]), "all")
+        self.assertEqual(capsicum.rights_summary(r["24"]["rights"]), "rd,se,mm,fc,fs,prd,mmr")
+        self.assertEqual(capsicum.rights_summary([]), "none")
+
+    def test_shared_memory_problems(self):
+        problems = capsicum.shared_memory_problems(capsicum.rights(4242, PROCSTAT_C))
+        # 19 (writable, limited) and 24 (read-only twin) pass; 3 is a socket.
+        self.assertEqual(problems, ["fd 25 shared memory can truncate, map executable, "
+                                    "execute, chmod, chown (rights: all)"])
+
     def test_environment_values_never_kept(self):
         names = capsicum.environment_names(4242, PROCSTAT_E)
         self.assertNotIn("/home/u", " ".join(names))
@@ -154,6 +187,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(summary["renderer"]["sysctl_blocked"], ["vm.stats.vm.v_page_count"])
         samples = {4242: {"pid": 4242, "type": "renderer", "workloads": ["text"],
                           "fds": capsicum.descriptors(4242, PROCSTAT_F),
+                          "rights": capsicum.rights(4242, PROCSTAT_C),
                           "env": ["HOME"], "limits": {}},
                    9999: {"pid": 9999, "type": "utility", "workloads": ["pdf"],
                           "fds": [], "env": [], "limits": {}}}
@@ -161,7 +195,8 @@ class Parse(unittest.TestCase):
         self.assertLess(text.index("== renderer"), text.index("== gpu"))
         self.assertIn("vm.stats.vm.v_page_count  REFUSED in capability mode", text)
         self.assertIn("hw.ncpu  ok", text)
-        self.assertIn("resources.pak", text)
+        self.assertIn("resources.pak  [none]", text)
+        self.assertIn("0 0  [all]", text)
         self.assertIn("== utility (1 processes)", text)  # sampled, no trace lines
 
 

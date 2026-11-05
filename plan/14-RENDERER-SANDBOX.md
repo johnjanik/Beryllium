@@ -88,17 +88,49 @@ FreeBSD test bed, so an increment must be worth a build.
    renderer holding about 120 descriptors inherited from the browser,
    among them directories (`/`, `/usr`, `/usr/local`, `/usr/local/etc`) and
    writable profile databases, which capability mode leaves usable.
-3. **Descriptor hygiene and allowlist** (started, in the build after
-   0.20.3.3): `patches/security/beryllium-close-inherited-descriptors.patch`
+   **Results, 0.20.3.4 (5 November 2026):** every renderer in capability
+   mode again; after the lockdown point only `cpuset_getaffinity` (18
+   calls over 20 renderers) is refused, and the `open` is gone (probably
+   the `libgcc_s` preload). The 18 calls are most likely libc's
+   `sysconf(_SC_NPROCESSORS_ONLN)`, which asks the root cpuset first
+   (refused in capability mode, which allows only `CPU_LEVEL_WHICH` for the
+   process itself) and then falls back to the processor count from the ELF
+   auxiliary vector, so they cost nothing. The survey also counted 40
+   `kern.proc.filedesc` reads after the marker: the lockdown's own
+   directory sweep, which ran after the marker and before `cap_enter`. The
+   marker is now the last call before `cap_enter` (build 0.20.3.5).
+3. **Descriptor hygiene and allowlist** (started in 0.20.3.4):
+   `patches/security/beryllium-close-inherited-descriptors.patch`
    makes every child close what it inherits (`/dev/fd` lists only 0-2 on
    FreeBSD without fdescfs, so Chromium's own walk closed nothing), and the
    lockdown closes and counts any directory descriptor left before
-   `cap_enter`. A sandbox test now fails on any renderer holding a
-   directory or writable file. Then: `closefrom` in the launcher, the
-   committed renderer allowlist from the survey, rights limits per
-   descriptor, environment allowlist.
-4. **Shared memory without a namespace:** `memfd_create` with seals for
-   regions renderers create.
+   `cap_enter`. A sandbox test fails on any renderer holding a
+   directory or writable file.
+   **Results, 0.20.3.4:** with and without the lockdown, renderers hold
+   about 30 descriptors instead of about 120, and no directory or profile
+   file. Even without the lockdown's sweep (the run without the feature),
+   none holds a directory, so the launcher fix alone removes them. The
+   test still fails: each renderer holds five to nine writable regular
+   files with no name. They are Chromium's shared memory regions, which on
+   FreeBSD are unlinked files in TMPDIR (increment 4).
+   Then: the committed renderer allowlist from the survey, rights limits
+   per descriptor (the survey now prints each descriptor's rights),
+   environment allowlist.
+4. **Shared memory without a namespace** (written 5 November 2026, in
+   build 0.20.3.5: `patches/security/beryllium-anonymous-shared-memory.patch`,
+   S-SHM-01, S-SHM-02): every region is a `memfd_create` object sealed
+   against shrinking and growing, as on Linux, instead of an unlinked file
+   in `/tmp`, which put page content on a disk file system and let a
+   renderer write, truncate, grow and map executable its files. The
+   read-only twin is a duplicate limited to `CAP_MMAP_R`, `CAP_FSTAT` and
+   `CAP_FCNTL` (`F_GETFL` only), and the writable descriptor to
+   `CAP_MMAP_RW`, `CAP_FSTAT` and `CAP_FCNTL`; Chromium's access-mode check
+   reads the rights. The Capsicum oracle had already shown on 14.5, 15.1
+   and 16.0-CURRENT that such a twin cannot be mapped writable or
+   executable or upgraded with `mprotect`. Renderers do not create regions
+   themselves (Mojo's broker asks the browser; the survey finds no
+   creation attempt after the lockdown), and with memfd they could. New
+   test: `test_renderer_shared_memory_is_anonymous_and_limited`.
 5. **Attestation and status:** the browser checks each renderer's
    capability mode with the kernel and refuses an unconfined one;
    `beryllium://sandbox` shows the kernel's answer; the release's sandbox

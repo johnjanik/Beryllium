@@ -79,3 +79,30 @@ class SandboxHonesty(BrowserTest):
                           "(security.bsd.unprivileged_proc_debug=0?)")
         self.note("\n".join(problems) or f"{read} renderers: none")
         self.assertEqual(problems, [], "renderers hold descriptors they must not")
+
+    def test_renderer_shared_memory_is_anonymous_and_limited(self):
+        """Renderers hold shared memory only as memfd objects, none of which
+        can be truncated, mapped executable or changed (S-SHM-01, S-SHM-02)."""
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        problems, read, objects, lines = [], 0, 0, []
+        for p in procs:
+            if p["type"] != "renderer":
+                continue
+            caps = capsicum.rights(p["id"])
+            if caps:
+                read += 1
+            shm = {fd: r for fd, r in caps.items() if r["type"] == "h"}
+            objects += len(shm)
+            lines += [f"renderer {p['id']}: fd {fd} {r['name'] or '-'} "
+                      f"[{capsicum.rights_summary(r['rights'])}]"
+                      for fd, r in sorted(shm.items(), key=lambda kv: int(kv[0]))]
+            problems += [f"renderer {p['id']}: {x}"
+                         for x in capsicum.shared_memory_problems(caps)]
+        if not read:
+            self.skipTest("procstat could not read renderer descriptors "
+                          "(security.bsd.unprivileged_proc_debug=0?)")
+        self.note("\n".join(lines) or f"{read} renderers: no shared memory objects")
+        self.assertGreater(objects, 0, "no renderer holds a shared memory object: "
+                           "is shared memory still kept as files in TMPDIR?")
+        self.assertEqual(problems, [], "shared memory descriptors with too many rights")
