@@ -76,8 +76,9 @@ chromium=$(cat "$REPO_ROOT/helium/chromium_version.txt")
 cat >"$OUT/NOTES.md" <<EOF
 Beryllium $version (Chromium $chromium) for FreeBSD amd64.
 
-**Development build: no sandbox yet.** No Beryllium process is confined;
-a compromised web page is not contained.
+**Development build: no sandbox yet.** By default no Beryllium process is
+confined; a compromised web page is not contained. The README describes
+an experimental, opt-in renderer lockdown, not yet a complete sandbox.
 
 Install: download \`install.sh\` from the repository, read it, and run
 \`sh install.sh\`; it picks the package for your FreeBSD version and checks

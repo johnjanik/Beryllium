@@ -3,8 +3,11 @@
   message: <<EOM
 Beryllium is a development build (Phase 1).
 
-Sandbox status: none. Like www/chromium today, no Beryllium process runs in
-Capsicum capability mode yet, and beryllium://gpu says "Sandboxed: false".
+Sandbox status: none by default. Like www/chromium today, no Beryllium
+process runs in Capsicum capability mode, and beryllium://gpu says
+"Sandboxed: false". An experimental renderer lockdown, not yet a complete
+sandbox, can be tried with:
+    beryllium --enable-features=BerylliumCapsicumRenderer
 Do not rely on this release to contain a compromised web page. The sandbox
 status of each release is published at https://github.com/johnjanik/Beryllium.
 
