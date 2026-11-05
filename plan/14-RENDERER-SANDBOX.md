@@ -154,6 +154,24 @@ FreeBSD test bed, so an increment must be worth a build.
    and the network, storage and audio processes none either. Only
    renderers hold the remaining file, and it has every Capsicum right, so
    it does not come from the memfd path, which limits rights at creation.
+   **Identified** with the new diagnostics (same day): 0 bytes, mode
+   `-rw-------`, held by no other process; renderers look nothing up in
+   `/tmp`, the browser looks up `/tmp/.org.chromium.Chromium.XXXXXX` 63
+   times for about 21 renderers, three lookups each (create, open,
+   unlink). That is `RenderProcessHostImpl::ProvideSwapFileForRenderer()`:
+   a swap file for Blink's `DiskDataAllocator`, which writes compressed
+   parked strings (scripts of background tabs; on by default on Linux and
+   FreeBSD) and images into it. Every normal renderer gets one, Incognito
+   renderers none. `patches/security/beryllium-no-renderer-swap-file.patch`
+   (build 0.20.3.7) skips it unless `BerylliumRendererSwapFile` is
+   enabled, so parked data stays compressed in memory, as in Incognito.
+   **Results, 0.20.3.7 (5 November 2026), with and without the
+   lockdown:** the whole suite passes, the descriptor test included: no
+   renderer holds a directory or a writable file, and with the lockdown
+   every renderer is in capability mode. What remains for increment 3 is
+   the committed allowlist, rights limits on the descriptors that are
+   still unlimited (the Mojo sockets, the resource paks, the V8 snapshot,
+   stdio) and the environment allowlist.
 5. **Attestation and status:** the browser checks each renderer's
    capability mode with the kernel and refuses an unconfined one;
    `beryllium://sandbox` shows the kernel's answer; the release's sandbox
