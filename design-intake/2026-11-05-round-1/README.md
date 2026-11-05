@@ -1,7 +1,9 @@
 # Round 1: masters with Inter Bold, hand-fitted small icons, vector wordmark
 
-**Date:** 5 November 2026. **Status:** for review. Nothing here is used by
-the build; `artwork/` and `branding/` are unchanged.
+**Date:** 5 November 2026. **Status:** approved by the owner and
+integrated the same day: the masters, icons and tools now live in
+`artwork/` and `branding/tools/`, which the build uses. This folder is
+the record of the review.
 
 ## Owner's decisions on round 0 (5 November 2026)
 

@@ -1,8 +1,8 @@
 <div align="center">
     <picture>
         <source media="(prefers-color-scheme: dark)"
-            srcset="artwork/wordmark/beryllium-lockup-dark.png" />
-        <img src="artwork/wordmark/beryllium-lockup.png"
+            srcset="artwork/wordmark/beryllium-wordmark-on-dark.svg" />
+        <img src="artwork/wordmark/beryllium-wordmark-on-light.svg"
             title="Beryllium Browser" alt="Beryllium Browser" width="420" />
     </picture>
     <p>
@@ -236,7 +236,7 @@ edited; Beryllium's changes are separate patches applied after it.
 | `freebsd/ports/` | The Poudriere port, with the imported FreeBSD Chromium patch set |
 | `freebsd/tests/` | The browser test suite and the Capsicum kernel tests |
 | `freebsd/tools/` | Build, patch, release and checking tools |
-| `artwork/` | Logo, wordmark, icons and the source art sheet (CC BY 4.0) |
+| `artwork/` | Vector masters of the logo and wordmark, the icons, and the source art sheet (CC BY 4.0) |
 | `branding/` | Tools that prepare the artwork, and the branding files the build uses |
 | `install.sh` | The installer |
 | `plan/` | Design and planning documents |
