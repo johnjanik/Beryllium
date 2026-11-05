@@ -58,9 +58,8 @@ and Helium 0.20.3.
   share as deleted files in `/tmp`, so page content could reach the disk
   and any process holding one could rewrite or resize it. It is now
   anonymous memory, sealed against resizing, and read-only where it should
-  be, enforced by Capsicum rights. One unnamed writable file per renderer
-  remains, from a part of Chromium not yet identified (see
-  [Known issues](#known-issues)).
+  be, enforced by Capsicum rights. Each renderer still receives one file
+  of another kind (see [Known issues](#known-issues)).
 - **Experimental renderer lockdown**, off by default (below).
 
 ### Sandbox status of this release
@@ -167,11 +166,13 @@ set it, and the launcher will not start the browser without it.
 ### Known issues
 
 - **WebGPU** finds no adapter.
-- **One unnamed file per renderer.** Each renderer still holds one
-  writable file that has no name any more, most likely a deleted
-  temporary file, with or without the experimental lockdown. Which part of
-  Chromium creates it is not yet known; the test suite's sandbox group
-  reports it (`test_renderers_hold_no_directories_or_writable_files`).
+- **Page data of background tabs can reach `/tmp`.** Chromium gives each
+  renderer a file in `/tmp`, deleted as soon as it is created, where the
+  renderer stores compressed page data, such as the scripts of tabs that
+  have been in the background for a while. Incognito windows never get
+  one. It is the one writable file the test suite still finds in each
+  renderer, with or without the experimental lockdown. The next build
+  stops it: that data then stays compressed in memory, as in Incognito.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
