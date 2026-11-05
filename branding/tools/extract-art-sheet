@@ -5,7 +5,10 @@
 The art set v2 sheet (artwork/source/beryllium-art-sheet-v2.webp) is one
 RGB image with a checkerboard painted behind the artwork, not real
 transparency. This finds the checkerboard and removes it, and writes each
-asset as an RGBA PNG to artwork/logo/ and artwork/wordmark/.
+asset as an RGBA PNG to artwork/source/cutouts/. Since 5 November 2026 the
+cut-outs are provenance only: the vector masters in artwork/logo/ and
+artwork/wordmark/ (branding/tools/make-masters) were measured from them,
+and the build uses the masters.
 
 How the background is found: bright, neutral regions are candidates; a
 region is background only if, with its anti-aliased rim removed, it still
@@ -39,22 +42,23 @@ from scipy import ndimage as ndi
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARTWORK = os.path.abspath(os.path.join(HERE, "..", "..", "artwork"))
 SHEET = os.path.join(ARTWORK, "source", "beryllium-art-sheet-v2.webp")
+CUTOUTS = os.path.join(ARTWORK, "source", "cutouts")
 LUMA = np.array([0.299, 0.587, 0.114], np.float32)
 
-# output path under artwork/: (x0, y0, x1, y1) on the 1536 x 1024 sheet,
+# output file in artwork/source/cutouts/: (x0, y0, x1, y1) on the 1536 x 1024 sheet,
 # from connected components.
 ASSETS = {
-    "logo/beryllium-emblem.png": (66, 27, 478, 491),
-    "logo/beryllium-orb.png": (1007, 141, 1287, 413),
-    "logo/beryllium-orb-grey.png": (1338, 248, 1504, 407),
-    "logo/beryllium-emblem-mono.png": (1342, 417, 1498, 553),
-    "wordmark/beryllium-lockup.png": (36, 539, 514, 673),
+    "beryllium-emblem.png": (66, 27, 478, 491),
+    "beryllium-orb.png": (1007, 141, 1287, 413),
+    "beryllium-orb-grey.png": (1338, 248, 1504, 407),
+    "beryllium-emblem-mono.png": (1342, 417, 1498, 553),
+    "beryllium-lockup.png": (36, 539, 514, 673),
 }
-DARK_VARIANTS = {"wordmark/beryllium-lockup.png": "wordmark/beryllium-lockup-dark.png"}
+DARK_VARIANTS = {"beryllium-lockup.png": "beryllium-lockup-dark.png"}
 # Text and rule of the lockup (sheet x >= this): pure black ink, so alpha
 # comes from darkness alone. The small counters of "B" and "e" can sit
 # mostly on white checker squares and would otherwise survive.
-INK_FROM_X = {"wordmark/beryllium-lockup.png": 176}
+INK_FROM_X = {"beryllium-lockup.png": 176}
 INK_RGB = (6, 6, 6)  # median of the lockup text
 CHECKER_LUMA = 230   # mean of the two checkerboard shades
 PAD = 6
@@ -164,7 +168,7 @@ def outputs():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", default=ARTWORK)
+    ap.add_argument("--out", default=CUTOUTS)
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)
     if not a.check:
@@ -178,9 +182,9 @@ def main(argv=None):
                or np.any(np.asarray(Image.open(os.path.join(tmp, n)))
                          != np.asarray(Image.open(os.path.join(a.out, n))))]
     if bad:
-        print("extract-art-sheet: masters differ from the sheet: " + ", ".join(bad))
+        print("extract-art-sheet: cut-outs differ from the sheet: " + ", ".join(bad))
         return 1
-    print("extract-art-sheet: masters match the sheet")
+    print("extract-art-sheet: cut-outs match the sheet")
     return 0
 
 

@@ -11,34 +11,45 @@ Licensed like the rest of `artwork/` (see `../README.md`).
 The checkerboard behind the artwork is painted into the image; it is not
 transparency.
 
-## What is taken from it
+## From the sheet to the masters
 
-`branding/tools/extract-art-sheet` cuts these out and removes the
-checkerboard (`--check` confirms the committed files match the sheet):
+1. **Cut-outs** (`cutouts/`, 3 November 2026):
+   `branding/tools/extract-art-sheet` cuts these out and removes the
+   checkerboard (`--check` confirms they match the sheet).
+2. **Vector masters** (5 November 2026): the geometry of
+   `cutouts/beryllium-emblem.png` was measured (orbit ellipses fitted to
+   the visible bands, orb, electrons, tube thickness, colours sampled) and
+   rebuilt as SVG by `branding/tools/make-masters`, which writes
+   `../logo/` and `../wordmark/`. The owner approved the rebuild as the
+   master on 5 November 2026; the review rounds, with comparisons against
+   the cut-outs, are in `design-intake/`.
 
-| File | On the sheet | Used for |
+Since then the build uses only the masters and what is made from them
+(see `branding/README.md`). The cut-outs stay as the record of where the
+geometry came from.
+
+| Cut-out | On the sheet | Was used for, until 5 November 2026 |
 |---|---|---|
-| `../logo/beryllium-emblem.png` (414 x 466) | top left: orb with "Be", two orbits, four electrons | icons from 48 px, lockups, `product_logo.svg`, onboarding page |
-| `../logo/beryllium-orb.png` (282 x 274) | top, third from left: plain orb with "Be" | icons at 16 to 32 px; proportions of the vector glyph |
-| `../logo/beryllium-orb-grey.png`, `../logo/beryllium-emblem-mono.png` | right column: grey orb, black silhouette | monochrome variants (not used by the build yet) |
-| `../wordmark/beryllium-lockup.png`, `../wordmark/beryllium-lockup-dark.png` | middle row, left: emblem, rule, "Beryllium Browser" | repository README (dark variant: white lettering) |
-
-`branding/tools/make-chromium-branding` then scales the logo masters to
-`../icons/` (16 to 256 px).
+| `cutouts/beryllium-emblem.png` (414 x 466) | top left: orb with "Be", two orbits, four electrons | icons from 48 px, lockups, WebUI logos; now the reference the masters were measured from |
+| `cutouts/beryllium-orb.png` (282 x 274) | top, third from left: plain orb with "Be" | icons at 16 to 32 px; proportions of the vector glyph |
+| `cutouts/beryllium-orb-grey.png`, `cutouts/beryllium-emblem-mono.png` | right column: grey orb, black silhouette | not used |
+| `cutouts/beryllium-lockup.png`, `cutouts/beryllium-lockup-dark.png` | middle row, left: emblem, rule, "Beryllium Browser" | repository README header; the wordmark master keeps its layout |
 
 ## Not used
 
 - The ten rounded-square icons at the lower right: they show three orbits;
   the design has two (owner's instruction, 3 November 2026).
-- The size ramps at the lower left: the masters are scaled instead, which
-  gives the exact sizes the browser needs.
+- The size ramps at the lower left: the small icons are drawn for each
+  size instead.
 - The second colour emblem (top middle) and the second and third lockups:
   variants of the ones above.
 - The grey emblem (right column, top): its glossy highlights are the same
   light greys as the painted checkerboard and cannot be separated cleanly.
 
-## Notes
+## Differences between the masters and the sheet
 
-The sheet is raster artwork at moderate resolution (the colour emblem is
-about 410 px across). That covers the browser's largest icon (256 px); a
-vector master would be needed for larger uses such as print.
+Made on purpose and approved with the masters: exact mirror symmetry,
+"Be" centred on the orb (the sheet sets it slightly right), a few defined
+gradients in place of the painted gloss, letters in Inter Bold, and in
+the wordmark the two lines left-aligned at Inter's natural spacing (the
+sheet's lettering is another typeface, set to equal widths).

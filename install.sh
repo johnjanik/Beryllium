@@ -129,8 +129,9 @@ sandbox_notice() {
 	cat <<'EOF'
 
 Beryllium is a development build. It has no sandbox yet: like the stock
-FreeBSD Chromium, no Beryllium process is confined, so a compromised web
-page is not contained. Do not rely on it for sensitive browsing.
+FreeBSD Chromium, by default no Beryllium process is confined, so a
+compromised web page is not contained. Do not rely on it for sensitive
+browsing.
 EOF
 }
 

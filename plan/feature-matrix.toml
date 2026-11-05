@@ -501,17 +501,18 @@ source = ["plan/01-PROJECT-CHARTER.md D2"]
 id = "F-ID-04"
 group = "Identity"
 title = "Artwork"
-need = "Art set v2 replaces every Helium logo and icon; the sheet's three-orbit icons are not used."
+need = "Art set v2, rebuilt as vector masters, replaces every Helium logo and icon; the sheet's three-orbit icons are not used."
 priority = "must"
 phase = 1
 implemented = "done"
 built = "v0.20.3.1-1"
 tested = "passing"
-where = ["artwork", "branding/tools/make-chromium-branding"]
+where = ["artwork", "branding/tools/make-masters", "branding/tools/make-small-icons",
+         "branding/tools/render-artwork", "branding/tools/make-chromium-branding"]
 tests = ["freebsd/tools/tests/test_branding.py"]
 evidence = "CI on every push"
 source = ["plan/01-PROJECT-CHARTER.md D2", "plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
-notes = "A vector master is still to make."
+notes = "Vector masters (emblem, small mark, wordmark; colour, flat, one colour), hand-fitted flat icons at 16 to 32 px and the vector README wordmark, approved by the owner on 5 Nov 2026 and integrated for the build after 0.20.3.5; release 0.20.3.1 ships the raster art set v2."
 
 [[feature]]
 id = "F-ID-05"

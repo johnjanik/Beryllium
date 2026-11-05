@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Pixel-fitted small icons: the flat orb with "Be" at 16, 22, 24 and 32 px.
+The orb is drawn smooth (16x supersampled), the letters are drawn pixel by
+pixel: '#' white, '+' half white, '.' orb. The letter shapes follow Inter
+Bold's coverage at each size (cap height 7, 8, 9 and 11 px), with vertical
+stems on whole pixels.
+Usage: tools/make-small-icons OUTDIR   (needs Pillow)"""
+import sys
+from PIL import Image, ImageDraw
+
+RIM, ORB, WHITE = (0xA0, 0x08, 0x06), (0xF4, 0x06, 0x02), (0xFF, 0xFF, 0xFF)
+
+GLYPHS = {
+ 16: dict(cap_top=4, left=3, rim=0.7, margin=0.5,
+   B=["####.",
+      "##.##",
+      "##.##",
+      "####.",
+      "##.##",
+      "##.##",
+      "####."],
+   e=[".###.",
+      "##.##",
+      "#####",
+      "##...",
+      ".####"]),
+ 22: dict(cap_top=7, left=5, rim=0.8, margin=0.5,
+   B=["####+.",
+      "##..##",
+      "##.+#+",
+      "####+.",
+      "##..##",
+      "##..##",
+      "##..##",
+      "####+."],
+   e=[".###.",
+      "##.##",
+      "#####",
+      "##...",
+      "##..+",
+      ".####"]),
+ 24: dict(cap_top=7, left=5, rim=0.85, margin=0.5,
+   B=["####+..",
+      "##..##.",
+      "##..##.",
+      "##.+##.",
+      "#####+.",
+      "##...##",
+      "##...##",
+      "##..+##",
+      "#####+."],
+   e=[".####.",
+      "##..##",
+      "##..##",
+      "######",
+      "##....",
+      "##..+#",
+      ".####+"]),
+ 32: dict(cap_top=10, left=8, rim=1.0, margin=0.5, gap=2,
+   B=["######+.",
+      "##...+##",
+      "##....##",
+      "##...+##",
+      "##+++##.",
+      "######+.",
+      "##...+##",
+      "##....##",
+      "##....##",
+      "########",
+      "######+."],
+   e=[".#####.",
+      "##...##",
+      "##...##",
+      "#######",
+      "##.....",
+      "##....+",
+      "+##++##",
+      ".+####."]),
+}
+
+def orb(size, rim, margin):
+    ss = 16
+    big = Image.new("RGBA", (size * ss, size * ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    r = (size / 2 - margin) * ss
+    c = size * ss / 2
+    d.ellipse([c - r, c - r, c + r, c + r], fill=RIM + (255,))
+    ri = r - rim * ss
+    d.ellipse([c - ri, c - ri, c + ri, c + ri], fill=ORB + (255,))
+    return big.resize((size, size), Image.BOX)
+
+def icon(size):
+    g = GLYPHS[size]
+    gap = g.get("gap", 1)
+    im = orb(size, g["rim"], g["margin"])
+    px = im.load()
+    def put(rows, x0, y0):
+        for j, row in enumerate(rows):
+            for i, ch in enumerate(row):
+                if ch == "#":
+                    px[x0 + i, y0 + j] = WHITE + (255,)
+                elif ch == "+":
+                    r, gg, b, a = px[x0 + i, y0 + j]
+                    px[x0 + i, y0 + j] = ((r + 255) // 2, (gg + 255) // 2, (b + 255) // 2, a)
+    B, e = g["B"], g["e"]
+    put(B, g["left"], g["cap_top"])
+    put(e, g["left"] + len(B[0]) + gap, g["cap_top"] + len(B) - len(e))
+    return im
+
+if __name__ == "__main__":
+    out = sys.argv[1] if len(sys.argv) > 1 else "."
+    for s in GLYPHS:
+        icon(s).save(f"{out}/beryllium-{s}.png")
+    print("wrote", [f"beryllium-{s}.png" for s in GLYPHS])

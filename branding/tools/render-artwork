@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Render the raster artwork that comes from the vector masters, with
+// Chromium (through Playwright), the engine the browser itself uses:
+//
+//   artwork/logo/beryllium-emblem-color.svg -> artwork/icons/beryllium-{48,64,128,256}.png
+//                                              artwork/logo/beryllium-emblem-color.png (1024)
+//
+// The 1024 px emblem is the input make-chromium-branding scales for the
+// lockups and the WebUI logos. The 16 to 32 px icons are drawn by hand
+// (make-small-icons). Renders are committed; run this after changing the
+// masters (make-masters), then make-chromium-branding and sync-port.
+// Output can differ by a few levels between Chromium versions, so there is
+// no byte check: review the renders when they change.
+//
+// Needs Node.js and Playwright with its Chromium:  render-artwork
+
+const fs = require('fs');
+const path = require('path');
+const { chromium } = require('playwright');
+
+const ARTWORK = path.resolve(__dirname, '..', '..', 'artwork');
+const EMBLEM = path.join(ARTWORK, 'logo', 'beryllium-emblem-color.svg');
+const JOBS = [
+  ...[48, 64, 128, 256].map((s) => ({ size: s, out: path.join(ARTWORK, 'icons', `beryllium-${s}.png`) })),
+  { size: 1024, out: path.join(ARTWORK, 'logo', 'beryllium-emblem-color.png') },
+];
+
+(async () => {
+  const svg = fs.readFileSync(EMBLEM);
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 64, height: 64 }, deviceScaleFactor: 1 });
+  for (const j of JOBS) {
+    await page.setViewportSize({ width: j.size, height: j.size });
+    await page.setContent('<html><body style="margin:0;background:transparent">' +
+      `<img id=i style="display:block;width:${j.size}px;height:${j.size}px" ` +
+      `src="data:image/svg+xml;base64,${svg.toString('base64')}"></body></html>`);
+    await page.waitForFunction(() => document.getElementById('i').complete);
+    await page.screenshot({ path: j.out, omitBackground: true });
+    console.log(`render-artwork: ${path.relative(path.resolve(ARTWORK, '..'), j.out)}`);
+  }
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });

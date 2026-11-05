@@ -1,8 +1,8 @@
 <div align="center">
     <picture>
         <source media="(prefers-color-scheme: dark)"
-            srcset="artwork/wordmark/beryllium-lockup-dark.png" />
-        <img src="artwork/wordmark/beryllium-lockup.png"
+            srcset="artwork/wordmark/beryllium-wordmark-on-dark.svg" />
+        <img src="artwork/wordmark/beryllium-wordmark-on-light.svg"
             title="Beryllium Browser" alt="Beryllium Browser" width="420" />
     </picture>
     <p>
@@ -23,18 +23,43 @@ Capsicum. Beryllium is an independent project; see
 
 > [!WARNING]
 > **Development build, no sandbox yet.** Beryllium works for everyday
-> browsing, but no Beryllium process is confined: like the stock
-> FreeBSD Chromium, a compromised web page has the same access to your
-> files and network as you do. `beryllium://gpu` says so
-> ("Sandboxed: false"). Do not rely on Beryllium to contain an attack yet.
+> browsing, but by default no Beryllium process is confined: like the
+> stock FreeBSD Chromium, a compromised web page has the same access to
+> your files and network as you do. `beryllium://gpu` says so
+> ("Sandboxed: false"). An experimental renderer lockdown can be switched
+> on ([below](#experimental-renderer-lockdown)); it is not yet a complete
+> sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.1**, based on Chromium 156.0.8078.79.
+Current release: **Beryllium 0.20.3.6**, based on Chromium 156.0.8078.79
+and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
 - **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland.
-- **Works:** browsing; video playback, including YouTube; WebGL; the toolbar in all of Helium's layouts; Beryllium's own name, icons, `beryllium://` pages and profile folder.
-- **Privacy check:** a fresh browser, idle and showing a local page before the setup page is completed, contacts no outside server (test suite, `privacy` group).
-- **Not yet:** any process sandbox; WebGPU (no adapter is found).
+- **Works:** browsing; video playback, including YouTube; WebGL; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
+- **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
+- **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
+
+### New since 0.20.3.1
+
+- **New logo and icons.** The logo is rebuilt as vector artwork from the
+  same design, and the 16, 22, 24 and 32 px icons are drawn pixel by pixel
+  so they stay sharp in panels and menus.
+- **Online services off by default.** No server is built in, and nothing
+  is sent to Helium's servers unless you enter their address yourself (see
+  [Using Beryllium](#using-beryllium)).
+- **Beryllium's name throughout.** The flags page and the services
+  settings say Beryllium instead of Helium.
+- **Child processes start clean.** Chromium's launcher on FreeBSD closed
+  nothing, so every child process inherited the browser's open files and
+  directories, including `/` and the profile databases. Each child now
+  keeps only what is passed to it on purpose: about 30 descriptors in a
+  renderer instead of about 120.
+- **Shared memory without files.** Chromium kept the memory its processes
+  share as deleted files in `/tmp`, so page content could reach the disk
+  and any process holding one could rewrite or resize it. It is now
+  anonymous memory, sealed against resizing, and read-only where it should
+  be, enforced by Capsicum rights.
+- **Experimental renderer lockdown**, off by default (below).
 
 ### Sandbox status of this release
 
@@ -44,9 +69,40 @@ Each release states what is enforced, so you can check it yourself with
 | Process | Status |
 |---|---|
 | Browser | not confined |
-| Renderers (web pages) | not confined |
+| Renderers (web pages) | not confined by default; experimental lockdown below |
 | GPU | not confined (reported honestly at `beryllium://gpu`) |
 | Network, audio, other utilities | not confined |
+
+In every process, inherited descriptors are closed at launch, and shared
+memory is anonymous, with its size sealed and read-only regions enforced
+by Capsicum rights. These limit what a compromised process can reach, but
+they do not confine it.
+
+#### Experimental renderer lockdown
+
+Start Beryllium with
+
+```sh
+beryllium --enable-features=BerylliumCapsicumRenderer
+```
+
+and every renderer enters Capsicum capability mode before it handles a
+web page: it can no longer open files by path, open new network
+connections or signal other processes, and it holds no directory and no
+writable file. If the lockdown fails, the renderer ends instead of running
+unconfined. To check it while pages are open:
+
+```sh
+procstat -s $(pgrep -f -- --type=renderer)
+```
+
+It is off by default because it is not yet a complete sandbox: renderers
+still keep some descriptors with more rights than they need, and the
+browser does not yet check each renderer with the kernel. Those steps,
+and turning the lockdown on by default, are the next milestones
+([plan/14](plan/14-RENDERER-SANDBOX.md)). Reports of anything that breaks
+with it on are welcome; the test suite runs with it on through
+`--browser-arg=--enable-features=BerylliumCapsicumRenderer`.
 
 ## Install
 
@@ -94,17 +150,16 @@ set it, and the launcher will not start the browser without it.
   input from and inject input into other windows.
 - Online services (extension proxy, `!bangs` list, filter-list and
   component updates, dictionaries) need a server, and Beryllium runs none
-  of its own yet. From the next release they are off, and no server is
-  built in: they work only after you turn them on and enter a server at
+  of its own yet. They are off in a new profile, and no server is built
+  in: they work only after you turn them on and enter a server at
   `beryllium://settings/privacy/services`, either your own instance of the
   open-source services (HTTPS, or `http://localhost` for a test server on
   your machine) or, as a deliberate choice, Helium's
-  (`https://services.helium.imput.net`).
-  **Release 0.20.3.1 behaves differently:** services stay off until you
-  finish the setup page (`beryllium://setup`), and if you allow them there,
-  those requests go to Helium's servers. To keep them off in 0.20.3.1,
-  decline them on the setup page. What each service does is in
-  [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
+  (`https://services.helium.imput.net`). Allowing them on the setup page
+  alone contacts nothing. After an update from 0.20.3.1, a profile that
+  never changed the setting has services off; one that turned them on
+  keeps them on, with no server until you enter one. What each service
+  does is in [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
 - Managed policies go in `/usr/local/etc/beryllium/policies/managed/`.
 
 ### Known issues
@@ -177,10 +232,10 @@ From Helium's open-source patch set, Beryllium keeps:
 
 What differs:
 
-- Beryllium is not meant to use Helium's service endpoints, and will host
-  its own instance of the open-source services. In this release that is not
-  enforced yet: see the online services note under
-  [Using Beryllium](#using-beryllium).
+- Beryllium does not use Helium's service endpoints: online services are
+  off in a new profile and no server is built in. Beryllium will host its
+  own instance of the open-source services; until then you can enter a
+  server yourself (see [Using Beryllium](#using-beryllium)).
 - Updates come through `pkg`.
 - Crash reports are never uploaded: there is no crash reporter on FreeBSD.
 
@@ -188,7 +243,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.6 has the first steps, with the lockdown itself still opt-in. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -202,7 +257,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | next |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.6, clean descriptors at launch, anonymous shared memory and an opt-in lockdown; still to come, the descriptor allowlist, least rights on each descriptor, the kernel check and the lockdown on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |
@@ -236,7 +291,8 @@ edited; Beryllium's changes are separate patches applied after it.
 | `freebsd/ports/` | The Poudriere port, with the imported FreeBSD Chromium patch set |
 | `freebsd/tests/` | The browser test suite and the Capsicum kernel tests |
 | `freebsd/tools/` | Build, patch, release and checking tools |
-| `artwork/` | Logo, wordmark, icons and the source art sheet (CC BY 4.0) |
+| `artwork/` | Vector masters of the logo and wordmark, the icons, and the source art sheet (CC BY 4.0) |
+| `design-intake/` | Artwork review rounds: how the vector logo was made and approved |
 | `branding/` | Tools that prepare the artwork, and the branding files the build uses |
 | `install.sh` | The installer |
 | `plan/` | Design and planning documents |
