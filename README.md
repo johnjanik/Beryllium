@@ -30,7 +30,7 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.6**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.7**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
@@ -58,8 +58,14 @@ and Helium 0.20.3.
   share as deleted files in `/tmp`, so page content could reach the disk
   and any process holding one could rewrite or resize it. It is now
   anonymous memory, sealed against resizing, and read-only where it should
-  be, enforced by Capsicum rights. Each renderer still receives one file
-  of another kind (see [Known issues](#known-issues)).
+  be, enforced by Capsicum rights.
+- **No page data in `/tmp`.** Chromium gives each renderer a file in
+  `/tmp`, deleted as soon as it is created, where the renderer stores
+  compressed page data, such as the scripts of tabs that have been in the
+  background for a while. Beryllium hands out no such file: that data
+  stays compressed in memory, as Chromium already does in Incognito
+  windows. `--enable-features=BerylliumRendererSwapFile` brings the file
+  back.
 - **Experimental renderer lockdown**, off by default (below).
 
 ### Sandbox status of this release
@@ -89,8 +95,8 @@ beryllium --enable-features=BerylliumCapsicumRenderer
 
 and every renderer enters Capsicum capability mode before it handles a
 web page: it can no longer open files by path, open new network
-connections or signal other processes, and it holds no directory. One
-writable file remains in each renderer (see [Known issues](#known-issues)).
+connections or signal other processes, and it holds no directory and no
+writable file.
 If the lockdown fails, the renderer ends instead of running unconfined. To check it while pages are open:
 
 ```sh
@@ -166,13 +172,6 @@ set it, and the launcher will not start the browser without it.
 ### Known issues
 
 - **WebGPU** finds no adapter.
-- **Page data of background tabs can reach `/tmp`.** Chromium gives each
-  renderer a file in `/tmp`, deleted as soon as it is created, where the
-  renderer stores compressed page data, such as the scripts of tabs that
-  have been in the background for a while. Incognito windows never get
-  one. It is the one writable file the test suite still finds in each
-  renderer, with or without the experimental lockdown. The next build
-  stops it: that data then stays compressed in memory, as in Incognito.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
@@ -251,7 +250,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.6 has the first steps, with the lockdown itself still opt-in. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.7 has the first steps, with the lockdown itself still opt-in. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -265,7 +264,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.6, clean descriptors at launch, anonymous shared memory and an opt-in lockdown; still to come, the descriptor allowlist, least rights on each descriptor, the kernel check and the lockdown on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.7, clean descriptors at launch, anonymous shared memory, no swap file and an opt-in lockdown; still to come, the descriptor allowlist, least rights on each descriptor, the kernel check and the lockdown on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |

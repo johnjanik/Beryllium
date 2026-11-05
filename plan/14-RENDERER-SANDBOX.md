@@ -165,6 +165,13 @@ FreeBSD test bed, so an increment must be worth a build.
    renderers none. `patches/security/beryllium-no-renderer-swap-file.patch`
    (build 0.20.3.7) skips it unless `BerylliumRendererSwapFile` is
    enabled, so parked data stays compressed in memory, as in Incognito.
+   **Results, 0.20.3.7 (5 November 2026), with and without the
+   lockdown:** the whole suite passes, the descriptor test included: no
+   renderer holds a directory or a writable file, and with the lockdown
+   every renderer is in capability mode. What remains for increment 3 is
+   the committed allowlist, rights limits on the descriptors that are
+   still unlimited (the Mojo sockets, the resource paks, the V8 snapshot,
+   stdio) and the environment allowlist.
 5. **Attestation and status:** the browser checks each renderer's
    capability mode with the kernel and refuses an unconfined one;
    `beryllium://sandbox` shows the kernel's answer; the release's sandbox
