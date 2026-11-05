@@ -1,0 +1,68 @@
+Beryllium: no swap file for renderers (page data stays in memory)
+
+Purpose: for every renderer of a normal (not Incognito) profile,
+  RenderProcessHostImpl::ProvideSwapFileForRenderer() creates a file in
+  the temporary directory (base::CreateTemporaryFile, so
+  /tmp/.org.chromium.Chromium.XXXXXX), opens it read-write with
+  FLAG_DELETE_ON_CLOSE, which on POSIX unlinks it at once, and hands it to
+  the renderer's blink::DiskDataAllocator. Blink writes compressed parked
+  strings (scripts and other large strings of background tabs; parking to
+  disk is on wherever kCompressParkableStrings is, which includes Linux and
+  FreeBSD) and parked images into it. The owner's runs of 0.20.3.6 (5
+  November 2026) found it: after the memfd change, each renderer still
+  held one writable regular file with no name, 0 bytes, mode -rw-------,
+  held by no other process (fstat), with every Capsicum right; renderers
+  looked nothing up in /tmp, while the browser looked up
+  /tmp/.org.chromium.Chromium.XXXXXX 63 times for about 21 renderers,
+  three lookups per file (create, open, unlink), as this function does.
+  That is page content on a disk file system and a writable file a
+  confined renderer would keep (S-REN-06).
+  This patch skips the file unless the feature BerylliumRendererSwapFile
+  is enabled (--enable-features=BerylliumRendererSwapFile). Without the
+  file, DiskDataAllocator never writes (may_write_ stays false) and parked
+  data stays compressed in memory: exactly what Chromium does for every
+  Incognito renderer, and what the code says the renderer handles ("the
+  renderer will not wait for one"). The cost is the memory those
+  compressed strings and images would have freed.
+Stage: 4 (Beryllium series). No dependency on other patches; applies after
+  Helium's bromite/fingerprinting-flags-client-rects-and-measuretext.patch,
+  which touches the same file elsewhere.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_renderers_hold_no_directories_or_writable_files (no unnamed writable
+  file left in any renderer); the Capsicum survey's temporary files section
+  (no /tmp/.org.chromium.Chromium.XXXXXX lookups by the browser).
+security-review: not required (removes a file handed to an untrusted
+  process; no new input handling)
+
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -1287,6 +1287,15 @@
+ BASE_FEATURE(kUserVisibleProcessPriority, base::FEATURE_DISABLED_BY_DEFAULT);
+ #endif
+ 
++// Beryllium (plan/14-RENDERER-SANDBOX.md, feature matrix S-REN-06): no swap
++// file for renderers unless this feature is enabled. The file is created in
++// the temporary directory, unlinked at once and handed to the renderer, which
++// writes compressed page data (parked strings and images) into it under
++// memory pressure: page content on disk, and a writable file a confined
++// renderer would keep. Without it Blink keeps that data compressed in memory,
++// as it already does in Incognito windows.
++BASE_FEATURE(kBerylliumRendererSwapFile, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // Please keep in sync with "RenderProcessHostBlockedURLReason" in
+ // tools/metrics/histograms/metadata/browser/enums.xml. These values are
+ // persisted to logs. Entries should not be renumbered and numeric values should
+@@ -6495,6 +6504,10 @@
+   // In Incognito, nothing should be written to disk. Don't provide a file..
+   if (GetBrowserContext()->IsOffTheRecord())
+     return;
++  // Beryllium: in no window, unless asked for (see kBerylliumRendererSwapFile).
++  if (!base::FeatureList::IsEnabled(kBerylliumRendererSwapFile)) {
++    return;
++  }
+ 
+   mojo::Remote<blink::mojom::DiskAllocator> allocator;
+   BindReceiver(allocator.BindNewPipeAndPassReceiver());

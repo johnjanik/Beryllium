@@ -668,11 +668,12 @@ built = "no"
 tested = "failing"
 where = ["patches/security/beryllium-close-inherited-descriptors.patch",
          "patches/security/beryllium-capsicum-renderer.patch",
-         "patches/security/beryllium-anonymous-shared-memory.patch"]
+         "patches/security/beryllium-anonymous-shared-memory.patch",
+         "patches/security/beryllium-no-renderer-swap-file.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
 evidence = "owner, 0.20.3.4 and 0.20.3.6, 5 Nov 2026, with and without the lockdown: no renderer holds a directory or profile file; the test fails on 5 to 9 unnamed writable files per renderer in 0.20.3.4 (shared memory regions) and on one in 0.20.3.6, of unknown origin"
 source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
-notes = "0.20.3.3: inherited directories. 0.20.3.4: gone (S-IPC-01); shared memory files remain, replaced in 0.20.3.5 (S-SHM-01). 0.20.3.6: one unnamed writable file per renderer left; the test now reports its file system, inode, size and holders to identify it. Path opens and user-file handles are still to check."
+notes = "0.20.3.3: inherited directories. 0.20.3.4: gone (S-IPC-01); shared memory files remain, replaced in 0.20.3.5 (S-SHM-01). 0.20.3.6: one unnamed writable file per renderer left, identified as Blink's swap file (RenderProcessHostImpl::ProvideSwapFileForRenderer, compressed page data of background tabs written to an unlinked file in /tmp); not handed out from 0.20.3.7 unless BerylliumRendererSwapFile is enabled. Path opens and user-file handles are still to check."
 
 [[feature]]
 id = "S-REN-07"
