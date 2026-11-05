@@ -147,6 +147,13 @@ FreeBSD test bed, so an increment must be worth a build.
    and mode and every other Beryllium process holding it (`fstat`), and the
    survey lists the files each process type, the browser included, looks
    up directly in a temporary directory.
+   The survey of 0.20.3.6 (lockdown on, before those diagnostics) narrows
+   it down: after the lockdown point renderers are refused only
+   `cpuset_getaffinity` and read only `hw.ncpu`, so the moved marker works;
+   the GPU process now holds about 40 memfd regions and no unnamed file,
+   and the network, storage and audio processes none either. Only
+   renderers hold the remaining file, and it has every Capsicum right, so
+   it does not come from the memfd path, which limits rights at creation.
 5. **Attestation and status:** the browser checks each renderer's
    capability mode with the kernel and refuses an unconfined one;
    `beryllium://sandbox` shows the kernel's answer; the release's sandbox
