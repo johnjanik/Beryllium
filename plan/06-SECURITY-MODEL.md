@@ -205,15 +205,23 @@ Design:
   kernels. Both are namespace-free and permitted in capability mode. This is
   the same change the 2010 Capsicum paper's Chromium port made (SysV shm to
   POSIX shm) and it removes the only path-based operation in the primitive.
-- The read-only twin: in the browser (not in capability mode) `/dev/fd/N`
-  with `O_RDONLY` works like `/proc/self/fd/N`. In a confined process it does
-  not; there the twin is a `dup` limited with `cap_rights_limit` to
-  `CAP_READ CAP_MMAP_R CAP_FSTAT CAP_SEEK`, which is kernel-enforced
-  read-only. `CheckPlatformHandlePermissionsCorrespondToMode` uses
-  `fcntl(F_GETFL)`, which still reports `O_RDWR` on such a dup, so the BSD
-  version of that check consults `cap_rights_get(3)` instead. Whether confined
-  processes ever need to create read-only regions themselves is answered by
-  the inventory; if they never do, only the browser-side path matters.
+- The read-only twin is a `dup` limited with `cap_rights_limit` to
+  `CAP_MMAP_R CAP_FSTAT CAP_FCNTL` (with `cap_fcntls_limit` allowing
+  `F_GETFL` only), which is kernel-enforced read-only, in every process.
+  (An earlier draft said `/dev/fd/N` with `O_RDONLY` works like
+  `/proc/self/fd/N` in the browser. It does not on FreeBSD: opening
+  `/dev/fd/N`, with or without fdescfs, duplicates the descriptor and
+  shares its open file description (`dupfdopen`), which stays `O_RDWR`;
+  fdescfs's `nodup` option reopens vnodes only, and a memfd is not one.)
+  `CheckPlatformHandlePermissionsCorrespondToMode` uses `fcntl(F_GETFL)`,
+  which needs `CAP_FCNTL` and still reports `O_RDWR` on such a dup, so the
+  FreeBSD version of that check consults `cap_rights_get(3)` too: no
+  `CAP_WRITE` means read-only. The oracle probes `mem.ro_twin_*` confirm
+  each step on 14.5, 15.1 and 16.0-CURRENT. `memfd_create` exists since
+  FreeBSD 13.0, so no `SHM_ANON` fallback is needed for the supported
+  releases. Implemented in
+  `patches/security/beryllium-anonymous-shared-memory.patch`
+  (plan/14 increment 4).
 - Regardless of who creates a region, the browser applies `cap_rights_limit`
   before passing a descriptor to a child, so that a region meant to be
   read-only is read-only by kernel rights and not only by mapping convention.

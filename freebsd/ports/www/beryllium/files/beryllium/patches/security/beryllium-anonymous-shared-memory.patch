@@ -1,0 +1,199 @@
+Beryllium: shared memory as sealed anonymous memfds with Capsicum rights
+
+Purpose: Phase 2 increment 4 (plan/14-RENDERER-SANDBOX.md; feature matrix
+  S-SHM-01, S-SHM-02; plan/06-SECURITY-MODEL.md section 3.3). On FreeBSD,
+  base::subtle::PlatformSharedMemoryRegion::Create() made every region an
+  unlinked file in the temporary directory (TMPDIR, usually /tmp): the
+  memfd path Chromium uses on Linux is Linux-only, and the imported FreeBSD
+  patch only passes the "executable" flag through. The owner's runs of
+  0.20.3.4 (5 November 2026) show the result: with inherited descriptors
+  gone, each renderer still holds five to nine writable regular files with
+  no name, which test_50_sandbox reports. They are these regions. As files
+  they are on a disk file system (page content included), and a renderer
+  holding one can write it, truncate it (making the browser fault on
+  access), grow it until the file system is full, and map it executable.
+  Now, on FreeBSD:
+  - every non-executable region is a memfd_create() object (a POSIX shared
+    memory object with no name, FreeBSD 13 and later), sized with
+    ftruncate() and sealed against shrinking and growing (F_SEAL_SHRINK,
+    F_SEAL_GROW, F_SEAL_SEAL), as on Linux; no file, no path, no fallback
+    to one;
+  - the read-only twin of a writable region is a duplicate descriptor
+    limited with cap_rights_limit() to CAP_MMAP_R, CAP_FSTAT and CAP_FCNTL
+    (fcntls: F_GETFL only), because FreeBSD has no /proc/self/fd to reopen
+    a memfd O_RDONLY (and /dev/fd/N shares the open file description, so it
+    would still be O_RDWR). The writable descriptor keeps CAP_MMAP_RW,
+    CAP_FSTAT and CAP_FCNTL (F_GETFL). Neither can map the region
+    executable, truncate it, or change its mode, owner or flags; rights
+    travel with a descriptor sent to another process and can only shrink;
+  - CheckFDAccessMode() treats an O_RDWR descriptor without CAP_WRITE as
+    O_RDONLY, so a region received as read-only is accepted only if its
+    rights really forbid writing, and a writable one only if they allow it.
+  The Capsicum oracle (freebsd/results/oracle-*-20261101.json, probes
+  mem.memfd_seal, mem.ro_twin_map_rw, mem.ro_twin_mprotect,
+  mem.ro_twin_map_exec, mem.ro_twin_introspect) shows on 14.5, 15.1 and
+  16.0-CURRENT that memfd_create() with seals works in capability mode,
+  that such a twin cannot be mapped writable (ENOTCAPABLE) or executable
+  (ENOTCAPABLE), that mprotect() cannot make its mapping writable (EACCES),
+  and that F_GETFL needs CAP_FCNTL with F_GETFL allowed and then reports
+  O_RDWR. Executable regions (no caller in this Chromium asks for one) keep
+  the file path.
+Stage: 4 (Beryllium series). Depends on the imported FreeBSD patch
+  patch-base_memory_platform__shared__memory__region__posix.cc (stage 2).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_renderers_hold_no_directories_or_writable_files (no unnamed
+  writable file left in a renderer) and
+  test_renderer_shared_memory_is_anonymous_and_limited (renderers hold
+  shared memory only as memfd objects, none with the rights to truncate
+  or map executable); the whole browser suite, which exercises shared
+  memory in every process type.
+security-review: required (shared memory between processes of different
+  trust)
+
+--- a/base/memory/platform_shared_memory_region_posix.cc
++++ b/base/memory/platform_shared_memory_region_posix.cc
+@@ -25,6 +25,10 @@
+ #include "base/types/expected.h"
+ #include "build/build_config.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include <sys/capsicum.h>
++#endif
++
+ namespace base::subtle {
+ 
+ namespace {
+@@ -57,6 +61,24 @@
+   }
+ 
+   int mode = fd_status & O_ACCMODE;
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: a read-only region on FreeBSD is a descriptor whose Capsicum
++  // rights allow no writing (see CreateAnonymousRegion()); its open file
++  // description is O_RDWR, shared with the writable descriptor. Without
++  // CAP_WRITE it cannot write(), pwrite() or map the region writable, and the
++  // kernel's maximum protection for its mappings excludes writing, so
++  // mprotect() cannot add it. Rights can only ever be reduced.
++  if (mode == O_RDWR) {
++    cap_rights_t rights;
++    if (cap_rights_get(fd, &rights) != 0) {
++      PLOG(ERROR) << "cap_rights_get(" << fd << ") failed";
++      return FDAccessModeError::kFcntlFailed;
++    }
++    if (!cap_rights_is_set(&rights, CAP_WRITE)) {
++      mode = O_RDONLY;
++    }
++  }
++#endif  // BUILDFLAG(IS_FREEBSD)
+   if (mode != expected_mode) {
+     return FDAccessModeError::kMismatch;
+   }
+@@ -147,6 +169,81 @@
+   return ScopedFDPair(std::move(fd), std::move(readonly_fd));
+ }
+ 
++#elif BUILDFLAG(IS_FREEBSD)
++
++// Beryllium (plan/14-RENDERER-SANDBOX.md increment 4, feature matrix S-SHM-01
++// and S-SHM-02): on FreeBSD the region is an anonymous memfd (a POSIX shared
++// memory object with no name) instead of an unlinked file in the temporary
++// directory. The file-based fallback below put every region, page content
++// included, on the file system of TMPDIR (usually /tmp, often ZFS or UFS on
++// disk), handed each renderer descriptors for regular files it could write,
++// resize and change, and needs a directory a confined process cannot reach.
++//
++// Size seals, as on Linux: no holder of a descriptor, including a less
++// trusted process the region is shared with, can shrink it (making other
++// processes fault) or grow it. FreeBSD has no /proc/self/fd to reopen a memfd
++// O_RDONLY, so the read-only descriptor is a duplicate whose Capsicum rights
++// allow reading and read-only mapping only (CheckFDAccessMode() treats it as
++// O_RDONLY). The writable descriptor keeps only the rights mapping needs.
++// Neither may map the region executable. Rights travel with a descriptor when
++// it is sent to another process and can never be widened.
++ScopedFDPair CreateAnonymousRegion(PlatformSharedMemoryRegion::Mode mode,
++                                   size_t size) {
++  static constexpr char kName[] = "shared-memory-region";
++  ScopedFD fd(memfd_create(kName, MFD_CLOEXEC | MFD_ALLOW_SEALING));
++  if (!fd.is_valid()) {
++    DPLOG(ERROR) << "memfd_create";
++    return {};
++  }
++
++  if (HANDLE_EINTR(ftruncate(fd.get(), checked_cast<off_t>(size))) != 0) {
++    DPLOG(ERROR) << "ftruncate";
++    return {};
++  }
++
++  if (fcntl(fd.get(), F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL) !=
++      0) {
++    DPLOG(ERROR) << "fcntl(F_ADD_SEALS)";
++    return {};
++  }
++
++  ScopedFD readonly_fd;
++  if (mode == PlatformSharedMemoryRegion::Mode::kWritable) {
++    readonly_fd.reset(HANDLE_EINTR(fcntl(fd.get(), F_DUPFD_CLOEXEC, 0)));
++    if (!readonly_fd.is_valid()) {
++      DPLOG(ERROR) << "fcntl(F_DUPFD_CLOEXEC)";
++      return {};
++    }
++  }
++
++  // fstat() for size checks, fcntl(F_GETFL) for CheckFDAccessMode().
++  const auto limit = [](int limited_fd, bool writable) {
++    cap_rights_t rights;
++    if (writable) {
++      cap_rights_init(&rights, CAP_MMAP_RW, CAP_FSTAT, CAP_FCNTL);
++    } else {
++      cap_rights_init(&rights, CAP_MMAP_R, CAP_FSTAT, CAP_FCNTL);
++    }
++    if (cap_rights_limit(limited_fd, &rights) != 0) {
++      DPLOG(ERROR) << "cap_rights_limit";
++      return false;
++    }
++    if (cap_fcntls_limit(limited_fd, CAP_FCNTL_GETFL) != 0) {
++      DPLOG(ERROR) << "cap_fcntls_limit";
++      return false;
++    }
++    return true;
++  };
++  if (!limit(fd.get(), /*writable=*/true)) {
++    return {};
++  }
++  if (readonly_fd.is_valid() && !limit(readonly_fd.get(), /*writable=*/false)) {
++    return {};
++  }
++
++  return ScopedFDPair(std::move(fd), std::move(readonly_fd));
++}
++
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ 
+ }  // namespace
+@@ -297,16 +394,21 @@
+   CHECK_NE(mode, Mode::kReadOnly) << "Creating a region in read-only mode will "
+                                      "lead to this region being non-modifiable";
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FREEBSD)
+   if (!executable) {
+     ScopedFDPair anonymous_region = CreateAnonymousRegion(mode, size);
+     if (anonymous_region.fd.is_valid()) {
+       return PlatformSharedMemoryRegion(std::move(anonymous_region), mode, size,
+                                         UnguessableToken::Create());
+     }
++#if BUILDFLAG(IS_FREEBSD)
++    // Beryllium: no fallback. A file in the temporary directory is what this
++    // replaces, and a confined process could not create one anyway.
++    return {};
++#endif
+     // memfd_create() is not available; fall back to a file in /dev/shm.
+   }
+-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FREEBSD)
+ 
+   // This function theoretically can block on the disk, but realistically
+   // the temporary files we create will just go into the buffer cache

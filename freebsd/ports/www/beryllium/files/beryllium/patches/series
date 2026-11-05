@@ -8,4 +8,8 @@ platform/beryllium-bsd-no-crashpad.patch
 platform/beryllium-bsd-nvidia-video-frames.patch
 platform/beryllium-bsd-wayland-wait-for-gpu.patch
 security/beryllium-honest-gpu-sandbox-status.patch
+security/beryllium-close-inherited-descriptors.patch
+security/beryllium-anonymous-shared-memory.patch
+security/beryllium-capsicum-renderer.patch
+privacy/beryllium-services-off-by-default.patch
 ui/beryllium-toolbar-buttons-zero-height.patch

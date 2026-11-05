@@ -1,0 +1,88 @@
+Beryllium: child processes close the descriptors they inherit (S-IPC-01)
+
+Purpose: base::LaunchProcess() closes every descriptor a child does not
+  need by listing /dev/fd (CloseSuperfluousFds). On FreeBSD /dev/fd lists
+  only 0, 1 and 2 unless fdescfs is mounted, so the walk closed nothing
+  and every child process kept everything the browser had open when it
+  was launched (the Capsicum oracle's fd.dev_fd_complete probe predicted
+  this, plan/12 section 10.1). The Capsicum survey on the owner's machine
+  (0.20.3.3, 4 November 2026) showed a renderer holding about 120
+  descriptors: directories (/, /usr, /usr/local, /usr/local/etc, opened by
+  the browser to watch the policy directories), writable profile databases
+  (Sync Data, Local Storage, Site Characteristics, the GPU caches), the
+  ktrace and log files and the DRM device. Capability mode does not take
+  any of that away: lookups beneath a directory descriptor still work, so
+  a confined renderer holding "/" could read the whole file system.
+  On FreeBSD the child now keeps 0, 1, 2 and the descriptors the launcher
+  remapped for it (fds_to_remap: the Mojo channel, field-trial memory and
+  the rest Chromium passes on purpose) and closes everything else, with
+  close() below the highest kept descriptor and closefrom(2) above it,
+  both async-signal-safe between fork and exec. This is what Chromium does
+  on Linux through /proc/self/fd, so no child should depend on an
+  inherited descriptor.
+Stage: 4 (Beryllium series). Depends on the imported FreeBSD patch set
+  only as far as base/process/launch_posix.cc already lists FreeBSD.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_renderers_hold_no_directories_or_writable_files (renderers hold no
+  directory and no writable file beyond 0-2); the Capsicum survey's
+  descriptor list per process type.
+security-review: required (process launch, descriptor passing)
+
+--- a/base/process/launch_posix.cc
++++ b/base/process/launch_posix.cc
+@@ -207,7 +207,7 @@
+ #elif BUILDFLAG(IS_SOLARIS)
+ static const char kFDDir[] = "/dev/fd";
+ #elif BUILDFLAG(IS_FREEBSD)
+-static const char kFDDir[] = "/dev/fd";
++// Beryllium: CloseSuperfluousFds() uses closefrom(2) on FreeBSD.
+ #elif BUILDFLAG(IS_OPENBSD)
+ static const char kFDDir[] = "/dev/fd";
+ #elif BUILDFLAG(IS_ANDROID)
+@@ -218,6 +218,35 @@
+   // DANGER: no calls to malloc or locks are allowed from now on:
+   // http://crbug.com/36678
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium (feature matrix S-IPC-01): /dev/fd lists only 0, 1 and 2
++  // unless fdescfs is mounted, so the directory walk below closes nothing
++  // and every child inherited the browser's open files: the Capsicum survey
++  // (4 November 2026) found renderers holding ~120 descriptors, among them
++  // directories (/, /usr, /usr/local) and writable profile databases, which
++  // capability mode does not take away. Keep 0-2 and the remapped
++  // descriptors, close everything else; closefrom(2) is async-signal-safe.
++  int highest_kept = STDERR_FILENO;
++  for (size_t j = 0; j < saved_mapping.size(); j++) {
++    if (saved_mapping[j].dest > highest_kept) {
++      highest_kept = saved_mapping[j].dest;
++    }
++  }
++  for (int fd = STDERR_FILENO + 1; fd < highest_kept; ++fd) {
++    // Cannot use STL iterators here, since debug iterators use locks.
++    size_t j;
++    for (j = 0; j < saved_mapping.size(); j++) {
++      if (fd == saved_mapping[j].dest) {
++        break;
++      }
++    }
++    if (j == saved_mapping.size()) {
++      close(fd);
++    }
++  }
++  closefrom(highest_kept + 1);
++  return;
++#else
+   // Get the maximum number of FDs possible.
+   size_t max_fds = GetMaxFds();
+ 
+@@ -282,6 +311,7 @@
+     int ret = IGNORE_EINTR(close(static_cast<int>(fd)));
+     DPCHECK(ret == 0);
+   }
++#endif  // BUILDFLAG(IS_FREEBSD)
+ }
+ 
+ Process LaunchProcess(const CommandLine& cmdline,

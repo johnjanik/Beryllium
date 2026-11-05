@@ -28,6 +28,24 @@ it they are skipped. Useful options:
 - `run --headless`: no windows; the toolbar test is skipped.
 - `run --list`: list every test with its description.
 - `run --keep-profiles`: keep the throwaway profiles for inspection.
+- `run capsicum --diagnose`: run the browser under `ktrace` and record, per
+  process type, every system call, path lookup and sysctl that Capsicum
+  capability mode would refuse, across a set of workloads (text with CJK and
+  emoji, images, WebGL, WebAssembly, workers, a service worker, storage, a
+  form, a PDF, video, printing), with each process's descriptors,
+  environment variable names (not values) and limits
+  (`capsicum-survey.txt`). Builds from 0.20.3.3 mark each renderer's
+  lockdown point, and the report then separates what happens before it
+  (start-up) from what happens after (must work in capability mode).
+  Nothing is confined while it runs. Descriptors and environment need
+  `security.bsd.unprivileged_proc_debug=1` (the default) during the run.
+- `run --browser-arg=--enable-features=BerylliumCapsicumRenderer`: the whole
+  suite with renderers in Capsicum capability mode (opt-in while the
+  sandbox is being built, plan/14); `sandbox` shows each renderer's mode,
+  the other groups show what still breaks. `,BerylliumCapsicumTrap` stops a
+  renderer at its first refused call; processes in capability mode cannot
+  write core dumps, so run the `capsicum` survey with the same switch to see
+  which calls they are refused.
 - `run media videodiag --diagnose`: replay video under switches that each
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash
@@ -53,8 +71,9 @@ files named below.
 | `pages` | 20 internal pages load without a crash or error page, and none says "Helium" (except the credits) | |
 | `videodiag` | with `--diagnose`: video playback under ten switch sets, as a table (the last forces the GPU memory buffer path Beryllium turns off with NVIDIA) | `video-diagnosis.txt` |
 | `media` | codec support (VP9, AV1, Opus, H.264, AAC); H.264, VP9 and AV1 clips play; AV1, VP9 and Opus through Media Source Extensions, the way YouTube streams | `media-codecs.json` |
+| `capsicum` | with `--diagnose`: what capability mode would refuse, per process type, and each process's descriptors with their Capsicum rights (the input to the renderer sandbox) | `capsicum-survey.txt`, `.json`, `capsicum-kdump.txt.gz` |
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
-| `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17) | |
+| `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17); renderers hold no directory or writable file, and their shared memory is anonymous with limited rights (`procstat -f`, `procstat -C`) | |
 | `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host (a local proxy records and refuses every connection) | `privacy-*.txt` |
 | `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |

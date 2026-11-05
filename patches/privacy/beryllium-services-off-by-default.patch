@@ -1,0 +1,128 @@
+Beryllium: online services off by default, no built-in services server
+
+Purpose: charter decision D3 (owner, 1 November 2026) says Beryllium does
+  not use Helium's online services. Building the feature matrix
+  (4 November 2026) found the code did not do that: Helium registers
+  helium.services.enabled as true (helium/core/services-prefs.patch) and
+  falls back to https://services.helium.imput.net when no server is set
+  (GetServicesBaseURL), held back only by helium.services.user_consented,
+  which the setup page sets (helium/core/onboarding-page.patch). Accepting
+  the setup page's defaults could therefore send extension, !bangs,
+  filter-list, dictionary and component requests to Helium's server. The
+  idle privacy test passed only because it starts with --no-first-run.
+  This patch:
+  - registers helium.services.enabled false, so a new profile has
+    services off;
+  - removes Helium's address as the built-in server (kHeliumDefaultOrigin
+    is now empty): GetServicesBaseURL returns the unreachable dummy origin
+    when no server is set, whichever caller asks, and ShouldAccessServices
+    also requires a server, so turning services on without one does
+    nothing;
+  - changes the Settings text for the server field to say that none is
+    built in, shows an example address instead of Helium's, and accepts
+    http://localhost, 127.0.0.1 and [::1] as well as HTTPS, for a test
+    server on the same machine (the C++ check already allowed these).
+  Using Helium's servers stays possible as an explicit choice: turn
+  services on in Settings and enter https://services.helium.imput.net as
+  the server. When Beryllium hosts its own instance, its origin goes in
+  kHeliumDefaultOrigin and everything else here stays.
+  Existing profiles: one that never changed the services switch now has
+  services off; one that turned it on explicitly keeps it on but has no
+  server until one is entered.
+Stage: 4 (Beryllium series). Depends on helium/core/services-prefs.patch
+  and helium/core/onboarding-page.patch (stage 3), and on Helium's
+  ublock-helium-services, component-updates, add-updater-preference,
+  proxy-extension-downloads, reenable-spellcheck-downloads and
+  add-native-bangs patches, which all reach the services through
+  ShouldAccessServices and GetServicesBaseURL.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench; the new
+  input pattern checked in JavaScript's v-flag mode, as the browser
+  compiles it.
+Test: freebsd/tests/browser/tests/test_60_privacy.py ServicesOff: services
+  are off in a new profile, and with them switched on and consent given
+  but no server set, an idle browser contacts no host. Feature matrix row
+  P-SVC-01.
+security-review: not required (removes network behaviour; the settings
+  input still only reaches the existing origin validation)
+
+--- a/components/helium_services/helium_services_helpers.h
++++ b/components/helium_services/helium_services_helpers.h
+@@ -12,8 +12,10 @@
+ 
+ namespace helium {
+ 
+-const char kHeliumDefaultOrigin[] =
+-    "https://services.helium.imput.net";
++// Beryllium: no services server is built in. Beryllium does not use
++// Helium's (services.helium.imput.net) unless the user enters it in
++// Settings; when Beryllium hosts its own instance, its origin goes here.
++const char kHeliumDefaultOrigin[] = "";
+ 
+ const char kHeliumDummyOrigin[] =
+     "https://helium-services-are-disabled.qjz9zk";
+--- a/components/helium_services/helium_services_helpers.cc
++++ b/components/helium_services/helium_services_helpers.cc
+@@ -70,7 +70,11 @@
+         return *user_url;
+     }
+ 
+-    return GURL(kHeliumDefaultOrigin);
++    // Beryllium: with no server set and none built in (kHeliumDefaultOrigin
++    // is empty, so invalid), every services URL is the unreachable dummy,
++    // whichever caller asks.
++    GURL built_in(kHeliumDefaultOrigin);
++    return built_in.is_valid() ? built_in : GetDummyURL();
+ }
+ 
+ GURL GetDummyURL() {
+@@ -78,8 +82,11 @@
+ }
+ 
+ bool ShouldAccessServices(const PrefService& prefs) {
++    // Beryllium: services also need a server, since none is built in.
+     return prefs.GetBoolean(prefs::kHeliumServicesEnabled) &&
+-           prefs.GetBoolean(prefs::kHeliumServicesConsented);
++           prefs.GetBoolean(prefs::kHeliumServicesConsented) &&
++           (GURL(kHeliumDefaultOrigin).is_valid() ||
++            GetValidUserOverridenURL(prefs).has_value());
+ }
+ 
+ bool ShouldAccessExtensionService(const PrefService& prefs) {
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -261,7 +261,8 @@
+   {
+     registry->RegisterIntegerPref(prefs::kHeliumSchemaVersion, 0);
+     registry->RegisterBooleanPref(prefs::kHeliumDisableSchemaAlerts, false);
+-    registry->RegisterBooleanPref(prefs::kHeliumServicesEnabled, true);
++    // Beryllium: online services are off in a new profile (charter D3).
++    registry->RegisterBooleanPref(prefs::kHeliumServicesEnabled, false);
+     registry->RegisterBooleanPref(prefs::kHeliumBangsEnabled, true);
+     registry->RegisterBooleanPref(prefs::kHeliumExtProxyEnabled, true);
+     registry->RegisterBooleanPref(prefs::kHeliumSpellcheckEnabled, true);
+--- a/chrome/browser/resources/settings/privacy_page/services_page.html
++++ b/chrome/browser/resources/settings/privacy_page/services_page.html
+@@ -142,9 +142,9 @@
+     </div>
+     <cr-input
+         id="heliumOriginOverride"
+-        placeholder="https://services.helium.imput.net"
++        placeholder="https://services.example.org"
+         value="[[prefs.helium.services.origin_override.value]]"
+-        pattern="https://.*"
++        pattern="https://.*|http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?/?"
+         on-keydown="onOriginOverrideKeydown_"
+         on-change="onOriginOverrideChange_"
+         type="url"
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1749,7 +1749,7 @@
+       Use your own instance of Helium services
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_OVERRIDE_DESCRIPTION" desc="Description of the text input for overriding the Helium services server">
+-      You can host your own instance of Helium services and use it in your browser instead of the default one. HTTPS only.
++      No services server is built in, so these features stay off until you enter one here: your own instance of the open-source services, over HTTPS, or a test server on this computer (http://localhost).
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_OVERRIDE_DESCRIPTION_WARNING" desc="Warning section of description for overriding the Helium services server">
+       Do not use this field unless you know exactly what you are doing. Never paste URLs from other people here, they are trying to steal your data. We are not responsible for any damages caused by using a custom server and will not be able to help you.

@@ -15,10 +15,9 @@ status of each release is published at https://github.com/johnjanik/Beryllium.
 - Wayland is recommended. Under X11, any program in the session can read
   input from and inject input into other windows.
 - Online services (extension proxy, !bangs list, filter-list and component
-  updates, dictionaries) stay off until you complete the setup page. If you
-  allow them there, this version sends those requests to Helium's servers;
-  Beryllium runs none of its own yet. To keep them off, decline them on the
-  setup page or turn them off later in Settings.
+  updates, dictionaries) are off, and no server is built in: Beryllium runs
+  none of its own yet. To use them, turn them on and enter a server at
+  beryllium://settings/privacy/services.
 - Optional system hardening that blocks some cross-process observation:
     sysctl security.bsd.see_other_uids=0
     sysctl security.bsd.see_other_gids=0

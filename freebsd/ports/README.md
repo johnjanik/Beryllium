@@ -230,7 +230,7 @@ current or most recent one. Progress of a running build (the newest
 `160amd64`):
 
 ```sh
-doas tail -1 /usr/local/poudriere/data/logs/bulk/160amd64-default/latest/logs/beryllium-0.20.3.1.log
+doas tail -1 /usr/local/poudriere/data/logs/bulk/160amd64-default/latest/logs/beryllium-0*.log
 ```
 
 `doas poudriere status` summarises the running build. If the build failed,
@@ -243,13 +243,13 @@ line back to the start of that build phase (the phases are marked
 16-CURRENT machine:
 
 ```sh
-doas pkg add /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
+doas pkg add /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0*.pkg
 ```
 
 FreeBSD 15.x machine:
 
 ```sh
-doas pkg add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
+doas pkg add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0*.pkg
 ```
 
 Then, as you:
@@ -271,7 +271,7 @@ own (16) repository rather than from Poudriere's 15.x copies.
 As root, install the dependencies from the 16 repository:
 
 ```sh
-doas pkg install -y $(pkg query -F /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg '%dn')
+doas pkg install -y $(pkg query -F /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0*.pkg '%dn')
 ```
 
 Then the package, accepting the 15.x ABI and OS version for this one
@@ -279,7 +279,7 @@ command (`OSVERSION` is the 15.1 value; without it `pkg` guesses 1500000 and
 then asks whether to ignore the mismatch):
 
 ```sh
-doas pkg -o ABI=FreeBSD:15:amd64 -o OSVERSION=1501000 add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0.20.3.1.pkg
+doas pkg -o ABI=FreeBSD:15:amd64 -o OSVERSION=1501000 add /usr/local/poudriere/data/packages/151amd64-default/All/beryllium-0*.pkg
 ```
 
 `pkg` may also print "Major OS version upgrade detected. Running pkg
@@ -322,7 +322,7 @@ that commit must contain the port the package was built from; commits that
 change only documentation since the build are fine.
 
 ```sh
-freebsd/tools/publish-release v0.20.3.1-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0.20.3.1.pkg
+freebsd/tools/publish-release v0.20.3.N-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0*.pkg
 ```
 
 Give it the packages from every jail you built (for example the 151amd64
@@ -335,5 +335,5 @@ a directory to upload on the releases page.
 
 Before building the next release, raise the number in `revision.txt` at
 the top of the repository and run `freebsd/tools/sync-port`, which writes
-it into the port as `BERYLLIUM_REVISION` (0.20.3.1 becomes 0.20.3.2). The
+it into the port as `BERYLLIUM_REVISION` (for example 0.20.3.3 becomes 0.20.3.4). The
 new package then has a higher version and `pkg` treats it as an update.

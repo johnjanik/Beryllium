@@ -1,0 +1,427 @@
+Beryllium: renderers can enter Capsicum capability mode (opt-in, Phase 2)
+
+Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
+  increment 2; feature matrix S-REN-01, S-REN-02, S-HRD-03). On FreeBSD
+  every renderer already reaches SandboxLinux::InitializeSandbox() through
+  RendererMainPlatformDelegate::EnableSandbox(), after PreSandboxInit() and
+  before page content and Mojo set-up; the imported FreeBSD code there only
+  warms up a few values and lowers RLIMIT_DATA. This patch adds the
+  lockdown at that point, for renderers only:
+  - warm-up of what the Capsicum survey (freebsd/tests/browser, run
+    capsicum --diagnose, owner's machine, 4 November 2026) showed renderers
+    read that capability mode refuses: the memory and shared-memory sysctls
+    (vm.stats.vm.v_page_count and v_page_size, about 19 reads per renderer;
+    kern.ipc.shmmax), uname() (kern.version), the executable path
+    (kern.proc.pathname), time zone data (/etc/localtime);
+  - base/system on FreeBSD keeps those answers once read: total physical
+    memory, kern.ipc.shmmax and uname() never change while the browser
+    runs, and their failure paths are NOTREACHED() or CHECK, which would
+    end a confined renderer. Available memory, which does change, reports
+    0 in capability mode instead of ending the process;
+  - a utrace(2) marker ("BERYLLIUM-LOCKDOWN") at the lockdown point, always,
+    so the survey can split each renderer's trace into before and after
+    the lockdown; with the feature on it is the last call before
+    cap_enter(), after the descriptor sweep; utrace is a no-op unless the
+    process is traced;
+  - cap_enter(), checked with cap_getmode(), only when the feature
+    BerylliumCapsicumRenderer is enabled
+    (--enable-features=BerylliumCapsicumRenderer). Daily use is unchanged
+    until the lockdown is shown to work. When it is requested and fails,
+    the renderer ends (fail closed); when it succeeds, one log line
+    "beryllium-sandbox: renderer pid=N capability_mode=1";
+  - with BerylliumCapsicumTrap also enabled, PROC_TRAPCAP_CTL, so the first
+    call capability mode refuses ends the renderer with SIGTRAP and a
+    backtrace instead of failing quietly (for finding the next warm-up);
+  - from Alex S's 2026 Capsicum prototype for the FreeBSD port
+    (plan/15-CAPSICUM-PROTOTYPE-EVALUATION.md): caph_cache_tzdata() and
+    caph_cache_catpages() in the warm-up, dlopen of /lib/libgcc_s.so.1
+    (libthr loads it by path for unwinding when a thread exits), and
+    caph_limit_stdio() before cap_enter() (a failure there is logged, not
+    fatal).
+  - before cap_enter(), every directory descriptor is closed and counted
+    (from kern.proc.filedesc): capability mode still allows lookups
+    beneath a directory descriptor, and the survey of 0.20.3.3 found
+    renderers holding /, /usr, /usr/local and /usr/local/etc, inherited
+    from the browser (beryllium-close-inherited-descriptors.patch stops
+    the inheritance; this is the check behind it). The log line reports
+    closed_directories=N; a table that cannot be read fails the lockdown.
+  Later increments make it the default and fail closed in the production
+  package (charter D5), add the descriptor allowlist, launcher hygiene,
+  kernel attestation and status reporting.
+Stage: 4 (Beryllium series). Depends on the imported FreeBSD patches
+  patch-sandbox_policy_freebsd_sandbox__freebsd.cc,
+  patch-base_system_sys__info__freebsd.cc and
+  patch-base_system_sys__info__posix.cc (stage 2).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Built and
+  run since 0.20.3.3.
+Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
+  the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
+  test_50_sandbox shows renderers in capability mode and the rest of the
+  suite shows what still breaks. Owner's machine, 0.20.3.3, 4 November
+  2026: with the feature, every renderer in capability mode and the whole
+  suite passing; the survey's after-lockdown list holds only
+  cpuset_getaffinity (18) and one open. 0.20.3.4, 5 November 2026: every
+  renderer in capability mode, no directory left to sweep, and the suite
+  passing except test_renderers_hold_no_directories_or_writable_files
+  (shared-memory files; beryllium-anonymous-shared-memory.patch); no open
+  after the lockdown any more (probably the libgcc_s preload); the 18
+  cpuset_getaffinity calls are most likely libc's
+  sysconf(_SC_NPROCESSORS_ONLN), which asks the root cpuset first (refused
+  in capability mode) and falls back to the processor count from the ELF
+  auxiliary vector. The marker then came before the descriptor sweep,
+  whose kern.proc.filedesc reads (2 per renderer) the survey counted as
+  after; it now comes after.
+security-review: required (sandbox setup, process confinement)
+
+--- a/base/system/sys_info_freebsd.cc
++++ b/base/system/sys_info_freebsd.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <stddef.h>
+ #include <stdint.h>
++#include <sys/capsicum.h>
+ #include <sys/sysctl.h>
+ 
+ #include "base/notreached.h"
+@@ -27,19 +28,25 @@
+ }
+ 
+ ByteSize SysInfo::AmountOfTotalPhysicalMemoryImpl() {
+-  int pages, page_size, r = 0;
+-  size_t size = sizeof(pages);
+-
+-  if (r == 0)
+-    r = sysctlbyname("vm.stats.vm.v_page_count", &pages, &size, NULL, 0);
+-  if (r == 0)
+-    r = sysctlbyname("vm.stats.vm.v_page_size", &page_size, &size, NULL, 0);
+-
+-  if (r == -1) {
+-    NOTREACHED();
+-  }
+-
+-  return ByteSize(checked_cast<unsigned>(page_size)) * pages;
++  // Beryllium: the total never changes, and Capsicum capability mode refuses
++  // these sysctls, where NOTREACHED() would end the process. Read it once; a
++  // sandboxed process does so before it locks down (sandbox_freebsd.cc).
++  static const ByteSize total = [] {
++    int pages, page_size, r = 0;
++    size_t size = sizeof(pages);
++
++    if (r == 0)
++      r = sysctlbyname("vm.stats.vm.v_page_count", &pages, &size, NULL, 0);
++    if (r == 0)
++      r = sysctlbyname("vm.stats.vm.v_page_size", &page_size, &size, NULL, 0);
++
++    if (r == -1) {
++      NOTREACHED();
++    }
++
++    return ByteSize(checked_cast<unsigned>(page_size)) * pages;
++  }();
++  return total;
+ }
+ 
+ ByteSize SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
+@@ -56,6 +63,11 @@
+     r = sysctlbyname("vm.stats.vm.v_inactive_count", &pginact, &szpg, NULL, 0);
+ 
+   if (r == -1) {
++    // Beryllium: refused in Capsicum capability mode, where there is no fresh
++    // value to give; report none rather than end the process.
++    if (cap_sandboxed()) {
++      return ByteSize(0);
++    }
+     NOTREACHED();
+     return ByteSize(0);
+   }
+@@ -78,12 +90,17 @@
+ 
+ // static
+ uint64_t SysInfo::MaxSharedMemorySize() {
+-  size_t limit;
+-  size_t size = sizeof(limit);
+-  if (sysctlbyname("kern.ipc.shmmax", &limit, &size, NULL, 0) < 0) {
+-    NOTREACHED();
+-  }
+-  return static_cast<uint64_t>(limit);
++  // Beryllium: read once, before a sandboxed process locks down; Capsicum
++  // capability mode refuses kern.ipc.shmmax.
++  static const uint64_t max_size = [] {
++    size_t limit;
++    size_t size = sizeof(limit);
++    if (sysctlbyname("kern.ipc.shmmax", &limit, &size, NULL, 0) < 0) {
++      NOTREACHED();
++    }
++    return static_cast<uint64_t>(limit);
++  }();
++  return max_size;
+ }
+ 
+ SysInfo::HardwareInfo SysInfo::GetHardwareInfoSync() {
+--- a/base/system/sys_info_posix.cc
++++ b/base/system/sys_info_posix.cc
+@@ -16,6 +16,7 @@
+ #include <algorithm>
+ #include <cstdint>
+ #include <iostream>
++#include <optional>
+ #include <type_traits>
+ 
+ #include "base/byte_size.h"
+@@ -53,6 +54,30 @@
+ 
+ namespace {
+ 
++// Beryllium: uname() reads kern.version, which Capsicum capability mode
++// refuses. On FreeBSD keep the first answer, which a sandboxed process takes
++// before it locks down (sandbox_freebsd.cc); the system name, release and
++// machine do not change while the browser runs.
++int Uname(struct utsname* info) {
++#if BUILDFLAG(IS_FREEBSD)
++  static const std::optional<struct utsname> cached =
++      []() -> std::optional<struct utsname> {
++    struct utsname u;
++    if (uname(&u) < 0) {
++      return std::nullopt;
++    }
++    return u;
++  }();
++  if (!cached) {
++    return -1;
++  }
++  *info = *cached;
++  return 0;
++#else
++  return uname(info);
++#endif
++}
++
+ base::ByteSize AmountOfVirtualMemory() {
+   struct rlimit limit;
+   int result = getrlimit(RLIMIT_DATA, &limit);
+@@ -96,7 +121,7 @@
+                              int32_t* minor_version,
+                              int32_t* bugfix_version) {
+   struct utsname info;
+-  CHECK_EQ(uname(&info), 0);
++  CHECK_EQ(Uname(&info), 0);
+   int num_read = UNSAFE_TODO(sscanf(info.release, "%d.%d.%d", major_version,
+                                     minor_version, bugfix_version));
+   if (num_read < 1) {
+@@ -228,7 +253,7 @@
+ // static
+ std::string SysInfo::OperatingSystemName() {
+   struct utsname info;
+-  if (uname(&info) < 0) {
++  if (Uname(&info) < 0) {
+     NOTREACHED();
+   }
+   return std::string(info.sysname);
+@@ -239,7 +264,7 @@
+ // static
+ std::string SysInfo::OperatingSystemVersion() {
+   struct utsname info;
+-  if (uname(&info) < 0) {
++  if (Uname(&info) < 0) {
+     NOTREACHED();
+   }
+   return std::string(info.release);
+@@ -271,7 +296,7 @@
+ // static
+ std::string SysInfo::OperatingSystemArchitecture() {
+   struct utsname info;
+-  if (uname(&info) < 0) {
++  if (Uname(&info) < 0) {
+     NOTREACHED();
+   }
+   std::string arch(info.machine);
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -4,18 +4,31 @@
+ 
+ #include "sandbox/policy/freebsd/sandbox_freebsd.h"
+ 
++#include <capsicum_helpers.h>
+ #include <dirent.h>
++#include <dlfcn.h>
++#include <errno.h>
+ #include <fcntl.h>
+ #include <stdint.h>
++#include <sys/param.h>
++#include <sys/capsicum.h>
++#include <sys/procctl.h>
+ #include <sys/resource.h>
+ #include <sys/stat.h>
++#include <sys/sysctl.h>
+ #include <sys/time.h>
+ #include <sys/types.h>
++#include <sys/uio.h>
++#include <sys/user.h>
++// utrace(2) needs sys/param.h, sys/time.h and sys/uio.h first.
++#include <sys/ktrace.h>
++#include <time.h>
+ #include <unistd.h>
+ 
+ #include <limits>
+ #include <memory>
+ #include <string>
++#include <tuple>
+ #include <vector>
+ 
+ #include "base/command_line.h"
+@@ -63,6 +76,131 @@
+ namespace sandbox {
+ namespace policy {
+ 
++namespace {
++
++// Beryllium, Phase 2 (plan/14-RENDERER-SANDBOX.md, feature matrix S-REN-01):
++// renderers enter Capsicum capability mode at the end of InitializeSandbox(),
++// for now only when this feature is enabled
++// (--enable-features=BerylliumCapsicumRenderer), so the lockdown can be tested
++// without affecting daily use. BerylliumCapsicumTrap also sets
++// PROC_TRAPCAP_CTL, so the first call capability mode refuses ends the
++// renderer with SIGTRAP and a backtrace instead of failing quietly.
++BASE_FEATURE(kBerylliumCapsicumRenderer, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kBerylliumCapsicumTrap, base::FEATURE_DISABLED_BY_DEFAULT);
++
++// Written with utrace(2) at the lockdown point, whether or not the renderer
++// then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
++// splits each process's trace there, separating what happens before the
++// lockdown (allowed) from what happens after it (must work in capability
++// mode). It is the last call before cap_enter(), so the lockdown's own
++// preparation (the descriptor sweep reads kern.proc.filedesc) counts as
++// before. utrace is a no-op unless the process is traced.
++constexpr char kLockdownMarker[] = "BERYLLIUM-LOCKDOWN";
++
++// What a renderer must read before capability mode refuses it, found by the
++// Capsicum survey (4 November 2026): the memory and shared-memory sysctls
++// and uname() are cached in base/system on FreeBSD once read; the executable
++// path comes from kern.proc.pathname; time zone data from /etc/localtime.
++// From the 2026 Capsicum prototype for the FreeBSD port (plan/15): libc's
++// message catalogue, and libgcc_s, which libthr loads by path for unwinding
++// when a thread exits; loaded now, a later dlopen finds it in memory.
++void WarmUpForCapabilityMode() {
++  std::ignore = base::SysInfo::AmountOfTotalPhysicalMemory();
++  std::ignore = base::SysInfo::MaxSharedMemorySize();
++  std::ignore = base::SysInfo::OperatingSystemName();
++  std::ignore = base::SysInfo::OperatingSystemVersion();
++  std::ignore = base::SysInfo::OperatingSystemArchitecture();
++  std::ignore = base::SysInfo::KernelVersionNumber::Current();
++  std::ignore = base::SysInfo::NumberOfProcessors();
++  base::FilePath unused;
++  base::PathService::Get(base::FILE_EXE, &unused);
++  base::PathService::Get(base::DIR_EXE, &unused);
++  base::PathService::Get(base::DIR_MODULE, &unused);
++  base::PathService::Get(base::DIR_ASSETS, &unused);
++  caph_cache_tzdata();
++  caph_cache_catpages();
++  dlopen("/lib/libgcc_s.so.1", RTLD_LAZY);
++  time_t now = time(nullptr);
++  struct tm local;
++  localtime_r(&now, &local);
++}
++
++// Closes every directory descriptor the process holds and returns how many,
++// or -1 if its descriptor table could not be read. A renderer needs none
++// (plan/06 section 3.2), and capability mode still allows lookups beneath a
++// directory descriptor: one on "/" reaches the whole file system. Children
++// used to inherit the browser's (/, /usr, /usr/local, /usr/local/etc; the
++// Capsicum survey of 4 November 2026); base/process/launch_posix.cc now
++// closes inherited descriptors, and this is the check behind it.
++int CloseDirectoryDescriptors() {
++  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_FILEDESC,
++                static_cast<int>(getpid())};
++  size_t len = 0;
++  if (sysctl(mib, 4, nullptr, &len, nullptr, 0) != 0) {
++    return -1;
++  }
++  len += len / 4;  // room for descriptors opened meanwhile
++  std::vector<char> table(len);
++  if (sysctl(mib, 4, table.data(), &len, nullptr, 0) != 0) {
++    return -1;
++  }
++  int closed = 0;
++  for (size_t offset = 0; offset + sizeof(int) <= len;) {
++    const auto* kf =
++        reinterpret_cast<const struct kinfo_file*>(table.data() + offset);
++    if (kf->kf_structsize <= 0) {
++      break;
++    }
++    // kf_fd is negative for the working directory, root and text entries.
++    if (kf->kf_fd >= 0 && kf->kf_type == KF_TYPE_VNODE &&
++        kf->kf_vnode_type == KF_VTYPE_VDIR) {
++      close(kf->kf_fd);
++      ++closed;
++    }
++    offset += static_cast<size_t>(kf->kf_structsize);
++  }
++  return closed;
++}
++
++// Enters capability mode; returns false, with errno set, if it did not.
++// |closed_directories| receives how many directory descriptors were closed.
++bool LockDownRenderer(int* closed_directories) {
++  WarmUpForCapabilityMode();
++  if (!base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer)) {
++    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
++    return true;
++  }
++  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
++    int trap = PROC_TRAPCAP_CTL_ENABLE;
++    if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
++      PLOG(WARNING) << "beryllium-sandbox: PROC_TRAPCAP_CTL";
++    }
++  }
++  *closed_directories = CloseDirectoryDescriptors();
++  if (*closed_directories < 0) {
++    return false;
++  }
++  // Standard input and output keep only the rights stdio needs.
++  if (caph_limit_stdio() != 0) {
++    PLOG(WARNING) << "beryllium-sandbox: caph_limit_stdio";
++  }
++  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
++  if (cap_enter() != 0) {
++    return false;
++  }
++  u_int mode = 0;
++  if (cap_getmode(&mode) != 0) {
++    return false;
++  }
++  if (mode == 0) {
++    errno = EPERM;
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
+ SandboxLinux::SandboxLinux()
+     : sandbox_status_flags_(kInvalid),
+       pre_initialized_(false),
+@@ -174,6 +312,22 @@
+   if (hook)
+     CHECK(std::move(hook).Run(options));
+ 
++  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer) {
++    const bool requested =
++        base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer);
++    // Fail closed when the lockdown was asked for: a renderer that should be
++    // confined and is not must not handle web content.
++    int closed_directories = 0;
++    PCHECK(LockDownRenderer(&closed_directories))
++        << "beryllium-sandbox: renderer pid=" << getpid()
++        << " could not enter capability mode";
++    if (requested) {
++      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
++                   << " capability_mode=1 closed_directories="
++                   << closed_directories;
++    }
++  }
++
+   return true;
+ }
+ 
