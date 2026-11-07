@@ -3,25 +3,11 @@
 says. Lists every Beryllium process and whether it is in Capsicum
 capability mode (procstat -s shows C in FLAGS)."""
 
-import subprocess
-
 from berytest import capsicum
 from berytest.base import BrowserTest
 
 
-def capability_mode(pid):
-    """True/False from procstat -s, None if it cannot be read."""
-    try:
-        out = subprocess.run(["procstat", "-s", str(pid)], capture_output=True,
-                             text=True, timeout=10).stdout.splitlines()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if len(out) < 2:
-        return None
-    header, row = out[0].split(), out[1].split()
-    if "FLAGS" not in header or len(row) < len(header):
-        return None
-    return "C" in row[header.index("FLAGS")]
+capability_mode = capsicum.capability_mode
 
 
 class Processes(BrowserTest):
@@ -95,6 +81,32 @@ class SandboxHonesty(BrowserTest):
                           "(security.bsd.unprivileged_proc_debug=0?)")
         self.note("\n".join(details) or f"{read} renderers: none")
         self.assertEqual(problems, [], "renderers hold descriptors they must not")
+
+    def test_confined_renderer_descriptors_follow_the_policy(self):
+        """With the lockdown on, every descriptor a renderer holds has a type
+        the policy allows and no more rights than the policy gives that type
+        (S-REN-04, S-REN-05); files are read-only resource files."""
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        confined = [p for p in procs if p["type"] == "renderer" and capability_mode(p["id"])]
+        if not confined:
+            self.skipTest("no renderer in capability mode; run with "
+                          "--browser-arg=--enable-features=BerylliumCapsicumRenderer")
+        problems, lines, read = [], [], 0
+        for p in confined:
+            fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
+            if not caps:
+                continue
+            read += 1
+            found = capsicum.policy_problems(fds, caps)
+            problems += [f"renderer {p['id']}: {x}" for x in found]
+            lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
+                         f"{len(found)} outside the policy")
+        if not read:
+            self.skipTest("procstat could not read renderer descriptors "
+                          "(security.bsd.unprivileged_proc_debug=0?)")
+        self.note("\n".join(lines + problems))
+        self.assertEqual(problems, [], "confined renderers hold descriptors outside the policy")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which

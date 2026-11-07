@@ -636,11 +636,14 @@ title = "Descriptor allowlist"
 need = "A renderer's descriptors equal a committed allowlist (stdio, the Mojo socketpair, resource paks, V8 snapshot, passed shared memory and fonts); anything extra aborts."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
-tested = "planned"
-planned_test = "sandbox suite: descriptor set equals freebsd/sandbox/renderer-fds.json; a descriptor added by an update is caught"
+tested = "written"
+where = ["patches/security/beryllium-capsicum-renderer.patch"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_confined_renderer_descriptors_follow_the_policy"]
+planned_test = "sandbox suite: descriptor set equals a committed list (count and paths); a descriptor added by an update is caught"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.2", "RT-14"]
+notes = "From 0.20.3.8 the lockdown allows descriptors by kernel type (read-only resource files, sockets, kqueues, eventfds, pipes, shared memory), closes directories and ends the renderer on anything else; the suite checks the types and that every file is a resource file. Not yet a list of the exact expected set, and nothing yet for what the browser passes later."
 
 [[feature]]
 id = "S-REN-05"
@@ -649,12 +652,14 @@ title = "Least rights on each descriptor"
 need = "Every descriptor a renderer keeps is limited with cap_rights_limit, and its ioctls and fcntls to an allowlist."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
 built = "no"
-tested = "planned"
-planned_test = "sandbox suite: rights per descriptor (procstat -f -C) match the policy"
+tested = "written"
+where = ["patches/security/beryllium-capsicum-renderer.patch",
+         "patches/security/beryllium-anonymous-shared-memory.patch"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_confined_renderer_descriptors_follow_the_policy"]
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.2"]
-notes = "First step in 0.20.3.5: shared memory descriptors are created with limited rights (S-SHM-02). The survey now lists every renderer descriptor's rights, the input for the rest."
+notes = "0.20.3.5: shared memory descriptors are created with limited rights (S-SHM-02). 0.20.3.8: at lockdown every descriptor is cut to its type's rights, fcntls to F_GETFL/F_SETFL as needed, ioctls to none; the suite checks procstat -C against the same policy. Descriptors received later over Mojo keep the sender's rights until the browser limits them (S-IPC-01)."
 
 [[feature]]
 id = "S-REN-06"
@@ -670,7 +675,8 @@ where = ["patches/security/beryllium-close-inherited-descriptors.patch",
          "patches/security/beryllium-capsicum-renderer.patch",
          "patches/security/beryllium-anonymous-shared-memory.patch",
          "patches/security/beryllium-no-renderer-swap-file.patch"]
-tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files",
+         "freebsd/tests/browser/tests/test_50_sandbox.py::test_confined_renderer_descriptors_follow_the_policy"]
 evidence = "owner, 0.20.3.4 and 0.20.3.6, 5 Nov 2026, with and without the lockdown: no renderer holds a directory or profile file; the test fails on 5 to 9 unnamed writable files per renderer in 0.20.3.4 (shared memory regions) and on one in 0.20.3.6 (Blink's swap file); owner, 0.20.3.7, 5 Nov 2026, with and without the lockdown: passes, no renderer holds a directory or writable file"
 source = ["helium-freebsd-security-port-spec.md §6.1", "helium-freebsd-security-port-spec.md §13.1"]
 notes = "0.20.3.3: inherited directories. 0.20.3.4: gone (S-IPC-01); shared memory files remain, replaced in 0.20.3.5 (S-SHM-01). 0.20.3.6: one unnamed writable file per renderer left, identified as Blink's swap file (RenderProcessHostImpl::ProvideSwapFileForRenderer, compressed page data of background tabs written to an unlinked file in /tmp); not handed out from 0.20.3.7 unless BerylliumRendererSwapFile is enabled; the test passes there. Path opens and user-file handles are still to check."
@@ -840,11 +846,12 @@ title = "Fonts through the browser"
 need = "Renderers get font files as descriptors from the font service; no font directory access and no LD_PRELOAD interceptor in production."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "inherited"
 built = "no"
-tested = "planned"
-planned_test = "functional suite: fonts including CJK and emoji render with the sandbox on"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_45_fonts.py::test_same_platform_fonts_with_and_without_lockdown"]
 source = ["plan/03-ARCHITECTURE.md §4.3", "plan/03-ARCHITECTURE.md §4.5"]
+notes = "Chromium's renderers get fonts from the browser's font service as on Linux; the survey of 0.20.3.7 shows no font file access after the lockdown across 14 workloads, including text in seven scripts. test_45_fonts compares the platform fonts of nine scripts in a confined and an unconfined renderer. No LD_PRELOAD interceptor exists."
 
 [[feature]]
 id = "S-SHM-04"

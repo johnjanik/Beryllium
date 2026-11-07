@@ -168,14 +168,32 @@ FreeBSD test bed, so an increment must be worth a build.
    **Results, 0.20.3.7 (5 November 2026), with and without the
    lockdown:** the whole suite passes, the descriptor test included: no
    renderer holds a directory or a writable file, and with the lockdown
-   every renderer is in capability mode. What remains for increment 3 is
-   the committed allowlist, rights limits on the descriptors that are
-   still unlimited (the Mojo sockets, the resource paks, the V8 snapshot,
-   stdio) and the environment allowlist.
-5. **Attestation and status:** the browser checks each renderer's
-   capability mode with the kernel and refuses an unconfined one;
-   `beryllium://sandbox` shows the kernel's answer; the release's sandbox
-   table changes from "not confined".
+   every renderer is in capability mode.
+   **Policy and least rights (written 7 November 2026, build 0.20.3.8):**
+   the lockdown now judges every descriptor from 3 up by the type the
+   kernel reports and cuts it to that type's rights: read-only resource
+   files (read, seek, read-only mapping, fstat, F_GETFL), sockets (send,
+   receive, event, fstat, shutdown, get/setsockopt, F_GETFL/F_SETFL; never
+   connect, bind, listen, accept), kqueues (kevent), eventfds and pipes
+   (read, write, event, fstat, F_GETFL/F_SETFL), shared memory (what its
+   creator gave it, less truncation, executable mapping and ownership
+   changes); no ioctls anywhere; directories closed; anything else ends
+   the renderer, naming the descriptor. The suite checks the same policy
+   from outside (`test_confined_renderer_descriptors_follow_the_policy`:
+   `procstat -f` and `-C` per renderer, including that every file is a
+   read-only resource file under `/usr/local/share/beryllium/`), and
+   `test_45_fonts` checks that a confined renderer sets nine scripts in
+   the same platform fonts as an unconfined one (fonts reach renderers
+   through the browser's font service; the survey saw no font file access
+   after the lockdown, this makes it a test). Still open in this
+   increment: rights on what the browser passes later over Mojo (it
+   carries the sender's rights; S-IPC-01), and the environment allowlist.
+5. **Attestation and status** (next, build 0.20.3.9): the browser checks
+   each renderer's capability mode with the kernel (`kern.proc.pid`,
+   `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
+   ends an unconfined one before it gets a navigation; `beryllium://sandbox`
+   shows the kernel's answer per process; the release's sandbox table
+   changes from "not confined".
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch.
 

@@ -31,7 +31,7 @@ def options(argv):
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog=__doc__.split("\n\n", 1)[1])
     ap.add_argument("groups", nargs="*",
-                    help="groups to run: startup pages media rendering sandbox privacy ui "
+                    help="groups to run: startup pages media rendering fonts sandbox privacy ui "
                          "youtube stability (default: all)")
     ap.add_argument("--browser", help="browser binary (default: /usr/local/bin/beryllium)")
     ap.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
