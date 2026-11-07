@@ -243,6 +243,72 @@ SHM_FORBIDDEN = (("ft", "truncate"), ("mmx", "map executable"),
                  ("fe", "execute"), ("cm", "chmod"), ("cn", "chown"))
 
 
+def capability_mode(pid):
+    """True/False from procstat -s (a C in FLAGS), None if it cannot be read."""
+    lines = _run(["procstat", "-s", str(pid)]).splitlines()
+    if len(lines) < 2:
+        return None
+    header, row = lines[0].split(), lines[1].split()
+    if "FLAGS" not in header or len(row) < len(header):
+        return None
+    return "C" in row[header.index("FLAGS")]
+
+
+# The rights a confined renderer's descriptors may keep, by procstat's type
+# letter, in procstat -C's short names: the policy the lockdown applies
+# (sandbox_freebsd.cc, plan/06 section 3.2). procstat also prints a name
+# for each combination a descriptor happens to have (prd for read+seek, re
+# for read, mmr for mmap+seek+read...); those are dropped before comparing,
+# except mmx, the only sign of the executable-mapping bit.
+POLICY = {
+    "v": {"rd", "se", "mm", "fs", "fc"},                    # read-only regular file
+    "s": {"rd", "wr", "ev", "fs", "fc", "sh", "gs", "ss"},  # socket: no connect, bind...
+    "k": {"ke", "kc"},                                      # kqueue
+    "E": {"rd", "wr", "ev", "fs", "fc"},                    # eventfd
+    "p": {"rd", "wr", "ev", "fs", "fc"},                    # pipe
+    "f": {"rd", "wr", "ev", "fs", "fc"},                    # fifo
+    "h": {"rd", "wr", "se", "mm", "fs", "fc"},              # shared memory
+}
+RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "sd",
+                 "scl", "ssr"}
+ASSETS = "/usr/local/share/beryllium/"
+
+
+def policy_problems(fds, rights_by_fd, assets=ASSETS):
+    """Descriptors of a confined renderer that break the policy: a type the
+    policy has no entry for, a file other than a read-only resource file,
+    or rights beyond the type's. Descriptors 0 to 2 are stdio, left to
+    caph_limit_stdio()."""
+    by_fd = {d["fd"]: d for d in fds if d["fd"].isdigit()}
+    out = []
+    for fd in sorted(rights_by_fd, key=int):
+        if int(fd) < 3:
+            continue
+        r, d = rights_by_fd[fd], by_fd.get(fd, {})
+        kind, names = r["type"], set(r["rights"])
+        if UNLIMITED_MARKERS <= names:
+            out.append(f"fd {fd} ({kind}): rights not limited")
+            continue
+        if kind not in POLICY:
+            out.append(f"fd {fd}: descriptor type {kind!r} not allowed")
+            continue
+        if kind == "v":
+            name = (d.get("name") or r.get("name") or "").strip()
+            if d.get("vtype") != "r":
+                out.append(f"fd {fd}: vnode type {d.get('vtype')!r} not allowed ({name or 'no name'})")
+                continue
+            if "w" in d.get("flags", ""):
+                out.append(f"fd {fd}: writable file {name or 'with no name'}")
+                continue
+            if not name.startswith(assets):
+                out.append(f"fd {fd}: file outside {assets}: {name or '(no name)'}")
+                continue
+        extra = (names - RIGHT_ALIASES) - POLICY[kind]
+        if extra:
+            out.append(f"fd {fd} ({kind}): rights beyond the policy: {','.join(sorted(extra))}")
+    return out
+
+
 def shared_memory_problems(rights_by_fd):
     """Shared memory descriptors (type h) holding a forbidden right."""
     out = []
