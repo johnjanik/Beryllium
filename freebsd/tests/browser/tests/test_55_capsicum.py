@@ -170,6 +170,7 @@ class CapsicumSurvey(unittest.TestCase):
         browser.record_version()
         types = {browser.proc.pid: "browser"}
         samples = {}
+        sockets_by_pid = {}  # every process, the browser too: where sockets lead
         ran = []
 
         def sample(workload):
@@ -180,6 +181,7 @@ class CapsicumSurvey(unittest.TestCase):
             for p in procs:
                 pid, ptype = p["id"], p["type"]
                 types[pid] = ptype
+                sockets_by_pid[pid] = capsicum.socket_peers(pid)
                 if ptype == "browser":
                     continue
                 s = samples.get(pid)
@@ -190,6 +192,7 @@ class CapsicumSurvey(unittest.TestCase):
                 s["workloads"].append(workload)
                 s["fds"] = capsicum.descriptors(pid)
                 s["rights"] = capsicum.rights(pid)
+                s["sockets"] = sockets_by_pid[pid]
 
         try:
             sample("start")
@@ -242,7 +245,8 @@ class CapsicumSurvey(unittest.TestCase):
                 f"{platform.release()}, browser {getattr(ctx, 'browser_version', {}).get('product', '?')}\n"
                 "Workloads (name: page title when done):\n"
                 + "".join(f"  {r}\n" for r in ran) + "\n" + fd_note
-                + capsicum.report(summary, samples, readable_from)
+                + capsicum.report(summary, samples, readable_from,
+                                  capsicum.socket_holders(sockets_by_pid, types))
                 + "\n" + capsicum.temp_files_report(temps))
         with open(ctx.artifact("capsicum-survey.txt"), "w") as f:
             f.write(text)

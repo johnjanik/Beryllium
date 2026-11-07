@@ -53,9 +53,19 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   SO_ACCEPTCONN, getsockname, getpeername for a received one). A network
   socket or one connected to a named service keeps authority that rights
   cannot take back, so it ends the lockdown or loses every right.
+  The receive window (0.20.3.10, 7 November 2026): the survey of a confined
+  renderer showed two sockets with every right among limited ones. The
+  lockdown runs with the IO thread already receiving Mojo messages, so a
+  descriptor that arrives between the table snapshot and cap_enter() was in
+  neither the sweep nor the receive path (which waited for capability
+  mode). ExpectConfinement(), called by the lockdown before the snapshot,
+  turns the receive-path limits on from that moment. The same limit now
+  also covers base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC
+  replies that carry font files), the other recvmsg path in the renderer.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (build 0.20.3.10).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The 0.20.3.10
+  state compiled and ran (7 November 2026); the receive window and
+  UnixDomainSocket changes are for build 0.20.3.11, not yet compiled.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -108,7 +118,7 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,343 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
@@ -413,6 +423,8 @@ security-review: required (descriptor rights in confined processes)
 +  return std::nullopt;
 +}
 +
++std::atomic<bool> g_confining{false};
++
 +bool InCapabilityMode() {
 +  static std::atomic<bool> known{false};
 +  if (known.load(std::memory_order_relaxed)) {
@@ -426,8 +438,12 @@ security-review: required (descriptor rights in confined processes)
 +  return true;
 +}
 +
++void ExpectConfinement() {
++  g_confining.store(true, std::memory_order_release);
++}
++
 +void LimitReceivedDescriptor(int fd) {
-+  if (!InCapabilityMode()) {
++  if (!g_confining.load(std::memory_order_acquire) && !InCapabilityMode()) {
 +    return;
 +  }
 +  std::string what;
@@ -448,7 +464,7 @@ security-review: required (descriptor rights in confined processes)
 +}  // namespace base::freebsd
 --- a/base/posix/capsicum_rights.h
 +++ b/base/posix/capsicum_rights.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,80 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +//
@@ -513,14 +529,48 @@ security-review: required (descriptor rights in confined processes)
 +// True once this process is in capability mode (a process never leaves it).
 +BASE_EXPORT bool InCapabilityMode();
 +
-+// For a process in capability mode: limits a descriptor it has just received
-+// to its kind's rights, or removes every right when the policy has no kind
-+// for it, logging what it was. Outside capability mode it does nothing.
++// Called by the lockdown before it reads the descriptor table: from here on
++// every descriptor this process receives is limited as it arrives, so one
++// that arrives on another thread between the table snapshot and cap_enter()
++// (the IO thread is already receiving Mojo messages by then) does not keep
++// every right. Never reset.
++BASE_EXPORT void ExpectConfinement();
++
++// From ExpectConfinement() on, and in capability mode: limits a descriptor
++// this process has just received to its kind's rights, or removes every
++// right when the policy has no kind for it, logging what it was. Before
++// that it does nothing.
 +BASE_EXPORT void LimitReceivedDescriptor(int fd);
 +
 +}  // namespace base::freebsd
 +
 +#endif  // BASE_POSIX_CAPSICUM_RIGHTS_H_
+--- a/base/posix/unix_domain_socket.cc
++++ b/base/posix/unix_domain_socket.cc
+@@ -22,6 +22,10 @@
+ #include "base/posix/eintr_wrapper.h"
+ #include "build/build_config.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ namespace base {
+ 
+ 
+@@ -172,6 +176,12 @@
+ 
+   if (wire_fds) {
+     for (size_t i = 0; i < wire_fds_len; ++i) {
++#if BUILDFLAG(IS_FREEBSD)
++      // Beryllium: a confined process keeps what it receives only with the
++      // rights its kind needs (plan/06 section 3.2), on this path as on
++      // Mojo's (socket_utils_posix.cc).
++      base::freebsd::LimitReceivedDescriptor(UNSAFE_TODO(wire_fds[i]));
++#endif
+       fds->emplace_back(UNSAFE_TODO(wire_fds[i]));
+     }
+   }
 --- a/mojo/public/cpp/platform/socket_utils_posix.cc
 +++ b/mojo/public/cpp/platform/socket_utils_posix.cc
 @@ -16,6 +16,10 @@

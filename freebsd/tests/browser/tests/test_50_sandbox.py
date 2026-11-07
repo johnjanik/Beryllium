@@ -27,9 +27,24 @@ class SandboxHonesty(BrowserTest):
     available, or they fail. Otherwise they survey and skip."""
 
     NEEDS_FREEBSD = True
+    # How long a renderer the browser has just listed may take to reach its
+    # lockdown point before it counts as unconfined.
+    GRACE_SECONDS = 5.0
 
     def strict(self):
         return capsicum.lockdown_requested(self.ctx.options)
+
+    def renderer_modes(self, procs):
+        """{pid: mode} for the renderers, waiting GRACE_SECONDS for stragglers."""
+        return capsicum.capability_modes([p["id"] for p in procs if p["type"] == "renderer"],
+                                         grace=self.GRACE_SECONDS)
+
+    @staticmethod
+    def unconfined(modes):
+        """Renderers that are neither confined nor gone: False (not in
+        capability mode) or None (alive but unreadable)."""
+        return {pid: ("unreadable" if m is None else "not in capability mode")
+                for pid, m in modes.items() if m is not True and m != "gone"}
 
     def unavailable(self, why):
         """A missing observation: a failure under the gate, a skip otherwise."""
@@ -42,18 +57,20 @@ class SandboxHonesty(BrowserTest):
         requested, every renderer must be in it."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
-        rows = [(p["type"], p["id"], capability_mode(p["id"])) for p in procs]
-        self.note("\n".join(f"{t:<10} pid {pid:<7} capability mode: "
-                            f"{'yes' if c else 'no' if c is False else 'unknown'}"
+        modes = self.renderer_modes(procs)
+        rows = [(p["type"], p["id"], modes.get(p["id"], capability_mode(p["id"])))
+                for p in procs]
+        words = {True: "yes", False: "no", None: "unknown", "gone": "ended before it was read"}
+        self.note("\n".join(f"{t:<10} pid {pid:<7} capability mode: {words[c]}"
                             for t, pid, c in rows))
-        if not any(c is not None for _, _, c in rows):
+        if not any(c in (True, False) for _, _, c in rows):
             self.unavailable("procstat gave no answer")
         if self.strict():
-            renderers = [(pid, c) for t, pid, c in rows if t == "renderer"]
-            self.assertTrue(renderers, "no renderer to check")
-            self.assertEqual([pid for pid, c in renderers if c is not True], [],
-                             "renderers not in capability mode (or unreadable) "
-                             "although the lockdown was requested")
+            self.assertTrue(modes, "no renderer to check")
+            self.assertEqual(self.unconfined(modes), {},
+                             f"renderers not in capability mode {self.GRACE_SECONDS:g} s after "
+                             "the browser listed them, or unreadable, although the lockdown "
+                             "was requested")
 
     def test_gpu_sandbox_claim_matches_kernel(self):
         """beryllium://gpu "Sandboxed" equals the GPU process's capability mode."""
@@ -110,15 +127,21 @@ class SandboxHonesty(BrowserTest):
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
         renderers = [p for p in procs if p["type"] == "renderer"]
-        modes = {p["id"]: capability_mode(p["id"]) for p in renderers}
-        confined = [p for p in renderers if modes[p["id"]]]
+        modes = self.renderer_modes(procs)
+        confined = [p for p in renderers if modes.get(p["id"]) is True]
         if self.strict():
-            self.assertEqual([p["id"] for p in renderers if modes[p["id"]] is not True], [],
-                             "renderers not in capability mode (or unreadable) "
-                             "although the lockdown was requested")
+            self.assertEqual(self.unconfined(modes), {},
+                             f"renderers not in capability mode {self.GRACE_SECONDS:g} s after "
+                             "the browser listed them, or unreadable, although the lockdown "
+                             "was requested")
         elif not confined:
             self.skipTest("no renderer in capability mode; run with "
                           "--browser-arg=--enable-features=BerylliumCapsicumRenderer")
+        # Every socket of every Beryllium process, so a socket a renderer holds
+        # can be traced to the process holding its other end.
+        types = {p["id"]: p["type"] for p in procs}
+        sockets = {p["id"]: capsicum.socket_peers(p["id"]) for p in procs}
+        holders = capsicum.socket_holders(sockets, types)
         problems, lines, unread = [], [], []
         for p in confined:
             fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
@@ -129,6 +152,8 @@ class SandboxHonesty(BrowserTest):
             problems += [f"renderer {p['id']}: {x}" for x in found]
             lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
                          f"{len(found)} outside the policy")
+            lines += [f"    {x}" for x in
+                      capsicum.socket_notes(caps, sockets.get(p["id"], {}), holders, p["id"])]
         if len(unread) == len(confined):
             self.unavailable("procstat could not read renderer descriptors "
                              "(security.bsd.unprivileged_proc_debug=0?)")
@@ -136,6 +161,26 @@ class SandboxHonesty(BrowserTest):
             problems.append(f"descriptors unreadable for renderers {unread}")
         self.note("\n".join(lines + problems))
         self.assertEqual(problems, [], "confined renderers hold descriptors outside the policy")
+
+    def test_lockdown_log(self):
+        """What the lockdown wrote to the browser's log (shared by its
+        children): with the lockdown requested, renderers must have reported
+        capability mode, and no confined process may have received a
+        descriptor the policy has no kind for (the receive path says so as it
+        removes every right) or failed to limit one."""
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        lines = self.browser.log_lines("beryllium-sandbox")
+        locked = [l for l in lines if "capability_mode=1" in l]
+        received = [l for l in lines if "beryllium-sandbox: received" in l]
+        failed = [l for l in lines if "could not" in l]
+        self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
+                  f"outside the policy, {len(failed)} failures\n"
+                  + "\n".join((received + failed)[:40]))
+        if self.strict():
+            self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
+            self.assertEqual(received + failed, [],
+                             "the lockdown logged received descriptors outside the policy, "
+                             "or failures")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which

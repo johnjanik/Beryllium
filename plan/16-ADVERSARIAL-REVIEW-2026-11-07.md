@@ -232,6 +232,40 @@ lockdown runs on the main thread before the renderer's other threads
 start; a stress test of descriptor churn during the sweep is for the
 native suite.
 
+## First build with the answers: 0.20.3.10 (7 November 2026)
+
+The owner built 0.20.3.10 and ran the suite without the lockdown, with
+it, and the Capsicum survey with it, all with
+`security.bsd.unprivileged_proc_debug=1`.
+
+- **BER-02, admission:** every renderer locked down with the tighter
+  rules (no file outside the assets directory was in the way, as the
+  0.20.3.8 survey predicted), every kind in the survey is allowed, and the
+  received sockets are cut. Two sockets per renderer kept every right.
+  They arrived during the lockdown itself: `InitializeSandbox()` runs after
+  the renderer's IO thread is up and receiving Mojo messages, so a
+  descriptor delivered between the table snapshot and `cap_enter()` was in
+  neither the sweep nor the receive path, which waited for capability
+  mode. This answers the reviewer's "is startup single-threaded?" with no.
+  For 0.20.3.11 the lockdown turns the receive-path limits on before the
+  snapshot (`ExpectConfinement()`), and `base::UnixDomainSocket`'s receive
+  path (sandbox IPC replies carrying font files) is limited like Mojo's.
+  The survey now names each socket's other end, so the next run can say
+  what those two sockets were.
+- **BER-03, stdio:** no failure; every renderer locked down.
+- **BER-04, the gate:** it worked as intended once and once too well: the
+  policy test failed on a renderer the browser had just launched and that
+  had not yet reached its lockdown point. A renderer is listed by the
+  browser before it is confined, so the tests now give a listed renderer
+  five seconds to get there; one that is still unconfined after that, or
+  alive and unreadable, fails the gate, one that ended is not counted.
+  The unit tests cover these cases.
+- **New observation:** the rendering test's default canvas read back
+  `18,52,87` for `#123456` under the lockdown (86 expected; 86 in 0.20.3.8
+  under the lockdown). Open; the test now reads a CPU-side canvas too, and
+  the browser log is checked for descriptors the receive path refused,
+  the likeliest cause of a changed canvas path.
+
 ## What this review did not establish, and we do not claim
 
 No exploit, escape or compromised package was demonstrated, and none is

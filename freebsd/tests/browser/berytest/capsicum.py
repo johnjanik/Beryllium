@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 # "  1234 beryllium CAP   system call not allowed: openat"; kdump -H adds a
 # thread id column after the pid.
@@ -281,6 +282,99 @@ def capability_mode(pid):
     return "C" in row[header.index("FLAGS")]
 
 
+def process_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError, ValueError):
+        return True
+    return True
+
+
+_sleep, _clock = time.sleep, time.monotonic  # replaced by tests
+
+
+def capability_modes(pids, grace=0.0, interval=0.2):
+    """{pid: True | False | None | "gone"}: each process's capability mode,
+    giving one that is not yet confined up to grace seconds to get there (the
+    browser lists a renderer as soon as it is launched, a moment before the
+    renderer reaches its lockdown point). None: alive but unreadable
+    (security.bsd.unprivileged_proc_debug=0?); "gone": it ended first."""
+    result = {pid: capability_mode(pid) for pid in pids}
+    pending = [pid for pid, m in result.items() if m is not True]
+    deadline = _clock() + grace
+    while pending and _clock() < deadline:
+        _sleep(interval)
+        for pid in list(pending):
+            result[pid] = capability_mode(pid)
+            if result[pid] is True:
+                pending.remove(pid)
+    for pid in pending:
+        if not process_alive(pid):
+            result[pid] = "gone"
+    return result
+
+
+SOCKET_LINE_RE = re.compile(
+    r"^\S+\s+\S+\s+(\d+)\s+(\d+)\*\s+(\S+)\s+(\S+)"       # user cmd pid fd* domain type
+    r"(?:\s+([0-9a-f]+))?(?:\s+(<->|<-|->|-)\s+([0-9a-f]+))?")  # pcb [conn peer]
+
+
+def socket_peers(pid, text=None):
+    """{fd: {domain, type, pcb, peer, conn}} for the sockets in fstat -p: fstat
+    prints each unix socket's protocol control block address and, when it is
+    connected, its peer's; the peer's address is the other end's own pcb, so
+    sockets can be matched across processes (socket_holders)."""
+    text = text if text is not None else _run(["fstat", "-p", str(pid)])
+    out = {}
+    for line in text.splitlines()[1:]:
+        m = SOCKET_LINE_RE.match(line)
+        if m:
+            _, fd, domain, stype, pcb, conn, peer = m.groups()
+            out[fd] = {"domain": domain, "type": stype, "pcb": pcb or "",
+                       "peer": peer or "", "conn": conn or ""}
+    return out
+
+
+def socket_holders(sockets_by_pid, types):
+    """{pcb: (process type, pid, fd)} over every process sampled."""
+    out = {}
+    for pid, socks in sockets_by_pid.items():
+        for fd, sk in socks.items():
+            if sk["pcb"]:
+                out[sk["pcb"]] = (types.get(pid, "?"), pid, fd)
+    return out
+
+
+def describe_socket(sock, holders, pid):
+    """Where a socket leads: "unix stream, other end: browser pid 7777 fd 88"."""
+    if not sock:
+        return "fstat could not describe it"
+    kind = f"{'unix' if sock['domain'] == 'local' else sock['domain']} {sock['type']}"
+    if not sock["peer"]:
+        return f"{kind}, not connected"
+    holder = holders.get(sock["peer"])
+    if holder is None:
+        return f"{kind}, other end held by no Beryllium process (pcb {sock['peer']})"
+    ptype, hpid, hfd = holder
+    if str(hpid) == str(pid):
+        return f"{kind}, other end is fd {hfd} of this same process (a pair made here)"
+    return f"{kind}, other end: {ptype} pid {hpid} fd {hfd}"
+
+
+def socket_notes(rights_by_fd, sockets, holders, pid):
+    """One line per socket whose rights nobody limited: what it is and where
+    it leads, the question the 0.20.3.10 survey left open."""
+    out = []
+    for fd in sorted(rights_by_fd, key=int):
+        r = rights_by_fd[fd]
+        if r["type"] == "s" and UNLIMITED_MARKERS <= set(r["rights"]):
+            out.append(f"fd {fd}: socket with every right: "
+                       f"{describe_socket(sockets.get(fd), holders, pid)}")
+    return out
+
+
 # The rights a confined renderer's descriptors may keep, by procstat's type
 # letter, in procstat -C's short names: the policy the lockdown applies
 # (sandbox_freebsd.cc, plan/06 section 3.2). procstat also prints a name
@@ -482,10 +576,12 @@ def _sysctls(lines, counter, blocked, note, title):
     lines.append("")
 
 
-def report(summary, samples, readable_from=None):
+def report(summary, samples, readable_from=None, holders=None):
     """Plain-text report: per process type, the failures, the sysctls and
-    (for one process of the type) its descriptors, environment and limits."""
+    (for one process of the type) its descriptors, environment and limits.
+    With holders (socket_holders), each socket says where its other end is."""
     lines = []
+    holders = holders or {}
     sampled = {s.get("type") for s in samples.values()} - {None, "browser"}
     empty = {"pids": [], "cap": collections.Counter(), "cap_paths": {},
              "sysctl": collections.Counter(), "sysctl_blocked": None}
@@ -527,9 +623,12 @@ def report(summary, samples, readable_from=None):
             lines.append(f"Descriptors of pid {sample['pid']} (procstat -f and -C, after "
                          f"{', '.join(sample.get('workloads', [])) or 'start'}):")
             caps = sample.get("rights", {})
+            socks = sample.get("sockets", {})
             for d in sample.get("fds", []):
                 r = caps.get(d["fd"])
                 tail = f"  [{rights_summary(r['rights'])}]" if r else ""
+                if d["type"] == "s" and d["fd"] in socks:
+                    tail += f"  {describe_socket(socks[d['fd']], holders, sample['pid'])}"
                 lines.append(f"  {d['fd']:>5} {d['type']:<2}{d.get('vtype', ''):<2} "
                              f"{d['flags']:<10} {d['name'].rstrip()}{tail}")
             lines.append(f"Environment variable names: {', '.join(sample.get('env', [])) or '(none)'}")

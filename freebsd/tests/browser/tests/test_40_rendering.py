@@ -24,6 +24,11 @@ PROBE = """(async () => {
   const k = document.createElement('canvas').getContext('2d');
   k.fillStyle = '#123456'; k.fillRect(0, 0, 4, 4);
   out.canvas2d = Array.from(k.getImageData(1, 1, 1, 1).data).join(',');
+  // The same through a canvas kept in CPU memory (willReadFrequently), to
+  // tell a GPU rasterization difference from a drawing error.
+  const s = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+  s.fillStyle = '#123456'; s.fillRect(0, 0, 4, 4);
+  out.canvas2d_cpu = Array.from(s.getImageData(1, 1, 1, 1).data).join(',');
   return out;
 })()"""
 
@@ -34,7 +39,10 @@ class Rendering(BrowserTest):
         page = self.browser.new_page(self.ctx.fixtures().url("blank.html"))
         out = page.eval(PROBE)
         self.note(json.dumps(out))
-        self.assertEqual(out["canvas2d"], "18,52,86,255")
+        self.assertEqual(out["canvas2d_cpu"], "18,52,86,255", "the CPU canvas is wrong")
+        self.assertEqual(out["canvas2d"], "18,52,86,255",
+                         "the default canvas differs from #123456 (a GPU rasterization "
+                         "difference if the CPU canvas is right)")
         if not self.browser.headless:
             self.assertTrue(out["webgl"], "WebGL is not available")
 

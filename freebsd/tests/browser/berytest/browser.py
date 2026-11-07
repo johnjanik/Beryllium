@@ -196,6 +196,16 @@ class Browser:
     def crashes(self, since=0):
         return [e["params"] for e in self.conn.events("Target.targetCrashed", since)]
 
+    def log_lines(self, needle, limit=200):
+        """Lines of the browser's log (its stderr, shared by its children)
+        containing needle; the last limit of them."""
+        try:
+            with open(self.log_path, "rb") as f:
+                data = f.read().decode(errors="replace").splitlines()
+        except OSError:
+            return []
+        return [l for l in data if needle in l][-limit:]
+
     def log_tail(self, lines=40):
         try:
             with open(self.log_path, "rb") as f:
