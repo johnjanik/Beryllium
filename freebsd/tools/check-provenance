@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Check that a package's BUILD-MANIFEST.json describes this checkout, so a
+release's "corresponding source" is the commit the package was built from
+(plan/11 section 3; plan/16 BER-06). publish-release runs it on every
+package before it creates a release.
+
+  check-provenance [--repo DIR] [--version PKGVERSION] MANIFEST.json
+
+The port writes BUILD-MANIFEST.json into every package (freebsd/tools/
+build-manifest). Compared with the checkout: beryllium_version (the port's
+HELIUM_VERSION.BERYLLIUM_REVISION, and the package's own version when
+--version is given), chromium_version (helium/chromium_version.txt),
+helium_commit (the port's Makefile.helium), bsd_patches (the port's
+files/IMPORTED-FROM) and beryllium_patches (the SHA-256 of every patch in
+patches/series, byte for byte, the same set). Exit 0 when everything
+matches, 1 with the differences listed, 2 if the manifest cannot be read.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+PORT = os.path.join("freebsd", "ports", "www", "beryllium")
+
+
+def read(repo, *parts):
+    with open(os.path.join(repo, *parts), encoding="utf-8") as f:
+        return f.read()
+
+
+def key_values(text):
+    """"key: value" lines (IMPORTED-FROM), as build-manifest reads them."""
+    out = {}
+    for line in text.splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def makefile_values(text):
+    """NAME=<tab>value lines of a make fragment."""
+    return dict(re.findall(r"^([A-Z_]+)\s*[?:]?=\s*(.*?)\s*$", text, re.M))
+
+
+def patch_digests(repo):
+    patches_dir = os.path.join(repo, "patches")
+    out = {}
+    for line in read(repo, "patches", "series").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            with open(os.path.join(patches_dir, line), "rb") as f:
+                out[line] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
+def expected(repo):
+    helium = makefile_values(read(repo, PORT, "Makefile.helium"))
+    return {
+        "beryllium_version": f"{helium.get('HELIUM_VERSION', '?')}.{helium.get('BERYLLIUM_REVISION', '?')}",
+        "chromium_version": read(repo, "helium", "chromium_version.txt").strip(),
+        "helium_commit": helium.get("HELIUM_COMMIT", ""),
+        "bsd_patches": key_values(read(repo, PORT, "files", "IMPORTED-FROM")),
+        "beryllium_patches": patch_digests(repo),
+    }
+
+
+def package_version_matches(manifest_version, pkg_version):
+    """pkg's version is the port's DISTVERSION, possibly with a PORTREVISION
+    (_N) or PORTEPOCH (,N) suffix the manifest does not carry."""
+    return re.sub(r"(_\d+)?(,\d+)?$", "", pkg_version) == manifest_version
+
+
+def differences(manifest, want, pkg_version=None):
+    out = []
+    for key in ("beryllium_version", "chromium_version", "helium_commit"):
+        if manifest.get(key) != want[key]:
+            out.append(f"{key}: package {manifest.get(key)!r}, checkout {want[key]!r}")
+    if pkg_version is not None and not package_version_matches(
+            str(manifest.get("beryllium_version")), pkg_version):
+        out.append(f"beryllium_version: manifest {manifest.get('beryllium_version')!r}, "
+                   f"package {pkg_version!r}")
+    for key in ("bsd_patches", "beryllium_patches"):
+        have, need = manifest.get(key), want[key]
+        if not isinstance(have, dict):
+            out.append(f"{key}: missing from the manifest")
+            continue
+        for name in sorted(set(have) | set(need)):
+            if name not in need:
+                out.append(f"{key}: {name} in the package, not in the checkout")
+            elif name not in have:
+                out.append(f"{key}: {name} in the checkout, not in the package")
+            elif have[name] != need[name]:
+                out.append(f"{key}: {name} differs (package {have[name][:12]}..., "
+                           f"checkout {need[name][:12]}...)")
+    return out
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser()
+    p.add_argument("--repo", default=REPO)
+    p.add_argument("--version", help="the package's version from pkg query %%v")
+    p.add_argument("manifest")
+    a = p.parse_args(argv)
+    try:
+        with open(a.manifest, encoding="utf-8") as f:
+            manifest = json.load(f)
+        if not isinstance(manifest, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as e:
+        print(f"check-provenance: cannot read {a.manifest}: {e}", file=sys.stderr)
+        return 2
+    want = expected(a.repo)
+    diffs = differences(manifest, want, a.version)
+    if diffs:
+        print("check-provenance: the package was not built from this checkout:",
+              file=sys.stderr)
+        for d in diffs:
+            print(f"  {d}", file=sys.stderr)
+        return 1
+    print(f"check-provenance: built from this checkout: Beryllium {want['beryllium_version']}, "
+          f"Chromium {want['chromium_version']}, Helium {want['helium_commit'][:12]}, "
+          f"{len(want['beryllium_patches'])} patches, BSD set "
+          f"{want['bsd_patches'].get('ports_commit', '?')[:12]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

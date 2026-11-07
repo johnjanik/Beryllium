@@ -243,6 +243,33 @@ SHM_FORBIDDEN = (("ft", "truncate"), ("mmx", "map executable"),
                  ("fe", "execute"), ("cm", "chmod"), ("cn", "chown"))
 
 
+def cpu_seconds(pid):
+    """Accumulated CPU time of a process from ps (any of [[d-]h:]m:s[.f]), or
+    None if ps cannot report it."""
+    text = _run(["ps", "-o", "cputime=", "-p", str(pid)]).strip()
+    if not text:
+        return None
+    days, _, clock = text.rpartition("-")
+    try:
+        parts = [float(x) for x in clock.split(":")]
+        seconds = sum(v * 60 ** i for i, v in enumerate(reversed(parts)))
+        return seconds + (int(days) * 86400 if days else 0)
+    except ValueError:
+        return None
+
+
+def lockdown_requested(options):
+    """True when the suite runs the browser with the renderer lockdown
+    switched on (--browser-arg=--enable-features=BerylliumCapsicumRenderer):
+    then the sandbox tests are a gate, not a survey, and fail instead of
+    skipping on anything short of every renderer confined and observed."""
+    args = getattr(options, "browser_args", None)
+    if not isinstance(args, (list, tuple)):
+        return False
+    return any(arg.startswith("--enable-features") and "BerylliumCapsicumRenderer" in arg
+               for arg in args)
+
+
 def capability_mode(pid):
     """True/False from procstat -s (a C in FLAGS), None if it cannot be read."""
     lines = _run(["procstat", "-s", str(pid)]).splitlines()
@@ -263,10 +290,10 @@ def capability_mode(pid):
 POLICY = {
     "v": {"rd", "se", "mm", "fs", "fc"},                    # read-only regular file
     "s": {"rd", "wr", "ev", "fs", "fc", "sh", "gs", "ss"},  # socket: no connect, bind...
-    "k": {"ke", "kc"},                                      # kqueue
-    "E": {"rd", "wr", "ev", "fs", "fc"},                    # eventfd
-    "p": {"rd", "wr", "ev", "fs", "fc"},                    # pipe
-    "f": {"rd", "wr", "ev", "fs", "fc"},                    # fifo
+    "k": {"ke", "kc", "ev", "fs"},                          # kqueue (epoll-shim polls it)
+    "E": {"rd", "wr", "ev", "fs", "fc", "io"},              # eventfd (FIONREAD only)
+    "p": {"rd", "wr", "ev", "fs", "fc", "io"},              # pipe
+    "f": {"rd", "wr", "ev", "fs", "fc", "io"},              # fifo
     "h": {"rd", "wr", "se", "mm", "fs", "fc"},              # shared memory
 }
 RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "sd",
@@ -274,10 +301,16 @@ RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "
 ASSETS = "/usr/local/share/beryllium/"
 
 
+def allowed_file(name, assets=ASSETS):
+    """A read-only file a confined renderer may hold: a resource file, or a
+    font the browser's font service passed it."""
+    return name.startswith(assets) or "/fonts/" in name
+
+
 def policy_problems(fds, rights_by_fd, assets=ASSETS):
     """Descriptors of a confined renderer that break the policy: a type the
-    policy has no entry for, a file other than a read-only resource file,
-    or rights beyond the type's. Descriptors 0 to 2 are stdio, left to
+    policy has no entry for, a file other than a read-only resource or font
+    file, or rights beyond the type's. Descriptors 0 to 2 are stdio, left to
     caph_limit_stdio()."""
     by_fd = {d["fd"]: d for d in fds if d["fd"].isdigit()}
     out = []
@@ -300,8 +333,9 @@ def policy_problems(fds, rights_by_fd, assets=ASSETS):
             if "w" in d.get("flags", ""):
                 out.append(f"fd {fd}: writable file {name or 'with no name'}")
                 continue
-            if not name.startswith(assets):
-                out.append(f"fd {fd}: file outside {assets}: {name or '(no name)'}")
+            if not allowed_file(name, assets):
+                out.append(f"fd {fd}: file that is not a resource or font file: "
+                           f"{name or '(no name)'}")
                 continue
         extra = (names - RIGHT_ALIASES) - POLICY[kind]
         if extra:

@@ -1,0 +1,548 @@
+Beryllium: least Capsicum rights on descriptors a confined process creates or receives
+
+Purpose: Phase 2 increment 3 (plan/14-RENDERER-SANDBOX.md; feature matrix
+  S-REN-04, S-REN-05, S-IPC-01). The renderer lockdown
+  (beryllium-capsicum-renderer.patch) cuts every descriptor that exists at
+  the lockdown point to the rights its kind needs. The owner's runs of
+  0.20.3.8 (7 November 2026, with security.bsd.unprivileged_proc_debug=1)
+  showed what that leaves: everything a renderer creates or receives after
+  the lockdown has every right. Per renderer that was a kqueue and an
+  eventfd for each thread that starts a message pump after the lockdown
+  (the IO thread, the compositor and others), every socket the browser
+  sends for a transport to another process, and the font files the font
+  service passes. Capsicum has no default rights for new descriptors, so
+  each must be cut where it appears. This patch adds, on FreeBSD only:
+  - base/posix/capsicum_rights.{h,cc}: the policy in one place. A kind per
+    descriptor (read-only file, socket, kqueue, eventfd or pipe, shared
+    memory, directory) with its rights, fcntl commands and ioctls, taken
+    as the intersection with what the descriptor has (rights only ever
+    shrink, so the kernel never refuses); the kind from a kinfo_file entry
+    (for the lockdown sweep, outside capability mode) and from fstat for a
+    process in capability mode, where kern.proc.filedesc and F_KINFO are
+    refused: an empty kevent answers only on a kqueue and F_GET_SEALS only
+    on shared memory, and neither needs a right. The lockdown patch now
+    uses this instead of its own copy.
+  - base/message_loop/message_pump_epoll.cc: each pump cuts its epoll
+    descriptor (epoll-shim's kqueue on FreeBSD: kevent, event, fstat) and
+    its wake eventfd at creation, in every process. The survey of 0.20.3.8
+    found 6 million refusals after the lockdown because the kqueue policy
+    lacked CAP_EVENT while epoll-shim's epoll_wait() polls its kqueue
+    before each kevent(); the policy here includes it.
+  - mojo/public/cpp/platform/socket_utils_posix.cc: a process in
+    capability mode cuts every descriptor it receives over a Mojo channel
+    (SocketRecvmsg serves both the ipcz transports and the broker client)
+    to its kind's rights, and removes every right from one the policy has
+    no kind for (a writable file, a device...), logging what it was; the
+    descriptor stays, so whoever expected it gets one that can do nothing
+    rather than a missing handle.
+  This is defence in depth for a renderer that is not compromised, and it
+  makes the kernel's view match the policy (procstat -C, the suite's
+  policy test). It is not the security boundary: a compromised renderer
+  can call recvmsg itself. The boundary is the browser limiting what it
+  sends (S-IPC-01), the next increment, which needs to know which child a
+  transport leads to.
+Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
+  this one (the helper); applies after the imported FreeBSD patches
+  patch-base_BUILD.gn and patch-base_message__loop_message__pump__epoll.cc
+  (stage 2).
+  Sockets (7 November 2026, after the adversarial review, plan/16 BER-02):
+  a socket is admitted only in the shape of a Mojo transport, an end of an
+  unnamed AF_UNIX stream or seqpacket pair, not listening, bound or
+  connected to no path (kinfo_file kf_sock_domain, kf_sock_type,
+  kf_sa_local, kf_sa_peer at the lockdown; SO_DOMAIN, SO_TYPE,
+  SO_ACCEPTCONN, getsockname, getpeername for a received one). A network
+  socket or one connected to a named service keeps authority that rights
+  cannot take back, so it ends the lockdown or loses every right.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (build 0.20.3.10).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_confined_renderer_descriptors_follow_the_policy (every descriptor
+  of a confined renderer, including those created and received after the
+  lockdown, has an allowed kind and no more rights than its kind's; files
+  are read-only resource or font files); test_90_stability
+  test_renderers_idle_without_spinning; the Capsicum survey's
+  after-lockdown counts and descriptor lists.
+security-review: required (descriptor rights in confined processes)
+
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2292,6 +2292,8 @@
+     ]
+   } else if (is_freebsd) {
+     sources += [
++      "posix/capsicum_rights.cc",
++      "posix/capsicum_rights.h",
+       "process/process_handle_freebsd.cc",
+       "process/process_iterator_freebsd.cc",
+       "process/process_metrics_freebsd.cc",
+--- a/base/message_loop/message_pump_epoll.cc
++++ b/base/message_loop/message_pump_epoll.cc
+@@ -23,6 +23,9 @@
+ #include "base/metrics/histogram_macros.h"
+ #include "base/numerics/safe_conversions.h"
+ #include "base/posix/eintr_wrapper.h"
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
+ #include "base/threading/thread_checker.h"
+ #include "base/time/time.h"
+ #include "base/trace_event/heap_profiler.h"
+@@ -144,6 +147,17 @@
+ 
+   wake_event_.reset(eventfd(0, EFD_NONBLOCK));
+   PCHECK(wake_event_.is_valid());
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: least rights from creation (plan/06 section 3.2). epoll_ is
++  // epoll-shim's kqueue here, which only epoll-shim polls and kevent()s, and
++  // the wake event is a native eventfd. A confined process cannot be given
++  // rights back later, and a pump made after the lockdown would otherwise
++  // hold both with every right.
++  PCHECK(freebsd::LimitDescriptorRights(epoll_.get(),
++                                        freebsd::DescriptorKind::kKqueue));
++  PCHECK(freebsd::LimitDescriptorRights(wake_event_.get(),
++                                        freebsd::DescriptorKind::kEvent));
++#endif
+ 
+   epoll_event wake{.events = EPOLLIN, .data = {.ptr = &wake_event_}};
+   int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -0,0 +1,337 @@
++// Copyright 2026 Beryllium Browser contributors
++// SPDX-License-Identifier: GPL-3.0-only
++
++#include "base/posix/capsicum_rights.h"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/capsicum.h>
++#include <sys/event.h>
++#include <sys/filio.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/un.h>
++#include <sys/user.h>
++#include <unistd.h>
++
++#include <atomic>
++#include <cstddef>
++
++#include "base/logging.h"
++#include "base/strings/string_number_conversions.h"
++
++namespace base::freebsd {
++
++namespace {
++
++constexpr uint32_t kGetFl = CAP_FCNTL_GETFL;
++constexpr uint32_t kGetSetFl = CAP_FCNTL_GETFL | CAP_FCNTL_SETFL;
++constexpr cap_ioctl_t kEventIoctls[] = {FIONREAD};
++
++// The policy, per kind: rights, fcntl commands, ioctls.
++bool PolicyFor(DescriptorKind kind,
++               cap_rights_t* rights,
++               uint32_t* fcntls,
++               const cap_ioctl_t** ioctls,
++               size_t* nioctls) {
++  *fcntls = 0;
++  *ioctls = nullptr;
++  *nioctls = 0;
++  switch (kind) {
++    case DescriptorKind::kReadOnlyFile:
++      cap_rights_init(rights, CAP_PREAD, CAP_MMAP_R, CAP_FSTAT, CAP_FCNTL);
++      *fcntls = kGetFl;
++      return true;
++    case DescriptorKind::kSocket:
++      cap_rights_init(rights, CAP_RECV, CAP_SEND, CAP_EVENT, CAP_FSTAT,
++                      CAP_FCNTL, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
++      *fcntls = kGetSetFl;
++      return true;
++    case DescriptorKind::kKqueue:
++      cap_rights_init(rights, CAP_KQUEUE, CAP_EVENT, CAP_FSTAT);
++      return true;
++    case DescriptorKind::kEvent:
++      cap_rights_init(rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_FSTAT,
++                      CAP_FCNTL, CAP_IOCTL);
++      *fcntls = kGetSetFl;
++      *ioctls = kEventIoctls;
++      *nioctls = 1;
++      return true;
++    case DescriptorKind::kSharedMemory:
++      cap_rights_init(rights, CAP_READ, CAP_WRITE, CAP_SEEK, CAP_MMAP_RW,
++                      CAP_FSTAT, CAP_FCNTL);
++      *fcntls = kGetFl;
++      return true;
++    case DescriptorKind::kDirectory:
++      return false;
++  }
++  return false;
++}
++
++// A unix socket address with a path: a socket bound to one, or connected to
++// a service listening on one. The ends of a socketpair have none.
++const char* UnixPathOf(const struct sockaddr* sa, socklen_t len) {
++  if (sa == nullptr || len <= offsetof(struct sockaddr_un, sun_path) ||
++      sa->sa_family != AF_UNIX) {
++    return nullptr;
++  }
++  const char* path = reinterpret_cast<const struct sockaddr_un*>(sa)->sun_path;
++  return path[0] ? path : nullptr;
++}
++
++// The only sockets a confined process holds are Mojo's: the ends of unnamed
++// AF_UNIX socket pairs, stream (the channels) or seqpacket (the sandbox IPC
++// pair), connected to each other, never listening. A network socket, a
++// socket bound to a path or one connected to a named service (a display, a
++// daemon) carries authority capability mode does not take away: rights can
++// stop connect(), not a connection that exists.
++bool MojoSocketShape(int domain, int type, const struct sockaddr* local,
++                     socklen_t local_len, const struct sockaddr* peer,
++                     socklen_t peer_len, bool listening, std::string* why) {
++  if (domain != AF_UNIX) {
++    *why = "socket of domain " + NumberToString(domain);
++    return false;
++  }
++  if (type != SOCK_STREAM && type != SOCK_SEQPACKET) {
++    *why = "unix socket of type " + NumberToString(type);
++    return false;
++  }
++  if (listening) {
++    *why = "listening unix socket";
++    return false;
++  }
++  if (const char* path = UnixPathOf(local, local_len)) {
++    *why = std::string("unix socket bound to ") + path;
++    return false;
++  }
++  if (const char* path = UnixPathOf(peer, peer_len)) {
++    *why = std::string("unix socket connected to ") + path;
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
++bool LimitDescriptorRights(int fd, DescriptorKind kind) {
++  cap_rights_t allowed;
++  uint32_t fcntls;
++  const cap_ioctl_t* ioctls;
++  size_t nioctls;
++  if (!PolicyFor(kind, &allowed, &fcntls, &ioctls, &nioctls)) {
++    errno = EINVAL;
++    return false;
++  }
++  cap_rights_t have;
++  if (cap_rights_get(fd, &have) != 0) {
++    return false;
++  }
++  cap_rights_t excess = have;
++  cap_rights_remove(&excess, &allowed);  // what it has beyond the policy
++  cap_rights_remove(&have, &excess);     // what it has within the policy
++  uint32_t have_fcntls = 0;
++  if (cap_fcntls_get(fd, &have_fcntls) != 0) {
++    return false;
++  }
++  return cap_rights_limit(fd, &have) == 0 &&
++         cap_fcntls_limit(fd, have_fcntls & fcntls) == 0 &&
++         cap_ioctls_limit(fd, ioctls, nioctls) == 0;
++}
++
++bool RemoveAllRights(int fd) {
++  cap_rights_t none;
++  cap_rights_init(&none);
++  return cap_rights_limit(fd, &none) == 0;
++}
++
++std::optional<DescriptorKind> DescriptorKindFromKinfo(
++    const struct kinfo_file& kf,
++    std::string* description) {
++  const std::string path =
++      kf.kf_path[0] ? std::string(" ") + kf.kf_path : std::string();
++  switch (kf.kf_type) {
++    case KF_TYPE_VNODE:
++      switch (kf.kf_vnode_type) {
++        case KF_VTYPE_VDIR:
++          *description = "directory" + path;
++          return DescriptorKind::kDirectory;
++        case KF_VTYPE_VREG:
++          if (kf.kf_flags & (KF_FLAG_WRITE | KF_FLAG_APPEND)) {
++            *description =
++                "writable file" + (path.empty() ? " with no name" : path);
++            return std::nullopt;
++          }
++          if (path.empty()) {
++            *description = "file with no name";
++            return std::nullopt;
++          }
++          *description = "read-only file" + path;
++          return DescriptorKind::kReadOnlyFile;
++        case KF_VTYPE_VCHR:
++        case KF_VTYPE_VBLK:
++          *description = "device" + path;
++          return std::nullopt;
++        default:
++          *description =
++              "vnode of type " + NumberToString(kf.kf_vnode_type) + path;
++          return std::nullopt;
++      }
++    case KF_TYPE_SOCKET: {
++      // kf_path holds the domain's name ("local"), not a path. A listening
++      // unix socket is bound to a path, which the address check catches.
++      std::string why;
++      if (!MojoSocketShape(
++              kf.kf_sock_domain, kf.kf_sock_type,
++              reinterpret_cast<const struct sockaddr*>(&kf.kf_sa_local),
++              sizeof(kf.kf_sa_local),
++              reinterpret_cast<const struct sockaddr*>(&kf.kf_sa_peer),
++              sizeof(kf.kf_sa_peer), /*listening=*/false, &why)) {
++        *description = why;
++        return std::nullopt;
++      }
++      *description = "socket";
++      return DescriptorKind::kSocket;
++    }
++    case KF_TYPE_PIPE:
++    case KF_TYPE_FIFO:
++      *description = "pipe";
++      return DescriptorKind::kEvent;
++    case KF_TYPE_EVENTFD:
++      *description = "eventfd";
++      return DescriptorKind::kEvent;
++    case KF_TYPE_KQUEUE:
++      *description = "kqueue";
++      return DescriptorKind::kKqueue;
++    case KF_TYPE_SHM:
++      *description = "shared memory";
++      return DescriptorKind::kSharedMemory;
++    case KF_TYPE_MQUEUE:
++      *description = "message queue";
++      return std::nullopt;
++    case KF_TYPE_SEM:
++      *description = "semaphore";
++      return std::nullopt;
++    case KF_TYPE_PTS:
++      *description = "terminal";
++      return std::nullopt;
++    case KF_TYPE_PROCDESC:
++      *description = "process descriptor";
++      return std::nullopt;
++    case KF_TYPE_DEV:
++      *description = "device" + path;
++      return std::nullopt;
++    default:
++      *description = "descriptor of type " + NumberToString(kf.kf_type);
++      return std::nullopt;
++  }
++}
++
++std::optional<DescriptorKind> DescriptorKindOf(int fd,
++                                               std::string* description) {
++  struct stat st;
++  if (fstat(fd, &st) != 0) {
++    *description = "descriptor fstat cannot describe";
++    return std::nullopt;
++  }
++  if (S_ISSOCK(st.st_mode)) {
++    int domain = -1, type = -1, listening = 0;
++    socklen_t len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len);
++    len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len);
++    len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &len);
++    struct sockaddr_un local = {}, peer = {};
++    socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
++    if (getsockname(fd, reinterpret_cast<struct sockaddr*>(&local),
++                    &local_len) != 0) {
++      local_len = 0;
++    }
++    if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&peer),
++                    &peer_len) != 0) {
++      peer_len = 0;  // not connected: it cannot connect without CAP_CONNECT
++    }
++    std::string why;
++    if (!MojoSocketShape(domain, type,
++                         reinterpret_cast<const struct sockaddr*>(&local),
++                         local_len,
++                         reinterpret_cast<const struct sockaddr*>(&peer),
++                         peer_len, listening != 0, &why)) {
++      *description = why;
++      return std::nullopt;
++    }
++    *description = "socket";
++    return DescriptorKind::kSocket;
++  }
++  if (S_ISFIFO(st.st_mode)) {
++    // Kqueues and eventfds report as fifos; only a kqueue accepts an empty
++    // kevent (which needs no right), anything else is EBADF.
++    const struct timespec now = {0, 0};
++    if (kevent(fd, nullptr, 0, nullptr, 0, &now) == 0) {
++      *description = "kqueue";
++      return DescriptorKind::kKqueue;
++    }
++    *description = "eventfd or pipe";
++    return DescriptorKind::kEvent;
++  }
++  if (S_ISREG(st.st_mode)) {
++    // Shared memory reports as a regular file; only it has seals.
++    if (fcntl(fd, F_GET_SEALS) >= 0) {
++      *description = "shared memory";
++      return DescriptorKind::kSharedMemory;
++    }
++    const int flags = fcntl(fd, F_GETFL);
++    if (flags >= 0 && (flags & O_ACCMODE) == O_RDONLY) {
++      *description = "read-only file";
++      return DescriptorKind::kReadOnlyFile;
++    }
++    *description = "writable file";
++    return std::nullopt;
++  }
++  if (S_ISDIR(st.st_mode)) {
++    *description = "directory";
++    return DescriptorKind::kDirectory;
++  }
++  if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) {
++    *description = "device";
++    return std::nullopt;
++  }
++  *description = "descriptor of mode " + NumberToString(st.st_mode & S_IFMT);
++  return std::nullopt;
++}
++
++bool InCapabilityMode() {
++  static std::atomic<bool> known{false};
++  if (known.load(std::memory_order_relaxed)) {
++    return true;
++  }
++  u_int mode = 0;
++  if (cap_getmode(&mode) != 0 || mode == 0) {
++    return false;
++  }
++  known.store(true, std::memory_order_relaxed);
++  return true;
++}
++
++void LimitReceivedDescriptor(int fd) {
++  if (!InCapabilityMode()) {
++    return;
++  }
++  std::string what;
++  const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
++  if (kind && *kind != DescriptorKind::kDirectory) {
++    if (!LimitDescriptorRights(fd, *kind)) {
++      PLOG(ERROR) << "beryllium-sandbox: received " << what << " (fd " << fd
++                  << ") could not be limited";
++      RemoveAllRights(fd);
++    }
++    return;
++  }
++  LOG(ERROR) << "beryllium-sandbox: received " << what << " (fd " << fd
++             << "), which a confined process may not hold: every right removed";
++  RemoveAllRights(fd);
++}
++
++}  // namespace base::freebsd
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -0,0 +1,72 @@
++// Copyright 2026 Beryllium Browser contributors
++// SPDX-License-Identifier: GPL-3.0-only
++//
++// Beryllium: the Capsicum rights a confined process keeps on each kind of
++// descriptor (plan/06-SECURITY-MODEL.md section 3.2). Used by the renderer
++// lockdown (sandbox/policy/freebsd), by the message pump when it creates a
++// kqueue and an eventfd, and by Mojo when a confined process receives a
++// descriptor over a channel.
++
++#ifndef BASE_POSIX_CAPSICUM_RIGHTS_H_
++#define BASE_POSIX_CAPSICUM_RIGHTS_H_
++
++#include <optional>
++#include <string>
++
++#include "base/base_export.h"
++#include "base/files/scoped_file.h"
++
++struct kinfo_file;
++
++namespace base::freebsd {
++
++// The kinds of descriptor a confined process may hold, each with the rights
++// it needs and nothing more.
++enum class DescriptorKind {
++  kReadOnlyFile,   // read, seek, read-only mapping, fstat, F_GETFL
++  kSocket,         // send, receive, event, fstat, shutdown, get/setsockopt,
++                   // F_GETFL/F_SETFL; never connect, bind, listen or accept
++  kKqueue,         // kevent, event (epoll-shim polls it), fstat
++  kEvent,          // eventfd, pipe, fifo: read, write, event, fstat,
++                   // F_GETFL/F_SETFL, the ioctl FIONREAD
++  kSharedMemory,   // read, write, seek, mapping, fstat, F_GETFL; never
++                   // truncation, executable mapping or ownership changes
++  kDirectory,      // never kept: callers close it
++};
++
++// Cuts |fd| down to the rights, fcntl commands and ioctls of |kind| that it
++// has. Rights only ever shrink, so a descriptor its creator already limited
++// keeps the smaller set. Returns false with errno set; kDirectory is EINVAL.
++BASE_EXPORT bool LimitDescriptorRights(int fd, DescriptorKind kind);
++
++// Removes every right from |fd|: it stays open, so whoever expected it gets
++// a descriptor rather than an error, and every operation on it fails.
++BASE_EXPORT bool RemoveAllRights(int fd);
++
++// The kind of a descriptor from its kinfo_file entry (kern.proc.filedesc or
++// fcntl(F_KINFO); neither works in capability mode), or nullopt when the
++// policy has no kind for it (a writable or unnamed regular file, a device,
++// a terminal, a semaphore...). |description| says what it is, for logs.
++BASE_EXPORT std::optional<DescriptorKind> DescriptorKindFromKinfo(
++    const struct kinfo_file& kf,
++    std::string* description);
++
++// The kind of |fd| as far as a process in capability mode can tell: fstat,
++// then an empty kevent (only a kqueue answers) and F_GET_SEALS (only shared
++// memory answers), none of which needs a right. A regular file counts as
++// read-only only when it was opened read-only.
++BASE_EXPORT std::optional<DescriptorKind> DescriptorKindOf(
++    int fd,
++    std::string* description);
++
++// True once this process is in capability mode (a process never leaves it).
++BASE_EXPORT bool InCapabilityMode();
++
++// For a process in capability mode: limits a descriptor it has just received
++// to its kind's rights, or removes every right when the policy has no kind
++// for it, logging what it was. Outside capability mode it does nothing.
++BASE_EXPORT void LimitReceivedDescriptor(int fd);
++
++}  // namespace base::freebsd
++
++#endif  // BASE_POSIX_CAPSICUM_RIGHTS_H_
+--- a/mojo/public/cpp/platform/socket_utils_posix.cc
++++ b/mojo/public/cpp/platform/socket_utils_posix.cc
+@@ -16,6 +16,10 @@
+ #include "base/posix/eintr_wrapper.h"
+ #include "build/build_config.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ namespace mojo {
+ 
+ namespace {
+@@ -132,6 +136,11 @@
+           // If some FDs are missing, this loop is necessary to release the ones
+           // that were successfully received.
+           if (!missing_fds) {
++#if BUILDFLAG(IS_FREEBSD)
++            // Beryllium: a process in capability mode keeps what it receives
++            // only with the rights its kind needs (plan/06 section 3.2).
++            base::freebsd::LimitReceivedDescriptor(fd.get());
++#endif
+             descriptors->emplace_back(std::move(fd));
+           }
+         }

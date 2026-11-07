@@ -7,9 +7,13 @@ and check the commands the scripts would run.
 """
 
 import hashlib
+import io
+import json
 import os
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import textwrap
 import unittest
@@ -18,6 +22,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 INSTALL = os.path.join(REPO, "install.sh")
 PUBLISH = os.path.join(REPO, "freebsd", "tools", "publish-release")
+CHECK_PROVENANCE = os.path.join(REPO, "freebsd", "tools", "check-provenance")
+
+HELIUM_COMMIT = "2f81b9cafa38a95071e20de3f9cd6b0aca6d3c65"
+IMPORTED_FROM = ("ports_commit: 6ad3e0c82d8bada5971e0f83de2b4e9a796341d1\n"
+                 "port: www/chromium 156.0.8078.47_1\nimported: 2026-11-01\n")
 
 STUBS = {
     "uname": """
@@ -253,13 +262,134 @@ class InstallBuildTests(Harness):
         self.assertIn("+ doas pkg delete -y beryllium\n", r.stdout)
 
 
+def fake_checkout(root, patches=("security/one.patch", "ui/two.patch"), revision=1):
+    """A checkout with what check-provenance reads: the Chromium version, the
+    port's Makefile.helium and IMPORTED-FROM, and a patch series."""
+    port = os.path.join(root, "freebsd", "ports", "www", "beryllium")
+    os.makedirs(os.path.join(root, "helium"))
+    os.makedirs(os.path.join(port, "files"))
+    with open(os.path.join(root, "helium", "chromium_version.txt"), "w") as f:
+        f.write("156.0.8078.79\n")
+    with open(os.path.join(port, "Makefile.helium"), "w") as f:
+        f.write(f"# Generated\nHELIUM_COMMIT=\t\t{HELIUM_COMMIT}\nHELIUM_VERSION=\t\t0.20.3\n"
+                f"CHROMIUM_VERSION=\t156.0.8078.79\nBERYLLIUM_REVISION=\t{revision}\n")
+    with open(os.path.join(port, "files", "IMPORTED-FROM"), "w") as f:
+        f.write(IMPORTED_FROM)
+    digests = {}
+    os.makedirs(os.path.join(root, "patches"), exist_ok=True)
+    with open(os.path.join(root, "patches", "series"), "w") as f:
+        f.write("# series\n" + "".join(p + "\n" for p in patches))
+    for p in patches:
+        path = os.path.join(root, "patches", p)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        body = f"Beryllium: {p}\n--- a/x\n+++ b/x\n".encode()
+        with open(path, "wb") as f:
+            f.write(body)
+        digests[p] = hashlib.sha256(body).hexdigest()
+    return digests
+
+
+def manifest_for(root, digests, **overrides):
+    """What build-manifest writes for fake_checkout(root)."""
+    m = {
+        "beryllium_version": "0.20.3.1",
+        "chromium_version": "156.0.8078.79",
+        "helium_commit": HELIUM_COMMIT,
+        "bsd_patches": {k.strip(): v.strip() for k, v in
+                        (l.split(":", 1) for l in IMPORTED_FROM.splitlines() if ":" in l)},
+        "beryllium_patches": dict(digests),
+        "gn_args": {}, "gn_arg_origin": {}, "hardening": {},
+        "build_host": {"system": "FreeBSD", "release": "16.0-CURRENT", "machine": "amd64"},
+        "sandbox_status": "none",
+    }
+    m.update(overrides)
+    return m
+
+
+def write_package(path, manifest, member="/usr/local/share/beryllium/BUILD-MANIFEST.json"):
+    """A pkg-shaped tar: the two pkg manifests, then files by absolute path."""
+    with tarfile.open(path, "w") as t:
+        for name, data in [("+COMPACT_MANIFEST", b"{}"), ("+MANIFEST", b"{}"),
+                           ("/usr/local/share/beryllium/beryllium", b"ELF"),
+                           (member, (json.dumps(manifest, indent=2) + "\n").encode()
+                            if manifest is not None else None)]:
+            if data is None:
+                continue
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+
+
+class CheckProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = os.path.join(self.tmp, "repo")
+        self.digests = fake_checkout(self.root)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def check(self, manifest, *args):
+        path = os.path.join(self.tmp, "m.json")
+        with open(path, "w") as f:
+            f.write(manifest if isinstance(manifest, str) else json.dumps(manifest))
+        return subprocess.run([sys.executable, CHECK_PROVENANCE, "--repo", self.root, *args, path],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_matching_manifest(self):
+        r = self.check(manifest_for(self.root, self.digests), "--version", "0.20.3.1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("built from this checkout: Beryllium 0.20.3.1, Chromium 156.0.8078.79", r.stdout)
+        self.assertIn("2 patches", r.stdout)
+
+    def test_port_revision_suffix_is_not_a_difference(self):
+        r = self.check(manifest_for(self.root, self.digests), "--version", "0.20.3.1_2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_changed_patch(self):
+        changed = dict(self.digests, **{"ui/two.patch": "0" * 64})
+        r = self.check(manifest_for(self.root, changed))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("beryllium_patches: ui/two.patch differs", r.stderr)
+
+    def test_missing_and_extra_patches(self):
+        d = dict(self.digests)
+        del d["ui/two.patch"]
+        d["privacy/three.patch"] = "1" * 64
+        r = self.check(manifest_for(self.root, d))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ui/two.patch in the checkout, not in the package", r.stderr)
+        self.assertIn("privacy/three.patch in the package, not in the checkout", r.stderr)
+
+    def test_other_versions_and_commits(self):
+        r = self.check(manifest_for(self.root, self.digests, beryllium_version="0.20.3.2",
+                                    helium_commit="abc", chromium_version="156.0.8078.80",
+                                    bsd_patches={"ports_commit": "other"}))
+        self.assertEqual(r.returncode, 1)
+        for line in ["beryllium_version: package '0.20.3.2', checkout '0.20.3.1'",
+                     "helium_commit: package 'abc'", "chromium_version: package '156.0.8078.80'",
+                     "bsd_patches: ports_commit differs", "bsd_patches: port in the checkout"]:
+            self.assertIn(line, r.stderr)
+
+    def test_package_version_must_match_the_manifest(self):
+        r = self.check(manifest_for(self.root, self.digests), "--version", "0.20.3.4")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("manifest '0.20.3.1', package '0.20.3.4'", r.stderr)
+
+    def test_unreadable_manifest(self):
+        r = self.check("not json")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cannot read", r.stderr)
+        r = self.check("[1, 2]")
+        self.assertEqual(r.returncode, 2)
+
+
 class PublishReleaseTests(Harness):
     def setUp(self):
         super().setUp()
         root = os.path.join(self.tmp, "repo")
-        os.makedirs(os.path.join(root, "helium"))
-        with open(os.path.join(root, "helium", "chromium_version.txt"), "w") as f:
-            f.write("156.0.8078.79\n")
+        self.digests = fake_checkout(root)
+        self.root = root
         git = os.path.join(self.bin, "git")
         with open(git, "w") as f:
             f.write(textwrap.dedent(f"""\
@@ -273,25 +403,65 @@ class PublishReleaseTests(Harness):
                 """))
         os.chmod(git, 0o755)
         self.pkgfile = os.path.join(self.tmp, "beryllium-0.20.3.1.pkg")
-        with open(self.pkgfile, "w") as f:
-            f.write("pkg")
+        write_package(self.pkgfile, manifest_for(root, self.digests))
 
     def test_dry_run_layout_and_notes(self):
         r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
                         STUB_DIRTY="", STUB_UNPUSHED="")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout
+        self.assertIn("check-provenance: built from this checkout: Beryllium 0.20.3.1", out)
         self.assertIn("beryllium-FreeBSD-16-amd64.pkg", out)
-        self.assertIn("+ gh release create v0.20.3.1-1 --target 1234567890abcdef", out)
-        self.assertIn("SHA256SUMS", out)
+        self.assertRegex(out, r"\+ gh release create v0\.20\.3\.1-1 --target 1234567890abcdef .* "
+                              r"\S+/SHA256SUMS \S+/beryllium-FreeBSD-16-amd64\.pkg "
+                              r"\S+/BUILD-MANIFEST-FreeBSD-16-amd64\.json\n")
         outdir = out.split("release files in ")[1].split(":")[0]
         with open(os.path.join(outdir, "NOTES.md")) as f:
             notes = f.read()
         self.assertIn("Corresponding source: commit 1234567890abcdef", notes)
+        self.assertIn("BUILD-MANIFEST-FreeBSD-<version>-amd64.json", notes)
         self.assertIn("no sandbox yet", notes)
         with open(os.path.join(outdir, "SHA256SUMS")) as f:
             self.assertRegex(f.read(), r"^[0-9a-f]{64} beryllium-FreeBSD-16-amd64\.pkg\n$")
+        with open(os.path.join(outdir, "BUILD-MANIFEST-FreeBSD-16-amd64.json")) as f:
+            self.assertEqual(json.load(f)["helium_commit"], HELIUM_COMMIT)
         shutil.rmtree(outdir)
+
+    def test_refuses_a_package_built_from_other_patches(self):
+        """The release must not name a commit the package was not built from."""
+        other = dict(self.digests, **{"security/one.patch": "f" * 64})
+        write_package(self.pkgfile, manifest_for(self.root, other))
+        r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
+                        STUB_DIRTY="", STUB_UNPUSHED="")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("security/one.patch differs", r.stderr)
+        self.assertIn("was not built from this checkout (commit 1234567890abcdef)", r.stderr)
+        self.assertNotIn("gh release create", r.stdout)
+
+    def test_refuses_a_package_without_a_manifest(self):
+        write_package(self.pkgfile, None)
+        r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
+                        STUB_DIRTY="", STUB_UNPUSHED="")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("carries no BUILD-MANIFEST.json", r.stderr)
+
+    def test_refuses_a_manifest_for_another_version(self):
+        """pkg says 0.20.3.1 (the stub); a manifest saying otherwise is a
+        package assembled from mismatched parts."""
+        write_package(self.pkgfile, manifest_for(self.root, self.digests,
+                                                 beryllium_version="0.20.3.2"))
+        r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
+                        STUB_DIRTY="", STUB_UNPUSHED="")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("beryllium_version", r.stderr)
+
+    def test_manifest_without_the_leading_slash(self):
+        """GNU tar lists absolute members without their slash; both work."""
+        write_package(self.pkgfile, manifest_for(self.root, self.digests),
+                      member="usr/local/share/beryllium/BUILD-MANIFEST.json")
+        r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
+                        STUB_DIRTY="", STUB_UNPUSHED="")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_refuses_unpushed_or_dirty(self):
         r = self.run_sh(PUBLISH, "--dry-run", "v1", self.pkgfile, STUB_DIRTY="", STUB_UNPUSHED="1")

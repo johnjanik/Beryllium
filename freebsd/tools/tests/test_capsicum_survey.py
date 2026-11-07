@@ -82,6 +82,7 @@ CONFINED_F = """\
  5000 beryllium           40 v r rw------   1       0 -   /home/u/.config/beryllium/Default/Cookies
  5000 beryllium           41 v r r-------   1       0 -   /etc/passwd
  5000 beryllium           42 v c rw------   1       0 -   /dev/dri/renderD128
+ 5000 beryllium           43 v r r-------   1       0 -   /usr/local/share/fonts/dejavu/DejaVuSans.ttf
 """
 CONFINED_C = """\
   PID COMM                FD T FLAGS    CAPABILITIES   PRO NAME
@@ -94,6 +95,7 @@ CONFINED_C = """\
  5000 beryllium           40 v rw------ rd,se,mm,fc,fs,prd,mmr,re -   /home/u/.config/beryllium/Default/Cookies
  5000 beryllium           41 v r------- rd,se,mm,fc,fs,prd,mmr,re -   /etc/passwd
  5000 beryllium           42 v rw------ rd,wr,se,mm,fc,fs,io,prd,pwr,mmr,mmw,mrw,re,sd -   /dev/dri/renderD128
+ 5000 beryllium           43 v r------- rd,se,mm,fc,fs,prd,mmr,re -   /usr/local/share/fonts/dejavu/DejaVuSans.ttf
 """
 PROCSTAT_S = """\
   PID COMM             FLAGS
@@ -240,26 +242,44 @@ class Parse(unittest.TestCase):
         fds = capsicum.descriptors(5000, CONFINED_F)
         caps = capsicum.rights(5000, CONFINED_C)
         problems = capsicum.policy_problems(fds, caps)
-        # 0 is stdio; 3, 4, 6, 7 and 12 are within the policy.
+        # 0 is stdio; 3, 4, 6, 7, 12 and 43 (a font file) are within the policy.
         self.assertEqual(problems, [
             "fd 40: writable file /home/u/.config/beryllium/Default/Cookies",
-            "fd 41: file outside /usr/local/share/beryllium/: /etc/passwd",
+            "fd 41: file that is not a resource or font file: /etc/passwd",
             "fd 42: vnode type 'c' not allowed (/dev/dri/renderD128)",
         ])
         # Rights beyond the type's, and an unlimited descriptor.
         caps["4"]["rights"].append("co")
-        caps["6"]["rights"] = ["ke", "kc", "fs"]
+        caps["6"]["rights"] = ["ke", "kc", "ev", "fs", "wr"]
         caps["12"]["rights"] = ["rd", "wr", "se", "mm", "ft", "mmx", "re", "sd"]
         caps["7"]["rights"] = sorted(capsicum.UNLIMITED_MARKERS | {"rd", "wr"})
         problems = capsicum.policy_problems(fds, caps)
         self.assertIn("fd 4 (s): rights beyond the policy: co", problems)
-        self.assertIn("fd 6 (k): rights beyond the policy: fs", problems)
+        self.assertIn("fd 6 (k): rights beyond the policy: wr", problems)
         self.assertIn("fd 12 (h): rights beyond the policy: ft,mmx", problems)
         self.assertIn("fd 7 (E): rights not limited", problems)
         # A type the policy has no entry for.
         caps["50"] = {"type": "P", "rights": ["pg", "pk"], "name": "-"}
         self.assertIn("fd 50: descriptor type 'P' not allowed",
                       capsicum.policy_problems(fds, caps))
+
+    def test_cpu_seconds_parsing(self):
+        for text, want in (("0:00.12\n", 0.12), ("00:00:01\n", 1.0), ("1:02:03.5\n", 3723.5),
+                           ("2-01:00:00\n", 176400.0), ("", None), ("junk\n", None)):
+            with unittest.mock.patch.object(capsicum, "_run", return_value=text):
+                self.assertEqual(capsicum.cpu_seconds(1), want, text)
+
+    def test_lockdown_requested(self):
+        ns = lambda *args: unittest.mock.Mock(browser_args=list(args))  # noqa: E731
+        self.assertTrue(capsicum.lockdown_requested(
+            ns("--enable-features=BerylliumCapsicumRenderer")))
+        self.assertTrue(capsicum.lockdown_requested(
+            ns("--headless", "--enable-features=Foo,BerylliumCapsicumRenderer,BerylliumCapsicumTrap")))
+        self.assertFalse(capsicum.lockdown_requested(ns()))
+        self.assertFalse(capsicum.lockdown_requested(
+            ns("--disable-features=BerylliumCapsicumRenderer")))
+        self.assertFalse(capsicum.lockdown_requested(unittest.mock.Mock()))  # no list of arguments
+        self.assertFalse(capsicum.lockdown_requested(None))
 
     def test_capability_mode_parsing(self):
         with unittest.mock.patch.object(capsicum, "_run", return_value=PROCSTAT_S):

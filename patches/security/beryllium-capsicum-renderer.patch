@@ -45,15 +45,23 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
     snapshot) keeps read, seek, read-only mapping, fstat and F_GETFL; a
     socket (the Mojo channel, the ipcz transports) keeps send, receive,
     event, fstat, shutdown, get/setsockopt and F_GETFL/F_SETFL, never
-    connect, bind, listen or accept; a kqueue keeps kevent; an eventfd,
-    pipe or fifo keeps read, write, event, fstat and F_GETFL/F_SETFL;
-    shared memory keeps what its creator gave it less truncation,
-    executable mapping and ownership changes; no descriptor keeps any
-    ioctl. Rights are cut with cap_rights_limit to the intersection of
+    connect, bind, listen or accept; a kqueue keeps kevent, event and
+    fstat; an eventfd, pipe or fifo keeps read, write, event, fstat,
+    F_GETFL/F_SETFL and the ioctl FIONREAD; shared memory keeps what its
+    creator gave it less truncation, executable mapping and ownership
+    changes; no other ioctl anywhere. The kqueue and eventfd details come
+    from epoll-shim, on which Chromium's epoll message pump runs here: its
+    epoll_wait() polls the kqueue before each kevent(), and at registration
+    it tells pipes from eventfds and kqueues with FIONREAD. In 0.20.3.8,
+    which gave kqueues kevent only, every poll failed at once and every
+    renderer spun (6 million refusals after the lockdown in the survey of
+    7 November 2026, the suite passing all the while). Rights are cut with cap_rights_limit to the intersection of
     what the descriptor has and what the policy allows (the kernel
     refuses to widen rights), fcntls with cap_fcntls_limit the same way,
-    ioctls with cap_ioctls_limit to none. A directory is closed and
-    counted: capability mode still allows lookups beneath one, and the
+    ioctls with cap_ioctls_limit to none (the policy and the cutting live
+    in base/posix/capsicum_rights.h, beryllium-descriptor-rights.patch,
+    which also cuts what a renderer creates or receives after the
+    lockdown). A directory is closed and counted: capability mode still allows lookups beneath one, and the
     survey of 0.20.3.3 found renderers holding /, /usr, /usr/local and
     /usr/local/etc, inherited from the browser
     (beryllium-close-inherited-descriptors.patch stops the inheritance;
@@ -67,7 +75,8 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
   Later increments make it the default and fail closed in the production
   package (charter D5), limit what the browser passes, and add kernel
   attestation and status reporting.
-Stage: 4 (Beryllium series). Depends on the imported FreeBSD patches
+Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
+  (stage 4, applied before it) and on the imported FreeBSD patches
   patch-sandbox_policy_freebsd_sandbox__freebsd.cc,
   patch-base_system_sys__info__freebsd.cc and
   patch-base_system_sys__info__posix.cc (stage 2).
@@ -96,7 +105,21 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   from outside by test_50_sandbox
   test_confined_renderer_descriptors_follow_the_policy (procstat -f and
   -C against the same policy) and test_45_fonts (the same platform fonts
-  in a confined renderer as in an unconfined one); not yet compiled.
+  in a confined renderer as in an unconfined one). 0.20.3.8, 7 November
+  2026: the suite passes with and without the lockdown and the fonts test
+  passes; the survey shows the kqueue poll loop, fixed for 0.20.3.9
+  (kqueue: CAP_EVENT; eventfd and pipe: FIONREAD), which also gains
+  test_90_stability test_renderers_idle_without_spinning.
+  Admission (7 November 2026, after the adversarial review, plan/16
+  BER-02, BER-03): a read-only file is admitted only under the browser's
+  assets directory (base::DIR_ASSETS, /usr/local/share/beryllium/ in the
+  package), by the path the kernel reports, so a leaked or passed file
+  outside the resource set ends the lockdown instead of staying readable;
+  a socket only as an unnamed Mojo socket pair (base/posix/capsicum_rights);
+  each kinfo_file record is bounds-checked (a malformed table ends the
+  lockdown); and a caph_limit_stdio() failure ends the lockdown instead of
+  being logged, since the renderer would keep a standard stream with every
+  right. From build 0.20.3.10.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -263,7 +286,7 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -4,18 +4,31 @@
+@@ -4,18 +4,33 @@
  
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
@@ -288,14 +311,24 @@ security-review: required (sandbox setup, process confinement)
 +#include <time.h>
  #include <unistd.h>
  
++#include <cstddef>
  #include <limits>
  #include <memory>
++#include <optional>
  #include <string>
 +#include <tuple>
  #include <vector>
  
  #include "base/command_line.h"
-@@ -63,6 +76,274 @@
+@@ -27,6 +42,7 @@
+ #include "base/logging.h"
+ #include "base/memory/singleton.h"
+ #include "base/path_service.h"
++#include "base/posix/capsicum_rights.h"
+ #include "base/posix/eintr_wrapper.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/system/sys_info.h"
+@@ -63,6 +79,199 @@
  namespace sandbox {
  namespace policy {
  
@@ -348,85 +381,25 @@ security-review: required (sandbox setup, process confinement)
 +  localtime_r(&now, &local);
 +}
 +
-+// What a renderer may hold at the lockdown point, and with which rights
-+// (plan/06 section 3.2; feature matrix S-REN-04 and S-REN-05). Descriptors 0
-+// to 2 are stdio, left to caph_limit_stdio(). Every other descriptor is
-+// judged by the type the kernel reports for it (kern.proc.filedesc):
-+//  - a read-only regular file with a path (the resource paks and the V8
-+//    snapshot, opened by path at start-up) keeps read, seek, read-only
-+//    mapping, fstat and F_GETFL;
-+//  - a socket (the Mojo channel and the ipcz transports to other processes)
-+//    keeps send, receive, event, fstat, shutdown, getsockopt, setsockopt and
-+//    F_GETFL/F_SETFL; never connect, bind, listen or accept;
-+//  - a kqueue keeps kevent; an eventfd, pipe or fifo keeps read, write,
-+//    event, fstat and F_GETFL/F_SETFL;
-+//  - shared memory keeps what its creator gave it, less truncation,
-+//    executable mapping and ownership changes (rights only ever shrink);
-+//  - a directory is closed: lookups beneath it work in capability mode;
-+//  - anything else (a writable or unnamed regular file, a device, a
-+//    terminal, a semaphore, a process descriptor...) breaks the policy: the
-+//    lockdown fails and the renderer ends.
-+// No descriptor keeps any ioctl. What arrives later over the Mojo channel
-+// carries the rights its sender gave it; limiting those before they are
-+// sent is the browser's part (S-IPC-01).
++// What a renderer may hold at the lockdown point, and with which rights:
++// the policy in base/posix/capsicum_rights.h (plan/06 section 3.2; feature
++// matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, limited by
++// caph_limit_stdio(). Every other descriptor is judged by the type the
++// kernel reports for it (kern.proc.filedesc) and cut to its kind's rights;
++// a read-only file must also be one of the browser's own resource files
++// (under its assets directory), since that is all a renderer is given by
++// then; a socket must be an unnamed Mojo socket pair; a directory is
++// closed (lookups beneath one work in capability mode); anything else (a
++// writable, unnamed or foreign file, a device, a terminal, a semaphore, a
++// process descriptor, a network or named socket...) breaks the policy: the
++// lockdown fails and the renderer ends. What the renderer creates or
++// receives after the lockdown is limited where it appears (the message
++// pump, Mojo's receive path, shared memory creation).
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
 +  std::string violation;  // empty when the policy held
 +};
-+
-+// Cuts |fd| down to the rights in |allowed| that it has (never more: the
-+// kernel refuses to widen rights), the fcntl commands in |fcntls| it may
-+// use, and no ioctls.
-+bool LimitTo(int fd, const cap_rights_t* allowed, uint32_t fcntls) {
-+  cap_rights_t have;
-+  if (cap_rights_get(fd, &have) != 0) {
-+    return false;
-+  }
-+  cap_rights_t excess = have;
-+  cap_rights_remove(&excess, allowed);  // what it has beyond the policy
-+  cap_rights_remove(&have, &excess);    // what it has within the policy
-+  uint32_t have_fcntls = 0;
-+  if (cap_fcntls_get(fd, &have_fcntls) != 0) {
-+    return false;
-+  }
-+  return cap_rights_limit(fd, &have) == 0 &&
-+         cap_fcntls_limit(fd, have_fcntls & fcntls) == 0 &&
-+         cap_ioctls_limit(fd, nullptr, 0) == 0;
-+}
-+
-+std::string DescribeDescriptor(const struct kinfo_file* kf) {
-+  const std::string path =
-+      kf->kf_path[0] ? std::string(" ") + kf->kf_path : std::string();
-+  switch (kf->kf_type) {
-+    case KF_TYPE_VNODE:
-+      switch (kf->kf_vnode_type) {
-+        case KF_VTYPE_VREG:
-+          if (kf->kf_flags & (KF_FLAG_WRITE | KF_FLAG_APPEND)) {
-+            return "writable file" + (path.empty() ? " with no name" : path);
-+          }
-+          return "file with no name";
-+        case KF_VTYPE_VCHR:
-+        case KF_VTYPE_VBLK:
-+          return "device" + path;
-+        default:
-+          return "vnode of type " + base::NumberToString(kf->kf_vnode_type) +
-+                 path;
-+      }
-+    case KF_TYPE_MQUEUE:
-+      return "message queue";
-+    case KF_TYPE_SEM:
-+      return "semaphore";
-+    case KF_TYPE_PTS:
-+      return "terminal";
-+    case KF_TYPE_PROCDESC:
-+      return "process descriptor";
-+    case KF_TYPE_DEV:
-+      return "device" + path;
-+    default:
-+      return "descriptor of type " + base::NumberToString(kf->kf_type);
-+  }
-+}
 +
 +// Applies the policy above to every descriptor. On a violation, |violation|
 +// names the descriptor and errno is EPERM; on a failed system call, errno
@@ -446,80 +419,62 @@ security-review: required (sandbox setup, process confinement)
 +    result.violation = "the descriptor table could not be read";
 +    return result;
 +  }
-+
-+  cap_rights_t file_rights, socket_rights, kqueue_rights, event_rights,
-+      shm_rights;
-+  cap_rights_init(&file_rights, CAP_PREAD, CAP_MMAP_R, CAP_FSTAT, CAP_FCNTL);
-+  cap_rights_init(&socket_rights, CAP_RECV, CAP_SEND, CAP_EVENT, CAP_FSTAT,
-+                  CAP_FCNTL, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
-+  cap_rights_init(&kqueue_rights, CAP_KQUEUE);
-+  cap_rights_init(&event_rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_FSTAT,
-+                  CAP_FCNTL);
-+  cap_rights_init(&shm_rights, CAP_READ, CAP_WRITE, CAP_SEEK, CAP_MMAP_RW,
-+                  CAP_FSTAT, CAP_FCNTL);
-+  constexpr uint32_t kGetFl = CAP_FCNTL_GETFL;
-+  constexpr uint32_t kGetSetFl = CAP_FCNTL_GETFL | CAP_FCNTL_SETFL;
-+
++  base::FilePath assets;
++  if (!base::PathService::Get(base::DIR_ASSETS, &assets) || assets.empty()) {
++    result.violation = "the assets directory is unknown";
++    errno = EPERM;
++    return result;
++  }
++  const std::string assets_prefix = assets.AsEndingWithSeparator().value();
++  // Each entry is a kinfo_file cut after its path; every field read below
++  // sits before kf_path. Anything else in the table is a reason to stop.
++  constexpr size_t kMinEntry = offsetof(struct kinfo_file, kf_path) + 1;
 +  for (size_t offset = 0; offset + sizeof(int) <= len;) {
 +    const auto* kf =
 +        reinterpret_cast<const struct kinfo_file*>(table.data() + offset);
-+    if (kf->kf_structsize <= 0) {
++    const int size = kf->kf_structsize;
++    if (size == 0) {
 +      break;
 +    }
-+    offset += static_cast<size_t>(kf->kf_structsize);
++    if (size < 0 || static_cast<size_t>(size) < kMinEntry ||
++        static_cast<size_t>(size) > len - offset) {
++      result.violation = "malformed descriptor table";
++      errno = EPERM;
++      return result;
++    }
++    offset += static_cast<size_t>(size);
 +    const int fd = kf->kf_fd;
 +    // Negative: the working directory, root and text entries; 0 to 2: stdio.
 +    if (fd < 3) {
 +      continue;
 +    }
-+    const cap_rights_t* allowed = nullptr;
-+    uint32_t fcntls = 0;
-+    switch (kf->kf_type) {
-+      case KF_TYPE_VNODE:
-+        if (kf->kf_vnode_type == KF_VTYPE_VDIR) {
-+          close(fd);
-+          ++result.closed_directories;
-+          continue;
-+        }
-+        if (kf->kf_vnode_type == KF_VTYPE_VREG &&
-+            !(kf->kf_flags & (KF_FLAG_WRITE | KF_FLAG_APPEND)) &&
-+            kf->kf_path[0] == '/') {
-+          allowed = &file_rights;
-+          fcntls = kGetFl;
-+        }
-+        break;
-+      case KF_TYPE_SOCKET:
-+        allowed = &socket_rights;
-+        fcntls = kGetSetFl;
-+        break;
-+      case KF_TYPE_PIPE:
-+      case KF_TYPE_FIFO:
-+      case KF_TYPE_EVENTFD:
-+        allowed = &event_rights;
-+        fcntls = kGetSetFl;
-+        break;
-+      case KF_TYPE_KQUEUE:
-+        allowed = &kqueue_rights;
-+        break;
-+      case KF_TYPE_SHM:
-+        allowed = &shm_rights;
-+        fcntls = kGetFl;
-+        break;
-+      default:
-+        break;
-+    }
-+    if (!allowed) {
-+      result.violation =
-+          "fd " + base::NumberToString(fd) + ": " + DescribeDescriptor(kf);
++    std::string what;
++    const std::optional<base::freebsd::DescriptorKind> kind =
++        base::freebsd::DescriptorKindFromKinfo(*kf, &what);
++    if (!kind) {
++      result.violation = "fd " + base::NumberToString(fd) + ": " + what;
 +      errno = EPERM;
 +      return result;
 +    }
-+    if (!LimitTo(fd, allowed, fcntls)) {
++    if (*kind == base::freebsd::DescriptorKind::kDirectory) {
++      close(fd);
++      ++result.closed_directories;
++      continue;
++    }
++    if (*kind == base::freebsd::DescriptorKind::kReadOnlyFile &&
++        std::string(kf->kf_path).compare(0, assets_prefix.size(),
++                                         assets_prefix) != 0) {
++      result.violation = "fd " + base::NumberToString(fd) + ": " + what +
++                         " is not under " + assets_prefix;
++      errno = EPERM;
++      return result;
++    }
++    if (!base::freebsd::LimitDescriptorRights(fd, *kind)) {
 +      if (errno == EBADF) {
 +        continue;  // closed by another thread since the table was read
 +      }
-+      result.violation = "fd " + base::NumberToString(fd) +
-+                         ": rights could not be limited";
++      result.violation = "fd " + base::NumberToString(fd) + " (" + what +
++                         "): rights could not be limited";
 +      return result;
 +    }
 +    ++result.limited;
@@ -546,9 +501,12 @@ security-review: required (sandbox setup, process confinement)
 +  if (!confinement->violation.empty()) {
 +    return false;
 +  }
-+  // Standard input and output keep only the rights stdio needs.
++  // Standard input and output keep only the rights stdio needs (a closed
++  // stream is fine). Failing that, the renderer would keep a stream with
++  // every right, so it ends instead.
 +  if (caph_limit_stdio() != 0) {
-+    PLOG(WARNING) << "beryllium-sandbox: caph_limit_stdio";
++    confinement->violation = "the standard streams could not be limited";
++    return false;
 +  }
 +  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (cap_enter() != 0) {
@@ -570,7 +528,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +455,24 @@
+@@ -174,6 +383,24 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  

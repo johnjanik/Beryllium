@@ -11,6 +11,7 @@ security/beryllium-honest-gpu-sandbox-status.patch
 security/beryllium-close-inherited-descriptors.patch
 security/beryllium-anonymous-shared-memory.patch
 security/beryllium-no-renderer-swap-file.patch
+security/beryllium-descriptor-rights.patch
 security/beryllium-capsicum-renderer.patch
 privacy/beryllium-services-off-by-default.patch
 ui/beryllium-toolbar-buttons-zero-height.patch

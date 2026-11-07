@@ -188,7 +188,66 @@ FreeBSD test bed, so an increment must be worth a build.
    after the lockdown, this makes it a test). Still open in this
    increment: rights on what the browser passes later over Mojo (it
    carries the sender's rights; S-IPC-01), and the environment allowlist.
-5. **Attestation and status** (next, build 0.20.3.9): the browser checks
+   **Results, 0.20.3.8 (7 November 2026):** the suite passes with and
+   without the lockdown, and the fonts test passes, so the rights limits
+   broke nothing visible. But the survey shows 6.1 million refusals after
+   the lockdown point, all "operation requires invalid cap_rights_t,
+   descriptor holds CAP_KQUEUE": Chromium's epoll message pump runs on
+   epoll-shim on FreeBSD, and epoll-shim's `epoll_wait()` polls its kqueue
+   with `poll()` before each `kevent()`; `poll()` needs CAP_EVENT, which
+   the kqueue policy did not grant, so every poll failed at once and every
+   renderer spun instead of sleeping. (kdump prints the needed rights as
+   "invalid" because the kernel's static `cap_event_rights` initialiser
+   leaves word 0 without index bits; CAP_EVENT is an index-1 right.) The
+   suite passed because it never looks at CPU time. For 0.20.3.9: kqueues
+   keep event and fstat as well; eventfds and pipes keep the ioctl
+   FIONREAD, which epoll-shim uses at registration to tell them from
+   kqueues (without it an eventfd is treated as a pipe, which happens to
+   work); and a new test fails on a renderer that uses more than a second
+   of CPU in five idle seconds.
+   **Policy test, 0.20.3.8 with `unprivileged_proc_debug=1` (same day):**
+   it fails as it should, and the survey's descriptor list shows why:
+   everything that existed at the lockdown point is cut (stdio, the
+   resource paks, the V8 snapshot, the first socket pair, the main
+   thread's kqueue and eventfd, the shared memory), and everything that
+   appears afterwards has every right: a kqueue and an eventfd per thread
+   that starts its message pump after the lockdown, every socket the
+   browser sends for a transport, and one read-only file (a font, from
+   the font service). Capsicum has no default rights for new descriptors.
+   `patches/security/beryllium-descriptor-rights.patch` (build 0.20.3.9)
+   puts the policy in `base/posix/capsicum_rights.h`, cuts the message
+   pump's kqueue and eventfd at creation, and in a process in capability
+   mode cuts every descriptor received over Mojo to its kind (classified
+   with `fstat`, an empty `kevent` and `F_GET_SEALS`, since
+   `kern.proc.filedesc` and `F_KINFO` are refused there), removing every
+   right from one the policy has no kind for. That is defence in depth,
+   not the boundary: a compromised renderer can `recvmsg` for itself. The
+   boundary is the browser limiting what it sends (S-IPC-01, next).
+   **Adversarial review, 7 November 2026 (build 0.20.3.10;
+   [plan/16](16-ADVERSARIAL-REVIEW-2026-11-07.md)):** an external review
+   of the 0.20.3.8 inputs showed, with the lockdown code compiled against
+   stubbed system calls, that admission by kernel type kept a read-only
+   file anywhere and any socket, and that a failed `caph_limit_stdio()`
+   was only logged. From 0.20.3.10 a read-only file is admitted only
+   under `base::DIR_ASSETS` (the installed resources; fonts come later
+   through the font service), a socket only as an unnamed AF_UNIX stream
+   or seqpacket pair bound and connected to no path (also for sockets
+   received after the lockdown), each `kinfo_file` record is
+   bounds-checked, and a failed stdio limit ends the lockdown. The suite's
+   sandbox tests become a gate when the lockdown is requested (BER-04):
+   any renderer not in capability mode, unreadable, or outside the policy
+   fails them; `freebsd/tools/tests/test_sandbox_gate.py` holds the
+   reviewer's negative scenarios. Expected on the owner's machine: the
+   same results as 0.20.3.9 (every renderer confined, policy test passing,
+   idle CPU low), unless a renderer holds a read-only file outside
+   `/usr/local/share/beryllium/` at its lockdown point, in which case the
+   browser log names it ("fd N: read-only file ... is not under ...") and
+   the renderer ends; that file would then need a decision, not a wider
+   rule.
+5. **Sender-side rights and attestation** (next, build 0.20.3.11): the
+   browser cuts every descriptor it sends to a renderer to its kind's
+   rights before sending (the transport must know it leads to a renderer);
+   then attestation: the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
