@@ -45,11 +45,17 @@ Purpose: the first step of the renderer sandbox (plan/14-RENDERER-SANDBOX.md
     snapshot) keeps read, seek, read-only mapping, fstat and F_GETFL; a
     socket (the Mojo channel, the ipcz transports) keeps send, receive,
     event, fstat, shutdown, get/setsockopt and F_GETFL/F_SETFL, never
-    connect, bind, listen or accept; a kqueue keeps kevent; an eventfd,
-    pipe or fifo keeps read, write, event, fstat and F_GETFL/F_SETFL;
-    shared memory keeps what its creator gave it less truncation,
-    executable mapping and ownership changes; no descriptor keeps any
-    ioctl. Rights are cut with cap_rights_limit to the intersection of
+    connect, bind, listen or accept; a kqueue keeps kevent, event and
+    fstat; an eventfd, pipe or fifo keeps read, write, event, fstat,
+    F_GETFL/F_SETFL and the ioctl FIONREAD; shared memory keeps what its
+    creator gave it less truncation, executable mapping and ownership
+    changes; no other ioctl anywhere. The kqueue and eventfd details come
+    from epoll-shim, on which Chromium's epoll message pump runs here: its
+    epoll_wait() polls the kqueue before each kevent(), and at registration
+    it tells pipes from eventfds and kqueues with FIONREAD. In 0.20.3.8,
+    which gave kqueues kevent only, every poll failed at once and every
+    renderer spun (6 million refusals after the lockdown in the survey of
+    7 November 2026, the suite passing all the while). Rights are cut with cap_rights_limit to the intersection of
     what the descriptor has and what the policy allows (the kernel
     refuses to widen rights), fcntls with cap_fcntls_limit the same way,
     ioctls with cap_ioctls_limit to none. A directory is closed and
@@ -96,7 +102,11 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   from outside by test_50_sandbox
   test_confined_renderer_descriptors_follow_the_policy (procstat -f and
   -C against the same policy) and test_45_fonts (the same platform fonts
-  in a confined renderer as in an unconfined one); not yet compiled.
+  in a confined renderer as in an unconfined one). 0.20.3.8, 7 November
+  2026: the suite passes with and without the lockdown and the fonts test
+  passes; the survey shows the kqueue poll loop, fixed for 0.20.3.9
+  (kqueue: CAP_EVENT; eventfd and pipe: FIONREAD), which also gains
+  test_90_stability test_renderers_idle_without_spinning.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -263,7 +273,7 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -4,18 +4,31 @@
+@@ -4,18 +4,32 @@
  
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
@@ -275,6 +285,7 @@ security-review: required (sandbox setup, process confinement)
  #include <stdint.h>
 +#include <sys/param.h>
 +#include <sys/capsicum.h>
++#include <sys/filio.h>
 +#include <sys/procctl.h>
  #include <sys/resource.h>
  #include <sys/stat.h>
@@ -295,7 +306,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -63,6 +76,274 @@
+@@ -63,6 +77,288 @@
  namespace sandbox {
  namespace policy {
  
@@ -358,17 +369,22 @@ security-review: required (sandbox setup, process confinement)
 +//  - a socket (the Mojo channel and the ipcz transports to other processes)
 +//    keeps send, receive, event, fstat, shutdown, getsockopt, setsockopt and
 +//    F_GETFL/F_SETFL; never connect, bind, listen or accept;
-+//  - a kqueue keeps kevent; an eventfd, pipe or fifo keeps read, write,
-+//    event, fstat and F_GETFL/F_SETFL;
++//  - a kqueue keeps kevent, event and fstat: Chromium's epoll message pump
++//    runs on epoll-shim here, whose epoll_wait() polls its kqueue before
++//    each kevent() (without CAP_EVENT the poll fails at once and every
++//    renderer spins: 0.20.3.8, 6 million refusals in the survey);
++//  - an eventfd, pipe or fifo keeps read, write, event, fstat,
++//    F_GETFL/F_SETFL and the one ioctl FIONREAD, which epoll-shim uses to
++//    tell pipes from eventfds and kqueues when they are registered;
 +//  - shared memory keeps what its creator gave it, less truncation,
 +//    executable mapping and ownership changes (rights only ever shrink);
 +//  - a directory is closed: lookups beneath it work in capability mode;
 +//  - anything else (a writable or unnamed regular file, a device, a
 +//    terminal, a semaphore, a process descriptor...) breaks the policy: the
 +//    lockdown fails and the renderer ends.
-+// No descriptor keeps any ioctl. What arrives later over the Mojo channel
-+// carries the rights its sender gave it; limiting those before they are
-+// sent is the browser's part (S-IPC-01).
++// No other descriptor keeps any ioctl. What arrives later over the Mojo
++// channel carries the rights its sender gave it; limiting those before they
++// are sent is the browser's part (S-IPC-01).
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
@@ -377,8 +393,12 @@ security-review: required (sandbox setup, process confinement)
 +
 +// Cuts |fd| down to the rights in |allowed| that it has (never more: the
 +// kernel refuses to widen rights), the fcntl commands in |fcntls| it may
-+// use, and no ioctls.
-+bool LimitTo(int fd, const cap_rights_t* allowed, uint32_t fcntls) {
++// use, and the |nioctls| ioctls in |ioctls| (none when nioctls is 0).
++bool LimitTo(int fd,
++             const cap_rights_t* allowed,
++             uint32_t fcntls,
++             const cap_ioctl_t* ioctls = nullptr,
++             size_t nioctls = 0) {
 +  cap_rights_t have;
 +  if (cap_rights_get(fd, &have) != 0) {
 +    return false;
@@ -392,7 +412,7 @@ security-review: required (sandbox setup, process confinement)
 +  }
 +  return cap_rights_limit(fd, &have) == 0 &&
 +         cap_fcntls_limit(fd, have_fcntls & fcntls) == 0 &&
-+         cap_ioctls_limit(fd, nullptr, 0) == 0;
++         cap_ioctls_limit(fd, ioctls, nioctls) == 0;
 +}
 +
 +std::string DescribeDescriptor(const struct kinfo_file* kf) {
@@ -452,9 +472,10 @@ security-review: required (sandbox setup, process confinement)
 +  cap_rights_init(&file_rights, CAP_PREAD, CAP_MMAP_R, CAP_FSTAT, CAP_FCNTL);
 +  cap_rights_init(&socket_rights, CAP_RECV, CAP_SEND, CAP_EVENT, CAP_FSTAT,
 +                  CAP_FCNTL, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
-+  cap_rights_init(&kqueue_rights, CAP_KQUEUE);
++  cap_rights_init(&kqueue_rights, CAP_KQUEUE, CAP_EVENT, CAP_FSTAT);
 +  cap_rights_init(&event_rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_FSTAT,
-+                  CAP_FCNTL);
++                  CAP_FCNTL, CAP_IOCTL);
++  const cap_ioctl_t event_ioctls[] = {FIONREAD};
 +  cap_rights_init(&shm_rights, CAP_READ, CAP_WRITE, CAP_SEEK, CAP_MMAP_RW,
 +                  CAP_FSTAT, CAP_FCNTL);
 +  constexpr uint32_t kGetFl = CAP_FCNTL_GETFL;
@@ -474,6 +495,8 @@ security-review: required (sandbox setup, process confinement)
 +    }
 +    const cap_rights_t* allowed = nullptr;
 +    uint32_t fcntls = 0;
++    const cap_ioctl_t* ioctls = nullptr;
++    size_t nioctls = 0;
 +    switch (kf->kf_type) {
 +      case KF_TYPE_VNODE:
 +        if (kf->kf_vnode_type == KF_VTYPE_VDIR) {
@@ -497,6 +520,8 @@ security-review: required (sandbox setup, process confinement)
 +      case KF_TYPE_EVENTFD:
 +        allowed = &event_rights;
 +        fcntls = kGetSetFl;
++        ioctls = event_ioctls;
++        nioctls = 1;
 +        break;
 +      case KF_TYPE_KQUEUE:
 +        allowed = &kqueue_rights;
@@ -514,7 +539,7 @@ security-review: required (sandbox setup, process confinement)
 +      errno = EPERM;
 +      return result;
 +    }
-+    if (!LimitTo(fd, allowed, fcntls)) {
++    if (!LimitTo(fd, allowed, fcntls, ioctls, nioctls)) {
 +      if (errno == EBADF) {
 +        continue;  // closed by another thread since the table was read
 +      }
@@ -570,7 +595,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +455,24 @@
+@@ -174,6 +470,24 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  

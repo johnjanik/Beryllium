@@ -78,7 +78,7 @@ files named below.
 | `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host (a local proxy records and refuses every connection) | `privacy-*.txt` |
 | `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |
-| `stability` | eight animated tabs at once; quick navigation through internal pages | |
+| `stability` | eight animated tabs at once; quick navigation through internal pages; a renderer showing a static page uses almost no CPU over five seconds | |
 
 ## Crashes
 

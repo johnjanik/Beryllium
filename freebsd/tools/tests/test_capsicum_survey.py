@@ -248,18 +248,24 @@ class Parse(unittest.TestCase):
         ])
         # Rights beyond the type's, and an unlimited descriptor.
         caps["4"]["rights"].append("co")
-        caps["6"]["rights"] = ["ke", "kc", "fs"]
+        caps["6"]["rights"] = ["ke", "kc", "ev", "fs", "wr"]
         caps["12"]["rights"] = ["rd", "wr", "se", "mm", "ft", "mmx", "re", "sd"]
         caps["7"]["rights"] = sorted(capsicum.UNLIMITED_MARKERS | {"rd", "wr"})
         problems = capsicum.policy_problems(fds, caps)
         self.assertIn("fd 4 (s): rights beyond the policy: co", problems)
-        self.assertIn("fd 6 (k): rights beyond the policy: fs", problems)
+        self.assertIn("fd 6 (k): rights beyond the policy: wr", problems)
         self.assertIn("fd 12 (h): rights beyond the policy: ft,mmx", problems)
         self.assertIn("fd 7 (E): rights not limited", problems)
         # A type the policy has no entry for.
         caps["50"] = {"type": "P", "rights": ["pg", "pk"], "name": "-"}
         self.assertIn("fd 50: descriptor type 'P' not allowed",
                       capsicum.policy_problems(fds, caps))
+
+    def test_cpu_seconds_parsing(self):
+        for text, want in (("0:00.12\n", 0.12), ("00:00:01\n", 1.0), ("1:02:03.5\n", 3723.5),
+                           ("2-01:00:00\n", 176400.0), ("", None), ("junk\n", None)):
+            with unittest.mock.patch.object(capsicum, "_run", return_value=text):
+                self.assertEqual(capsicum.cpu_seconds(1), want, text)
 
     def test_capability_mode_parsing(self):
         with unittest.mock.patch.object(capsicum, "_run", return_value=PROCSTAT_S):

@@ -243,6 +243,21 @@ SHM_FORBIDDEN = (("ft", "truncate"), ("mmx", "map executable"),
                  ("fe", "execute"), ("cm", "chmod"), ("cn", "chown"))
 
 
+def cpu_seconds(pid):
+    """Accumulated CPU time of a process from ps (any of [[d-]h:]m:s[.f]), or
+    None if ps cannot report it."""
+    text = _run(["ps", "-o", "cputime=", "-p", str(pid)]).strip()
+    if not text:
+        return None
+    days, _, clock = text.rpartition("-")
+    try:
+        parts = [float(x) for x in clock.split(":")]
+        seconds = sum(v * 60 ** i for i, v in enumerate(reversed(parts)))
+        return seconds + (int(days) * 86400 if days else 0)
+    except ValueError:
+        return None
+
+
 def capability_mode(pid):
     """True/False from procstat -s (a C in FLAGS), None if it cannot be read."""
     lines = _run(["procstat", "-s", str(pid)]).splitlines()
@@ -263,10 +278,10 @@ def capability_mode(pid):
 POLICY = {
     "v": {"rd", "se", "mm", "fs", "fc"},                    # read-only regular file
     "s": {"rd", "wr", "ev", "fs", "fc", "sh", "gs", "ss"},  # socket: no connect, bind...
-    "k": {"ke", "kc"},                                      # kqueue
-    "E": {"rd", "wr", "ev", "fs", "fc"},                    # eventfd
-    "p": {"rd", "wr", "ev", "fs", "fc"},                    # pipe
-    "f": {"rd", "wr", "ev", "fs", "fc"},                    # fifo
+    "k": {"ke", "kc", "ev", "fs"},                          # kqueue (epoll-shim polls it)
+    "E": {"rd", "wr", "ev", "fs", "fc", "io"},              # eventfd (FIONREAD only)
+    "p": {"rd", "wr", "ev", "fs", "fc", "io"},              # pipe
+    "f": {"rd", "wr", "ev", "fs", "fc", "io"},              # fifo
     "h": {"rd", "wr", "se", "mm", "fs", "fc"},              # shared memory
 }
 RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "sd",

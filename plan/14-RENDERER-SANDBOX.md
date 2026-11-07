@@ -188,6 +188,25 @@ FreeBSD test bed, so an increment must be worth a build.
    after the lockdown, this makes it a test). Still open in this
    increment: rights on what the browser passes later over Mojo (it
    carries the sender's rights; S-IPC-01), and the environment allowlist.
+   **Results, 0.20.3.8 (7 November 2026):** the suite passes with and
+   without the lockdown, and the fonts test passes, so the rights limits
+   broke nothing visible. But the survey shows 6.1 million refusals after
+   the lockdown point, all "operation requires invalid cap_rights_t,
+   descriptor holds CAP_KQUEUE": Chromium's epoll message pump runs on
+   epoll-shim on FreeBSD, and epoll-shim's `epoll_wait()` polls its kqueue
+   with `poll()` before each `kevent()`; `poll()` needs CAP_EVENT, which
+   the kqueue policy did not grant, so every poll failed at once and every
+   renderer spun instead of sleeping. (kdump prints the needed rights as
+   "invalid" because the kernel's static `cap_event_rights` initialiser
+   leaves word 0 without index bits; CAP_EVENT is an index-1 right.) The
+   suite passed because it never looks at CPU time. For 0.20.3.9: kqueues
+   keep event and fstat as well; eventfds and pipes keep the ioctl
+   FIONREAD, which epoll-shim uses at registration to tell them from
+   kqueues (without it an eventfd is treated as a pipe, which happens to
+   work); and a new test fails on a renderer that uses more than a second
+   of CPU in five idle seconds. The policy test itself was skipped in both
+   runs: `security.bsd.unprivileged_proc_debug` was 0 again (it is not
+   persistent across reboots).
 5. **Attestation and status** (next, build 0.20.3.9): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
