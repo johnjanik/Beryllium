@@ -204,10 +204,29 @@ FreeBSD test bed, so an increment must be worth a build.
    FIONREAD, which epoll-shim uses at registration to tell them from
    kqueues (without it an eventfd is treated as a pipe, which happens to
    work); and a new test fails on a renderer that uses more than a second
-   of CPU in five idle seconds. The policy test itself was skipped in both
-   runs: `security.bsd.unprivileged_proc_debug` was 0 again (it is not
-   persistent across reboots).
-5. **Attestation and status** (next, build 0.20.3.9): the browser checks
+   of CPU in five idle seconds.
+   **Policy test, 0.20.3.8 with `unprivileged_proc_debug=1` (same day):**
+   it fails as it should, and the survey's descriptor list shows why:
+   everything that existed at the lockdown point is cut (stdio, the
+   resource paks, the V8 snapshot, the first socket pair, the main
+   thread's kqueue and eventfd, the shared memory), and everything that
+   appears afterwards has every right: a kqueue and an eventfd per thread
+   that starts its message pump after the lockdown, every socket the
+   browser sends for a transport, and one read-only file (a font, from
+   the font service). Capsicum has no default rights for new descriptors.
+   `patches/security/beryllium-descriptor-rights.patch` (build 0.20.3.9)
+   puts the policy in `base/posix/capsicum_rights.h`, cuts the message
+   pump's kqueue and eventfd at creation, and in a process in capability
+   mode cuts every descriptor received over Mojo to its kind (classified
+   with `fstat`, an empty `kevent` and `F_GET_SEALS`, since
+   `kern.proc.filedesc` and `F_KINFO` are refused there), removing every
+   right from one the policy has no kind for. That is defence in depth,
+   not the boundary: a compromised renderer can `recvmsg` for itself. The
+   boundary is the browser limiting what it sends (S-IPC-01, next).
+5. **Sender-side rights and attestation** (next, build 0.20.3.10): the
+   browser cuts every descriptor it sends to a renderer to its kind's
+   rights before sending (the transport must know it leads to a renderer);
+   then attestation: the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

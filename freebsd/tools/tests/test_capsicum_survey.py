@@ -82,6 +82,7 @@ CONFINED_F = """\
  5000 beryllium           40 v r rw------   1       0 -   /home/u/.config/beryllium/Default/Cookies
  5000 beryllium           41 v r r-------   1       0 -   /etc/passwd
  5000 beryllium           42 v c rw------   1       0 -   /dev/dri/renderD128
+ 5000 beryllium           43 v r r-------   1       0 -   /usr/local/share/fonts/dejavu/DejaVuSans.ttf
 """
 CONFINED_C = """\
   PID COMM                FD T FLAGS    CAPABILITIES   PRO NAME
@@ -94,6 +95,7 @@ CONFINED_C = """\
  5000 beryllium           40 v rw------ rd,se,mm,fc,fs,prd,mmr,re -   /home/u/.config/beryllium/Default/Cookies
  5000 beryllium           41 v r------- rd,se,mm,fc,fs,prd,mmr,re -   /etc/passwd
  5000 beryllium           42 v rw------ rd,wr,se,mm,fc,fs,io,prd,pwr,mmr,mmw,mrw,re,sd -   /dev/dri/renderD128
+ 5000 beryllium           43 v r------- rd,se,mm,fc,fs,prd,mmr,re -   /usr/local/share/fonts/dejavu/DejaVuSans.ttf
 """
 PROCSTAT_S = """\
   PID COMM             FLAGS
@@ -240,10 +242,10 @@ class Parse(unittest.TestCase):
         fds = capsicum.descriptors(5000, CONFINED_F)
         caps = capsicum.rights(5000, CONFINED_C)
         problems = capsicum.policy_problems(fds, caps)
-        # 0 is stdio; 3, 4, 6, 7 and 12 are within the policy.
+        # 0 is stdio; 3, 4, 6, 7, 12 and 43 (a font file) are within the policy.
         self.assertEqual(problems, [
             "fd 40: writable file /home/u/.config/beryllium/Default/Cookies",
-            "fd 41: file outside /usr/local/share/beryllium/: /etc/passwd",
+            "fd 41: file that is not a resource or font file: /etc/passwd",
             "fd 42: vnode type 'c' not allowed (/dev/dri/renderD128)",
         ])
         # Rights beyond the type's, and an unlimited descriptor.

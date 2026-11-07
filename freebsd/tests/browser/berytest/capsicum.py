@@ -289,10 +289,16 @@ RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "
 ASSETS = "/usr/local/share/beryllium/"
 
 
+def allowed_file(name, assets=ASSETS):
+    """A read-only file a confined renderer may hold: a resource file, or a
+    font the browser's font service passed it."""
+    return name.startswith(assets) or "/fonts/" in name
+
+
 def policy_problems(fds, rights_by_fd, assets=ASSETS):
     """Descriptors of a confined renderer that break the policy: a type the
-    policy has no entry for, a file other than a read-only resource file,
-    or rights beyond the type's. Descriptors 0 to 2 are stdio, left to
+    policy has no entry for, a file other than a read-only resource or font
+    file, or rights beyond the type's. Descriptors 0 to 2 are stdio, left to
     caph_limit_stdio()."""
     by_fd = {d["fd"]: d for d in fds if d["fd"].isdigit()}
     out = []
@@ -315,8 +321,9 @@ def policy_problems(fds, rights_by_fd, assets=ASSETS):
             if "w" in d.get("flags", ""):
                 out.append(f"fd {fd}: writable file {name or 'with no name'}")
                 continue
-            if not name.startswith(assets):
-                out.append(f"fd {fd}: file outside {assets}: {name or '(no name)'}")
+            if not allowed_file(name, assets):
+                out.append(f"fd {fd}: file that is not a resource or font file: "
+                           f"{name or '(no name)'}")
                 continue
         extra = (names - RIGHT_ALIASES) - POLICY[kind]
         if extra:
