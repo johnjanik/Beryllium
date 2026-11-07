@@ -18,6 +18,14 @@
 # distfiles pinned in freebsd/ports/www/beryllium/distinfo, is the
 # corresponding source of the packages (GPL-3.0). Without gh, the files
 # and notes are left in a directory for upload through the web page.
+#
+# Provenance (plan/16 BER-06): every package carries the BUILD-MANIFEST.json
+# the port wrote when it was built (version, Chromium and Helium versions,
+# the imported BSD patch set, the SHA-256 of every Beryllium patch).
+# check-provenance compares it with this checkout and the package's own
+# version; a package built from other inputs is refused, so the release
+# never names a commit the package was not built from. The manifests are
+# published with the release as BUILD-MANIFEST-FreeBSD-<major>-amd64.json.
 
 set -eu
 
@@ -38,6 +46,15 @@ TAG=$1
 shift
 
 die() { echo "publish-release: $*" >&2; exit 1; }
+TOOLS=$(cd "$(dirname "$0")" && pwd)
+
+# manifest_of PACKAGE OUTFILE: the package's BUILD-MANIFEST.json. pkg stores
+# paths with their leading slash; bsdtar lists and matches them as stored,
+# GNU tar after removing the slash, so both spellings are tried.
+manifest_of() {
+	member=$(tar -tf "$1" 2>/dev/null | grep -m1 -E '(^|/)BUILD-MANIFEST\.json$') || return 1
+	tar -xOf "$1" "$member" >"$2" 2>/dev/null || tar -xOf "$1" "${member#/}" >"$2" 2>/dev/null
+}
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
@@ -65,8 +82,14 @@ for pkgfile in "$@"; do
 	major=$(echo "$abi" | cut -d: -f2)
 	asset="beryllium-FreeBSD-${major}-amd64.pkg"
 	case " $names " in *" $asset "*) die "two packages for FreeBSD $major" ;; esac
+	manifest="BUILD-MANIFEST-FreeBSD-${major}-amd64.json"
+	manifest_of "$pkgfile" "$OUT/$manifest" ||
+		die "$pkgfile carries no BUILD-MANIFEST.json; it was not built by www/beryllium"
+	python3 "$TOOLS/check-provenance" --repo "$REPO_ROOT" --version "$v" "$OUT/$manifest" ||
+		die "$pkgfile was not built from this checkout (commit $COMMIT); build it from here, or check out what it was built from"
 	cp "$pkgfile" "$OUT/$asset"
 	names="$names $asset"
+	manifests="${manifests:-} $manifest"
 done
 
 (cd "$OUT" && for f in $names; do sha256 -r "$f"; done) >"$OUT/SHA256SUMS"
@@ -92,8 +115,12 @@ Packages:$(for f in $names; do printf '\n- `%s`' "$f"; done)
 
 Corresponding source: commit $COMMIT of this repository (with its \`helium\`
 submodule), and the distfiles pinned in
-\`freebsd/ports/www/beryllium/distinfo\`. The software is GPL-3.0; the artwork
-is CC BY 4.0; the Beryllium name and logo are reserved (TRADEMARKS.md).
+\`freebsd/ports/www/beryllium/distinfo\`. Each package's
+\`BUILD-MANIFEST-FreeBSD-<version>-amd64.json\` (also inside the package as
+\`/usr/local/share/beryllium/BUILD-MANIFEST.json\`) records the inputs it was
+built from, checked against this commit before publishing. The software is
+GPL-3.0; the artwork is CC BY 4.0; the Beryllium name and logo are reserved
+(TRADEMARKS.md).
 EOF
 
 echo "publish-release: release files in $OUT:"
@@ -101,7 +128,7 @@ ls -l "$OUT"
 cat "$OUT/SHA256SUMS"
 
 if [ "$DRYRUN" = 1 ]; then
-	echo "+ gh release create $TAG --target $COMMIT --title \"Beryllium $version\" --notes-file $OUT/NOTES.md $DRAFT $OUT/SHA256SUMS$(for f in $names; do printf ' %s' "$OUT/$f"; done)"
+	echo "+ gh release create $TAG --target $COMMIT --title \"Beryllium $version\" --notes-file $OUT/NOTES.md $DRAFT $OUT/SHA256SUMS$(for f in $names $manifests; do printf ' %s' "$OUT/$f"; done)"
 	exit 0
 fi
 if ! command -v gh >/dev/null 2>&1; then
@@ -118,7 +145,7 @@ fi
 # in the repository and name the release files by their full paths (each is
 # uploaded under its own file name).
 set -- "$OUT/SHA256SUMS"
-for f in $names; do
+for f in $names $manifests; do
 	set -- "$@" "$OUT/$f"
 done
 # shellcheck disable=SC2086 # DRAFT is empty or one flag

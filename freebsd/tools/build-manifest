@@ -53,7 +53,9 @@ def main(argv=None):
         "hardening": gn["hardening"],
         "build_host": {"system": platform.system(), "release": platform.release(),
                        "machine": platform.machine()},
-        "sandbox_status": "none: same as www/chromium (Phase 1, no sandbox claims)",
+        "sandbox_status": "no process is confined by default (as www/chromium); the renderer "
+                          "lockdown is opt-in, --enable-features=BerylliumCapsicumRenderer "
+                          "(plan/14, under construction)",
     }, sys.stdout, indent=2, sort_keys=True)
     print()
     return 0

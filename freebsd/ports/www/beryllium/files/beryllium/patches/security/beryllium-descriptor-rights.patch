@@ -45,9 +45,17 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   this one (the helper); applies after the imported FreeBSD patches
   patch-base_BUILD.gn and patch-base_message__loop_message__pump__epoll.cc
   (stage 2).
+  Sockets (7 November 2026, after the adversarial review, plan/16 BER-02):
+  a socket is admitted only in the shape of a Mojo transport, an end of an
+  unnamed AF_UNIX stream or seqpacket pair, not listening, bound or
+  connected to no path (kinfo_file kf_sock_domain, kf_sock_type,
+  kf_sa_local, kf_sa_peer at the lockdown; SO_DOMAIN, SO_TYPE,
+  SO_ACCEPTCONN, getsockname, getpeername for a received one). A network
+  socket or one connected to a named service keeps authority that rights
+  cannot take back, so it ends the lockdown or loses every right.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled.
+  compiled (build 0.20.3.10).
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -100,7 +108,7 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,337 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
@@ -111,13 +119,16 @@ security-review: required (descriptor rights in confined processes)
 +#include <sys/capsicum.h>
 +#include <sys/event.h>
 +#include <sys/filio.h>
++#include <sys/socket.h>
 +#include <sys/stat.h>
 +#include <sys/time.h>
 +#include <sys/types.h>
++#include <sys/un.h>
 +#include <sys/user.h>
 +#include <unistd.h>
 +
 +#include <atomic>
++#include <cstddef>
 +
 +#include "base/logging.h"
 +#include "base/strings/string_number_conversions.h"
@@ -168,6 +179,49 @@ security-review: required (descriptor rights in confined processes)
 +      return false;
 +  }
 +  return false;
++}
++
++// A unix socket address with a path: a socket bound to one, or connected to
++// a service listening on one. The ends of a socketpair have none.
++const char* UnixPathOf(const struct sockaddr* sa, socklen_t len) {
++  if (sa == nullptr || len <= offsetof(struct sockaddr_un, sun_path) ||
++      sa->sa_family != AF_UNIX) {
++    return nullptr;
++  }
++  const char* path = reinterpret_cast<const struct sockaddr_un*>(sa)->sun_path;
++  return path[0] ? path : nullptr;
++}
++
++// The only sockets a confined process holds are Mojo's: the ends of unnamed
++// AF_UNIX socket pairs, stream (the channels) or seqpacket (the sandbox IPC
++// pair), connected to each other, never listening. A network socket, a
++// socket bound to a path or one connected to a named service (a display, a
++// daemon) carries authority capability mode does not take away: rights can
++// stop connect(), not a connection that exists.
++bool MojoSocketShape(int domain, int type, const struct sockaddr* local,
++                     socklen_t local_len, const struct sockaddr* peer,
++                     socklen_t peer_len, bool listening, std::string* why) {
++  if (domain != AF_UNIX) {
++    *why = "socket of domain " + NumberToString(domain);
++    return false;
++  }
++  if (type != SOCK_STREAM && type != SOCK_SEQPACKET) {
++    *why = "unix socket of type " + NumberToString(type);
++    return false;
++  }
++  if (listening) {
++    *why = "listening unix socket";
++    return false;
++  }
++  if (const char* path = UnixPathOf(local, local_len)) {
++    *why = std::string("unix socket bound to ") + path;
++    return false;
++  }
++  if (const char* path = UnixPathOf(peer, peer_len)) {
++    *why = std::string("unix socket connected to ") + path;
++    return false;
++  }
++  return true;
 +}
 +
 +}  // namespace
@@ -235,9 +289,22 @@ security-review: required (descriptor rights in confined processes)
 +              "vnode of type " + NumberToString(kf.kf_vnode_type) + path;
 +          return std::nullopt;
 +      }
-+    case KF_TYPE_SOCKET:
++    case KF_TYPE_SOCKET: {
++      // kf_path holds the domain's name ("local"), not a path. A listening
++      // unix socket is bound to a path, which the address check catches.
++      std::string why;
++      if (!MojoSocketShape(
++              kf.kf_sock_domain, kf.kf_sock_type,
++              reinterpret_cast<const struct sockaddr*>(&kf.kf_sa_local),
++              sizeof(kf.kf_sa_local),
++              reinterpret_cast<const struct sockaddr*>(&kf.kf_sa_peer),
++              sizeof(kf.kf_sa_peer), /*listening=*/false, &why)) {
++        *description = why;
++        return std::nullopt;
++      }
 +      *description = "socket";
 +      return DescriptorKind::kSocket;
++    }
 +    case KF_TYPE_PIPE:
 +    case KF_TYPE_FIFO:
 +      *description = "pipe";
@@ -280,6 +347,32 @@ security-review: required (descriptor rights in confined processes)
 +    return std::nullopt;
 +  }
 +  if (S_ISSOCK(st.st_mode)) {
++    int domain = -1, type = -1, listening = 0;
++    socklen_t len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len);
++    len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len);
++    len = sizeof(int);
++    getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &len);
++    struct sockaddr_un local = {}, peer = {};
++    socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
++    if (getsockname(fd, reinterpret_cast<struct sockaddr*>(&local),
++                    &local_len) != 0) {
++      local_len = 0;
++    }
++    if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&peer),
++                    &peer_len) != 0) {
++      peer_len = 0;  // not connected: it cannot connect without CAP_CONNECT
++    }
++    std::string why;
++    if (!MojoSocketShape(domain, type,
++                         reinterpret_cast<const struct sockaddr*>(&local),
++                         local_len,
++                         reinterpret_cast<const struct sockaddr*>(&peer),
++                         peer_len, listening != 0, &why)) {
++      *description = why;
++      return std::nullopt;
++    }
 +    *description = "socket";
 +    return DescriptorKind::kSocket;
 +  }

@@ -107,9 +107,13 @@ It is off by default because it is not yet a complete sandbox: renderers
 still keep some descriptors with more rights than they need, and the
 browser does not yet check each renderer with the kernel. Those steps,
 and turning the lockdown on by default, are the next milestones
-([plan/14](plan/14-RENDERER-SANDBOX.md)). Reports of anything that breaks
-with it on are welcome; the test suite runs with it on through
-`--browser-arg=--enable-features=BerylliumCapsicumRenderer`.
+([plan/14](plan/14-RENDERER-SANDBOX.md)). An external adversarial review
+of the lockdown, its tests and the release tools (7 November 2026), and
+what changed because of it, is recorded in
+[plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md). Reports of anything
+that breaks with it on are welcome; the test suite runs with it on through
+`--browser-arg=--enable-features=BerylliumCapsicumRenderer`, which also
+turns its sandbox tests into a gate that fails on any unconfined renderer.
 
 ## Install
 

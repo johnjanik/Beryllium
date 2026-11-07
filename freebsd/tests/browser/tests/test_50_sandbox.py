@@ -22,17 +22,38 @@ class Processes(BrowserTest):
 
 
 class SandboxHonesty(BrowserTest):
+    """With the lockdown requested (lockdown_requested), these tests are a
+    gate: every renderer must be confined and every observation must be
+    available, or they fail. Otherwise they survey and skip."""
+
     NEEDS_FREEBSD = True
 
+    def strict(self):
+        return capsicum.lockdown_requested(self.ctx.options)
+
+    def unavailable(self, why):
+        """A missing observation: a failure under the gate, a skip otherwise."""
+        if self.strict():
+            self.fail(why + " (the lockdown was requested, so this is a failure)")
+        self.skipTest(why)
+
     def test_capability_mode_per_process(self):
-        """Every process's capability mode, from the kernel."""
+        """Every process's capability mode, from the kernel; with the lockdown
+        requested, every renderer must be in it."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
         rows = [(p["type"], p["id"], capability_mode(p["id"])) for p in procs]
         self.note("\n".join(f"{t:<10} pid {pid:<7} capability mode: "
                             f"{'yes' if c else 'no' if c is False else 'unknown'}"
                             for t, pid, c in rows))
-        self.assertTrue(any(c is not None for _, _, c in rows), "procstat gave no answer")
+        if not any(c is not None for _, _, c in rows):
+            self.unavailable("procstat gave no answer")
+        if self.strict():
+            renderers = [(pid, c) for t, pid, c in rows if t == "renderer"]
+            self.assertTrue(renderers, "no renderer to check")
+            self.assertEqual([pid for pid, c in renderers if c is not True], [],
+                             "renderers not in capability mode (or unreadable) "
+                             "although the lockdown was requested")
 
     def test_gpu_sandbox_claim_matches_kernel(self):
         """beryllium://gpu "Sandboxed" equals the GPU process's capability mode."""
@@ -77,8 +98,8 @@ class SandboxHonesty(BrowserTest):
                               if h[1] != p["id"]] if ident else []
                     details.append("    " + capsicum.describe_file(ident, others))
         if not read:
-            self.skipTest("procstat could not read renderer descriptors "
-                          "(security.bsd.unprivileged_proc_debug=0?)")
+            self.unavailable("procstat could not read renderer descriptors "
+                             "(security.bsd.unprivileged_proc_debug=0?)")
         self.note("\n".join(details) or f"{read} renderers: none")
         self.assertEqual(problems, [], "renderers hold descriptors they must not")
 
@@ -88,23 +109,31 @@ class SandboxHonesty(BrowserTest):
         (S-REN-04, S-REN-05); files are read-only resource files."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
-        confined = [p for p in procs if p["type"] == "renderer" and capability_mode(p["id"])]
-        if not confined:
+        renderers = [p for p in procs if p["type"] == "renderer"]
+        modes = {p["id"]: capability_mode(p["id"]) for p in renderers}
+        confined = [p for p in renderers if modes[p["id"]]]
+        if self.strict():
+            self.assertEqual([p["id"] for p in renderers if modes[p["id"]] is not True], [],
+                             "renderers not in capability mode (or unreadable) "
+                             "although the lockdown was requested")
+        elif not confined:
             self.skipTest("no renderer in capability mode; run with "
                           "--browser-arg=--enable-features=BerylliumCapsicumRenderer")
-        problems, lines, read = [], [], 0
+        problems, lines, unread = [], [], []
         for p in confined:
             fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
             if not caps:
+                unread.append(p["id"])
                 continue
-            read += 1
             found = capsicum.policy_problems(fds, caps)
             problems += [f"renderer {p['id']}: {x}" for x in found]
             lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
                          f"{len(found)} outside the policy")
-        if not read:
-            self.skipTest("procstat could not read renderer descriptors "
-                          "(security.bsd.unprivileged_proc_debug=0?)")
+        if len(unread) == len(confined):
+            self.unavailable("procstat could not read renderer descriptors "
+                             "(security.bsd.unprivileged_proc_debug=0?)")
+        if unread and self.strict():
+            problems.append(f"descriptors unreadable for renderers {unread}")
         self.note("\n".join(lines + problems))
         self.assertEqual(problems, [], "confined renderers hold descriptors outside the policy")
 
@@ -128,8 +157,8 @@ class SandboxHonesty(BrowserTest):
             problems += [f"renderer {p['id']}: {x}"
                          for x in capsicum.shared_memory_problems(caps)]
         if not read:
-            self.skipTest("procstat could not read renderer descriptors "
-                          "(security.bsd.unprivileged_proc_debug=0?)")
+            self.unavailable("procstat could not read renderer descriptors "
+                             "(security.bsd.unprivileged_proc_debug=0?)")
         self.note("\n".join(lines) or f"{read} renderers: no shared memory objects")
         self.assertGreater(objects, 0, "no renderer holds a shared memory object: "
                            "is shared memory still kept as files in TMPDIR?")

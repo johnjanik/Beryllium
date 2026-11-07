@@ -269,6 +269,18 @@ class Parse(unittest.TestCase):
             with unittest.mock.patch.object(capsicum, "_run", return_value=text):
                 self.assertEqual(capsicum.cpu_seconds(1), want, text)
 
+    def test_lockdown_requested(self):
+        ns = lambda *args: unittest.mock.Mock(browser_args=list(args))  # noqa: E731
+        self.assertTrue(capsicum.lockdown_requested(
+            ns("--enable-features=BerylliumCapsicumRenderer")))
+        self.assertTrue(capsicum.lockdown_requested(
+            ns("--headless", "--enable-features=Foo,BerylliumCapsicumRenderer,BerylliumCapsicumTrap")))
+        self.assertFalse(capsicum.lockdown_requested(ns()))
+        self.assertFalse(capsicum.lockdown_requested(
+            ns("--disable-features=BerylliumCapsicumRenderer")))
+        self.assertFalse(capsicum.lockdown_requested(unittest.mock.Mock()))  # no list of arguments
+        self.assertFalse(capsicum.lockdown_requested(None))
+
     def test_capability_mode_parsing(self):
         with unittest.mock.patch.object(capsicum, "_run", return_value=PROCSTAT_S):
             self.assertIs(capsicum.capability_mode(5000), True)

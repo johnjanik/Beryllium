@@ -223,7 +223,28 @@ FreeBSD test bed, so an increment must be worth a build.
    right from one the policy has no kind for. That is defence in depth,
    not the boundary: a compromised renderer can `recvmsg` for itself. The
    boundary is the browser limiting what it sends (S-IPC-01, next).
-5. **Sender-side rights and attestation** (next, build 0.20.3.10): the
+   **Adversarial review, 7 November 2026 (build 0.20.3.10;
+   [plan/16](16-ADVERSARIAL-REVIEW-2026-11-07.md)):** an external review
+   of the 0.20.3.8 inputs showed, with the lockdown code compiled against
+   stubbed system calls, that admission by kernel type kept a read-only
+   file anywhere and any socket, and that a failed `caph_limit_stdio()`
+   was only logged. From 0.20.3.10 a read-only file is admitted only
+   under `base::DIR_ASSETS` (the installed resources; fonts come later
+   through the font service), a socket only as an unnamed AF_UNIX stream
+   or seqpacket pair bound and connected to no path (also for sockets
+   received after the lockdown), each `kinfo_file` record is
+   bounds-checked, and a failed stdio limit ends the lockdown. The suite's
+   sandbox tests become a gate when the lockdown is requested (BER-04):
+   any renderer not in capability mode, unreadable, or outside the policy
+   fails them; `freebsd/tools/tests/test_sandbox_gate.py` holds the
+   reviewer's negative scenarios. Expected on the owner's machine: the
+   same results as 0.20.3.9 (every renderer confined, policy test passing,
+   idle CPU low), unless a renderer holds a read-only file outside
+   `/usr/local/share/beryllium/` at its lockdown point, in which case the
+   browser log names it ("fd N: read-only file ... is not under ...") and
+   the renderer ends; that file would then need a decision, not a wider
+   rule.
+5. **Sender-side rights and attestation** (next, build 0.20.3.11): the
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);
    then attestation: the browser checks

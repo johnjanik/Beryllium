@@ -258,6 +258,18 @@ def cpu_seconds(pid):
         return None
 
 
+def lockdown_requested(options):
+    """True when the suite runs the browser with the renderer lockdown
+    switched on (--browser-arg=--enable-features=BerylliumCapsicumRenderer):
+    then the sandbox tests are a gate, not a survey, and fail instead of
+    skipping on anything short of every renderer confined and observed."""
+    args = getattr(options, "browser_args", None)
+    if not isinstance(args, (list, tuple)):
+        return False
+    return any(arg.startswith("--enable-features") and "BerylliumCapsicumRenderer" in arg
+               for arg in args)
+
+
 def capability_mode(pid):
     """True/False from procstat -s (a C in FLAGS), None if it cannot be read."""
     lines = _run(["procstat", "-s", str(pid)]).splitlines()

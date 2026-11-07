@@ -42,10 +42,16 @@ it they are skipped. Useful options:
 - `run --browser-arg=--enable-features=BerylliumCapsicumRenderer`: the whole
   suite with renderers in Capsicum capability mode (opt-in while the
   sandbox is being built, plan/14); `sandbox` shows each renderer's mode,
-  the other groups show what still breaks. `,BerylliumCapsicumTrap` stops a
-  renderer at its first refused call; processes in capability mode cannot
-  write core dumps, so run the `capsicum` survey with the same switch to see
-  which calls they are refused.
+  the other groups show what still breaks. With that switch the `sandbox`
+  group is a gate, not a survey: it fails if any renderer is not in
+  capability mode by the kernel's answer, if any renderer's descriptors or
+  rights cannot be read (`security.bsd.unprivileged_proc_debug=1` is
+  needed), or if any descriptor is outside the policy. Without the switch
+  it records what it sees and skips what it cannot observe.
+  `,BerylliumCapsicumTrap` stops a renderer at its first refused call;
+  processes in capability mode cannot write core dumps, so run the
+  `capsicum` survey with the same switch to see which calls they are
+  refused.
 - `run media videodiag --diagnose`: replay video under switches that each
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash
@@ -75,7 +81,7 @@ files named below.
 | `rendering` | canvas; WebGL in a window; WebGPU; the GPU process's report | `gpu-info.json` |
 | `fonts` | text in nine scripts (Latin, Greek, Cyrillic, CJK, Arabic, Hebrew, Devanagari, Thai, emoji) is set in the same platform fonts by a renderer in capability mode as by one that is not: two browsers, the lockdown switched on and off explicitly | |
 | `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`); the GPU page's "Sandboxed" equals the kernel's answer (RT-17); renderers hold no directory or writable file, their shared memory is anonymous with limited rights, and with the lockdown on every renderer descriptor has an allowed type and no more rights than the policy gives it (`procstat -f`, `procstat -C`) | |
-| `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host (a local proxy records and refuses every connection) | `privacy-*.txt` |
+| `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host, as seen by a local proxy that records and refuses every connection: HTTP(S) the browser sends through the proxy it was given, not DNS, UDP (QUIC) or anything that bypasses a proxy | `privacy-*.txt` |
 | `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |
 | `stability` | eight animated tabs at once; quick navigation through internal pages; a renderer showing a static page uses almost no CPU over five seconds | |

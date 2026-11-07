@@ -110,6 +110,16 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   passes; the survey shows the kqueue poll loop, fixed for 0.20.3.9
   (kqueue: CAP_EVENT; eventfd and pipe: FIONREAD), which also gains
   test_90_stability test_renderers_idle_without_spinning.
+  Admission (7 November 2026, after the adversarial review, plan/16
+  BER-02, BER-03): a read-only file is admitted only under the browser's
+  assets directory (base::DIR_ASSETS, /usr/local/share/beryllium/ in the
+  package), by the path the kernel reports, so a leaked or passed file
+  outside the resource set ends the lockdown instead of staying readable;
+  a socket only as an unnamed Mojo socket pair (base/posix/capsicum_rights);
+  each kinfo_file record is bounds-checked (a malformed table ends the
+  lockdown); and a caph_limit_stdio() failure ends the lockdown instead of
+  being logged, since the renderer would keep a standard stream with every
+  right. From build 0.20.3.10.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -276,7 +286,7 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -4,18 +4,32 @@
+@@ -4,18 +4,33 @@
  
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
@@ -301,6 +311,7 @@ security-review: required (sandbox setup, process confinement)
 +#include <time.h>
  #include <unistd.h>
  
++#include <cstddef>
  #include <limits>
  #include <memory>
 +#include <optional>
@@ -309,7 +320,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -27,6 +41,7 @@
+@@ -27,6 +42,7 @@
  #include "base/logging.h"
  #include "base/memory/singleton.h"
  #include "base/path_service.h"
@@ -317,7 +328,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +78,168 @@
+@@ -63,6 +79,199 @@
  namespace sandbox {
  namespace policy {
  
@@ -372,15 +383,18 @@ security-review: required (sandbox setup, process confinement)
 +
 +// What a renderer may hold at the lockdown point, and with which rights:
 +// the policy in base/posix/capsicum_rights.h (plan/06 section 3.2; feature
-+// matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, left to
++// matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, limited by
 +// caph_limit_stdio(). Every other descriptor is judged by the type the
 +// kernel reports for it (kern.proc.filedesc) and cut to its kind's rights;
-+// a directory is closed (lookups beneath one work in capability mode); a
-+// descriptor the policy has no kind for (a writable or unnamed regular
-+// file, a device, a terminal, a semaphore, a process descriptor...) breaks
-+// the policy: the lockdown fails and the renderer ends. What the renderer
-+// creates or receives after the lockdown is limited where it appears (the
-+// message pump, Mojo's receive path, shared memory creation).
++// a read-only file must also be one of the browser's own resource files
++// (under its assets directory), since that is all a renderer is given by
++// then; a socket must be an unnamed Mojo socket pair; a directory is
++// closed (lookups beneath one work in capability mode); anything else (a
++// writable, unnamed or foreign file, a device, a terminal, a semaphore, a
++// process descriptor, a network or named socket...) breaks the policy: the
++// lockdown fails and the renderer ends. What the renderer creates or
++// receives after the lockdown is limited where it appears (the message
++// pump, Mojo's receive path, shared memory creation).
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
@@ -405,13 +419,30 @@ security-review: required (sandbox setup, process confinement)
 +    result.violation = "the descriptor table could not be read";
 +    return result;
 +  }
++  base::FilePath assets;
++  if (!base::PathService::Get(base::DIR_ASSETS, &assets) || assets.empty()) {
++    result.violation = "the assets directory is unknown";
++    errno = EPERM;
++    return result;
++  }
++  const std::string assets_prefix = assets.AsEndingWithSeparator().value();
++  // Each entry is a kinfo_file cut after its path; every field read below
++  // sits before kf_path. Anything else in the table is a reason to stop.
++  constexpr size_t kMinEntry = offsetof(struct kinfo_file, kf_path) + 1;
 +  for (size_t offset = 0; offset + sizeof(int) <= len;) {
 +    const auto* kf =
 +        reinterpret_cast<const struct kinfo_file*>(table.data() + offset);
-+    if (kf->kf_structsize <= 0) {
++    const int size = kf->kf_structsize;
++    if (size == 0) {
 +      break;
 +    }
-+    offset += static_cast<size_t>(kf->kf_structsize);
++    if (size < 0 || static_cast<size_t>(size) < kMinEntry ||
++        static_cast<size_t>(size) > len - offset) {
++      result.violation = "malformed descriptor table";
++      errno = EPERM;
++      return result;
++    }
++    offset += static_cast<size_t>(size);
 +    const int fd = kf->kf_fd;
 +    // Negative: the working directory, root and text entries; 0 to 2: stdio.
 +    if (fd < 3) {
@@ -429,6 +460,14 @@ security-review: required (sandbox setup, process confinement)
 +      close(fd);
 +      ++result.closed_directories;
 +      continue;
++    }
++    if (*kind == base::freebsd::DescriptorKind::kReadOnlyFile &&
++        std::string(kf->kf_path).compare(0, assets_prefix.size(),
++                                         assets_prefix) != 0) {
++      result.violation = "fd " + base::NumberToString(fd) + ": " + what +
++                         " is not under " + assets_prefix;
++      errno = EPERM;
++      return result;
 +    }
 +    if (!base::freebsd::LimitDescriptorRights(fd, *kind)) {
 +      if (errno == EBADF) {
@@ -462,9 +501,12 @@ security-review: required (sandbox setup, process confinement)
 +  if (!confinement->violation.empty()) {
 +    return false;
 +  }
-+  // Standard input and output keep only the rights stdio needs.
++  // Standard input and output keep only the rights stdio needs (a closed
++  // stream is fine). Failing that, the renderer would keep a stream with
++  // every right, so it ends instead.
 +  if (caph_limit_stdio() != 0) {
-+    PLOG(WARNING) << "beryllium-sandbox: caph_limit_stdio";
++    confinement->violation = "the standard streams could not be limited";
++    return false;
 +  }
 +  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (cap_enter() != 0) {
@@ -486,7 +528,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +351,24 @@
+@@ -174,6 +383,24 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
