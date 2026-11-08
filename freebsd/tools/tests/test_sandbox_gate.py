@@ -259,6 +259,15 @@ class LogTest(unittest.TestCase):
         self.run_case([], [])
         self.run_case([], [self.RECEIVED])
 
+    def test_socket_pairs_made_are_recorded_by_thread(self):
+        made = ("[2:7:1108/120000.000000:WARNING:capsicum_rights.cc(340)] beryllium-sandbox: "
+                "socket pair made on thread 'Chrome_ChildIOThread' (fd 13, fd 14): limited")
+        t = case("test_lockdown_log", LOCKDOWN, RENDERERS)
+        t.browser.log_lines.return_value = [self.LOCKED, made]
+        t.test_lockdown_log()
+        self.assertIn("1 socket pairs made by confined processes on threads ['Chrome_ChildIOThread']",
+                      t.ctx.note.call_args[0][1])
+
 
 if __name__ == "__main__":
     unittest.main()

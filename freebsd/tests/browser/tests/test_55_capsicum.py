@@ -178,10 +178,14 @@ class CapsicumSurvey(unittest.TestCase):
                 procs = browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
             except CDPError:
                 return
+            # Every process's sockets first, in one pass: the kernel reuses a
+            # closed socket's address, so ends are matched only within a sample.
+            now = {p["id"]: capsicum.socket_peers(p["id"]) for p in procs}
+            holders = capsicum.socket_holders(now, {p["id"]: p["type"] for p in procs})
             for p in procs:
                 pid, ptype = p["id"], p["type"]
                 types[pid] = ptype
-                sockets_by_pid[pid] = capsicum.socket_peers(pid)
+                sockets_by_pid[pid] = now[pid]
                 if ptype == "browser":
                     continue
                 s = samples.get(pid)
@@ -192,7 +196,8 @@ class CapsicumSurvey(unittest.TestCase):
                 s["workloads"].append(workload)
                 s["fds"] = capsicum.descriptors(pid)
                 s["rights"] = capsicum.rights(pid)
-                s["sockets"] = sockets_by_pid[pid]
+                s["sockets"] = now[pid]
+                s["holders"] = holders  # the whole browser's sockets at this moment
                 s["threads"] = capsicum.threads(pid)
 
         try:
@@ -246,8 +251,7 @@ class CapsicumSurvey(unittest.TestCase):
                 f"{platform.release()}, browser {getattr(ctx, 'browser_version', {}).get('product', '?')}\n"
                 "Workloads (name: page title when done):\n"
                 + "".join(f"  {r}\n" for r in ran) + "\n" + fd_note
-                + capsicum.report(summary, samples, readable_from,
-                                  capsicum.socket_holders(sockets_by_pid, types))
+                + capsicum.report(summary, samples, readable_from)
                 + "\n" + capsicum.temp_files_report(temps))
         with open(ctx.artifact("capsicum-survey.txt"), "w") as f:
             f.write(text)

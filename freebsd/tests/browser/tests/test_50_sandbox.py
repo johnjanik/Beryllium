@@ -184,9 +184,13 @@ class SandboxHonesty(BrowserTest):
         locked = [l for l in lines if "capability_mode=1" in l]
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
+        made = [l for l in lines if "socket pair made" in l]
+        threads = sorted({l.split("thread '", 1)[1].split("'", 1)[0]
+                          for l in made if "thread '" in l})
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
-                  f"outside the policy, {len(failed)} failures\n"
-                  + "\n".join((received + failed)[:40]))
+                  f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
+                  f"by confined processes" + (f" on threads {threads}" if threads else "") + "\n"
+                  + "\n".join((received + failed + made[:10])[:50]))
         if self.strict():
             self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
             self.assertEqual(received + failed, [],

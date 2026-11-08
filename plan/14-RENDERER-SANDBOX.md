@@ -293,9 +293,16 @@ FreeBSD test bed, so an increment must be worth a build.
    match the two shapes seen. For 0.20.3.12 all three call
    `base::freebsd::LimitCreatedSocket()` on both ends, so a socket a
    confined process creates has a transport's rights from birth, whoever
-   it is for. The survey and the policy test also list the threads
+   it is for, and logs each pair with the thread that made it, since the
+   0.20.3.11 survey shows the same blocking socket to the browser in the
+   GPU, network and storage processes too: a Chromium pattern to name, not
+   a renderer oddity. The survey and the policy test also list the threads
    waiting on a socket (`procstat -t`, wchan `sbwait`), which will say
-   whether a pending request holds them. Two test corrections from the
+   whether a pending request holds them. The survey matches socket ends
+   only within one sample now: the kernel reuses a closed socket's
+   address, and matching across samples minutes apart gave wrong peers
+   in the 0.20.3.11 survey (the policy test, which matches within one
+   moment, was right). Two test corrections from the
    same runs: the five-second wait for a starting renderer applies only
    under the gate (a survey has nothing to wait for), and a confined
    renderer that exits before its descriptors are read is reported as

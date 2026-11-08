@@ -607,12 +607,12 @@ def _sysctls(lines, counter, blocked, note, title):
     lines.append("")
 
 
-def report(summary, samples, readable_from=None, holders=None):
+def report(summary, samples, readable_from=None):
     """Plain-text report: per process type, the failures, the sysctls and
     (for one process of the type) its descriptors, environment and limits.
-    With holders (socket_holders), each socket says where its other end is."""
+    A sample with "holders" (every process's sockets at the moment it was
+    taken) says where each socket's other end was then."""
     lines = []
-    holders = holders or {}
     sampled = {s.get("type") for s in samples.values()} - {None, "browser"}
     empty = {"pids": [], "cap": collections.Counter(), "cap_paths": {},
              "sysctl": collections.Counter(), "sysctl_blocked": None}
@@ -655,6 +655,7 @@ def report(summary, samples, readable_from=None, holders=None):
                          f"{', '.join(sample.get('workloads', [])) or 'start'}):")
             caps = sample.get("rights", {})
             socks = sample.get("sockets", {})
+            holders = sample.get("holders", {})
             for d in sample.get("fds", []):
                 r = caps.get(d["fd"])
                 tail = f"  [{rights_summary(r['rights'])}]" if r else ""
