@@ -270,10 +270,13 @@ FreeBSD test bed, so an increment must be worth a build.
    not yet reached its lockdown point (`capability_modes` now gives a
    listed renderer five seconds), and the rendering test's canvas read
    back `18,52,87` for `#123456` under the lockdown (86 without it, and
-   86 under the lockdown in 0.20.3.8); the test now also reads a CPU-side
-   canvas, and `test_lockdown_log` reports the lockdown's own log lines
-   (a received descriptor the policy has no kind for is logged as its
-   rights are removed), which is where a changed canvas path would show.
+   86 under the lockdown in 0.20.3.8). The lockdown's log lines (now
+   reported by `test_lockdown_log`; a received descriptor the policy has
+   no kind for is logged as its rights are removed) showed no refusal and
+   the GPU report was identical; 0.20.3.11's rendering runs with and
+   without the lockdown, and with the canvas forced onto the CPU, all read
+   86: a one-off in the GPU readback, so the test allows the GPU canvas
+   one level and keeps a CPU-side canvas exact.
 5. **Sender-side rights and attestation** (next, build 0.20.3.12): the
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);

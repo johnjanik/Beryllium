@@ -260,11 +260,15 @@ it, and the Capsicum survey with it, all with
   five seconds to get there; one that is still unconfined after that, or
   alive and unreadable, fails the gate, one that ended is not counted.
   The unit tests cover these cases.
-- **New observation:** the rendering test's default canvas read back
-  `18,52,87` for `#123456` under the lockdown (86 expected; 86 in 0.20.3.8
-  under the lockdown). Open; the test now reads a CPU-side canvas too, and
-  the browser log is checked for descriptors the receive path refused,
-  the likeliest cause of a changed canvas path.
+- **New observation, closed:** the rendering test's default canvas read
+  back `18,52,87` for `#123456` under the lockdown (86 expected; 86 in
+  0.20.3.8 under the lockdown). The lockdown's log showed no refused
+  descriptor and the GPU process's report was identical; with 0.20.3.11
+  (8 November 2026) three rendering runs, with and without the lockdown
+  and with the 2D canvas forced onto the CPU, all read 86 on both the
+  default and a CPU-side canvas. The 87 was a one-off in the GPU readback;
+  the test keeps the CPU canvas exact and allows the GPU canvas one level,
+  recording the value.
 
 ## What this review did not establish, and we do not claim
 

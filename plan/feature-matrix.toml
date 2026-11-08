@@ -283,7 +283,7 @@ built = "v0.20.3.1-1"
 tested = "passing"
 tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas",
          "freebsd/tests/browser/tests/test_40_rendering.py::test_gpu_info"]
-evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026; Intel and AMD untested; owner, 0.20.3.10, 7 Nov 2026: passing without the lockdown; with it the default canvas read back 18,52,87 for #123456 (86 expected, as in 0.20.3.8 with the lockdown), WebGL fine; the test now also reads a CPU canvas to tell a GPU rasterization difference from a drawing error"
+evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026; Intel and AMD untested; owner, 0.20.3.10, 7 Nov 2026: passing without the lockdown; with it the default canvas read back 18,52,87 for #123456 (86 expected, as in 0.20.3.8 with the lockdown), WebGL fine; owner, 0.20.3.11, 8 Nov 2026: three rendering runs (lockdown off, on, 2D canvas forced to software) all read 86 on the default and on a CPU canvas, so the 87 was a one-off GPU readback; the test allows the GPU canvas one level and keeps the CPU canvas exact"
 source = ["plan/01-PROJECT-CHARTER.md D6", "plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]

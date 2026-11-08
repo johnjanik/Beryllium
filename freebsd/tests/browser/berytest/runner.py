@@ -11,6 +11,8 @@ import time
 import traceback
 import unittest
 
+from . import capsicum
+
 
 class Result(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
@@ -74,6 +76,12 @@ def run(ctx, suite):
     info = system_info()
     info["browser"] = getattr(ctx, "browser_version", {})
     info["browser_binary"] = getattr(ctx, "browser_binary", "") or ctx.options.browser or ""
+    # So two reports of the same build can be told apart: the switches the
+    # run gave the browser, and whether they ask for the renderer lockdown.
+    args = getattr(ctx.options, "browser_args", None) or []
+    info["browser_args"] = " ".join(args) or "(none)"
+    info["renderer_lockdown"] = ("requested (the sandbox tests are a gate)"
+                                 if capsicum.lockdown_requested(ctx.options) else "not requested")
     report = {"started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
               "seconds": round(time.time() - started),
               "info": info, "options": vars(ctx.options),
