@@ -329,7 +329,22 @@ FreeBSD test bed, so an increment must be worth a build.
    failed call in capability mode, or memory the renderer reads
    uninitialised after one (`cpuset_getaffinity` is the one call refused
    after the lockdown, once per renderer; `pthread_attr_get_np` uses it,
-   and V8's `Stack::GetStackStart()` calls that on FreeBSD). Two test corrections from the
+   and V8's `Stack::GetStackStart()` calls that on FreeBSD).
+   **The same three runs with `unprivileged_proc_debug=1` (16:29 to
+   16:38):** the policy held on every renderer the suite could read, four
+   of five, with zero descriptors outside it, the first time since the
+   policy test exists; the survey's blank-page renderer shows fd 13 and
+   fd 18 cut, their other ends in the browser, every received socket cut
+   and its other end named (GPU, network and storage services for the
+   introductions, the browser for the channel and the sandbox IPC pair),
+   one pair made in-process before the lockdown (fd 19 and 23, cut by the
+   sweep), and no thread waiting on a socket: the pairs are idle channels,
+   not pending requests. The fifth renderer was reported unreadable: it
+   had exited but not yet been reaped, and a zombie still answers
+   `kill(2)` while it has no descriptor table, so `process_alive` now asks
+   `ps` for the state and counts a zombie as gone. The canvas read
+   `18,52,87` on both canvases again (three of six lockdown runs now; the
+   owner's checkout predated the sweep, so no sweep yet). Two test corrections from the
    same runs: the five-second wait for a starting renderer applies only
    under the gate (a survey has nothing to wait for), and a confined
    renderer that exits before its descriptors are read is reported as

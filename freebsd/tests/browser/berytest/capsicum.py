@@ -282,7 +282,23 @@ def capability_mode(pid):
     return "C" in row[header.index("FLAGS")]
 
 
+def _ps_state(pid):
+    """ps's state letters for a process ("S", "R", "Z"...), "" if there is no
+    such process, None if ps itself could not be run."""
+    try:
+        return subprocess.run(["ps", "-o", "state=", "-p", str(pid)], capture_output=True,
+                              text=True, timeout=20).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def process_alive(pid):
+    """True for a process that is still running. A process that has exited
+    but not yet been reaped (a zombie, state Z) counts as gone: kill(2)
+    still finds it, but it has no descriptor table left for procstat."""
+    state = _ps_state(pid)
+    if state is not None:
+        return bool(state) and not state.startswith("Z")
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:

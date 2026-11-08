@@ -257,7 +257,9 @@ it, and the Capsicum survey with it, all with
   them). A new socket has every right; from 0.20.3.12 every socket pair a
   confined process creates is cut to a transport's rights at creation,
   and 0.20.3.12 (released 8 November 2026) shows them cut, made on the
-  renderer's main and compositor threads.
+  renderer's main and compositor threads. With `unprivileged_proc_debug=1`
+  the same day, every renderer the suite could read held no descriptor
+  outside the policy.
 - **BER-03, stdio:** no failure; every renderer locked down.
 - **BER-04, the gate:** it worked as intended once and once too well: the
   policy test failed on a renderer the browser had just launched and that

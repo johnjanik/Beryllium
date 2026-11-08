@@ -154,15 +154,17 @@ turns its sandbox tests into a gate that fails on any unconfined renderer.
 In the order they are planned ([plan/14](plan/14-RENDERER-SANDBOX.md)
 has the detail and the results of each build):
 
-1. **Two sockets per renderer.** Each confined renderer makes one socket
-   pair on its main thread and one on its compositor thread, one end of
-   which goes to the browser; in 0.20.3.12 they keep every right. The next
-   build cuts them at creation and names what makes them.
-2. **A colour off by one.** In two of five runs with the lockdown on, a
-   canvas colour read back one level off in one channel (`18,52,87` and
-   `18,53,86` for `#123456`), on a CPU-drawn canvas as well as a GPU one,
-   never without the lockdown. Not understood yet; the rendering test now
-   records a colour sweep to find the pattern.
+1. **Two sockets per renderer, to be named.** Each confined renderer makes
+   one socket pair on its main thread and one on its compositor thread,
+   one end of which goes to the browser. 0.20.3.12 cuts them at creation,
+   and with that every descriptor of every renderer the suite could read
+   was within the policy for the first time. Which Chromium code makes
+   them is still to be named.
+2. **A colour off by one.** In three of six runs with the lockdown on, a
+   canvas colour read back one level off in one channel (`18,52,87` twice
+   and `18,53,86` for `#123456`), on a CPU-drawn canvas as well as a GPU
+   one and the same on both, never without the lockdown. Not understood
+   yet; the rendering test now records a colour sweep to find the pattern.
 3. **The browser cuts before it sends.** Today the renderer limits what it
    receives, which a compromised renderer could skip; the browser must
    limit every descriptor before sending it (S-IPC-01).
@@ -245,7 +247,7 @@ set it, and the launcher will not start the browser without it.
 
 - **WebGPU** finds no adapter.
 - **With the experimental lockdown on,** a canvas colour has read back one
-  level off in one channel in two of five runs (see
+  level off in one channel in three of six runs (see
   [Still to finish](#still-to-finish)); the lockdown is off by default.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
