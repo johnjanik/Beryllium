@@ -35,9 +35,11 @@ class SandboxHonesty(BrowserTest):
         return capsicum.lockdown_requested(self.ctx.options)
 
     def renderer_modes(self, procs):
-        """{pid: mode} for the renderers, waiting GRACE_SECONDS for stragglers."""
+        """{pid: mode} for the renderers; under the gate a renderer that is
+        not yet confined gets GRACE_SECONDS to reach its lockdown point (a
+        survey has nothing to wait for: by default no renderer is confined)."""
         return capsicum.capability_modes([p["id"] for p in procs if p["type"] == "renderer"],
-                                         grace=self.GRACE_SECONDS)
+                                         grace=self.GRACE_SECONDS if self.strict() else 0)
 
     @staticmethod
     def unconfined(modes):
@@ -142,19 +144,28 @@ class SandboxHonesty(BrowserTest):
         types = {p["id"]: p["type"] for p in procs}
         sockets = {p["id"]: capsicum.socket_peers(p["id"]) for p in procs}
         holders = capsicum.socket_holders(sockets, types)
-        problems, lines, unread = [], [], []
+        problems, lines, unread, gone = [], [], [], []
         for p in confined:
             fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
             if not caps:
-                unread.append(p["id"])
+                (unread if capsicum.process_alive(p["id"]) else gone).append(p["id"])
                 continue
             found = capsicum.policy_problems(fds, caps)
             problems += [f"renderer {p['id']}: {x}" for x in found]
             lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
                          f"{len(found)} outside the policy")
-            lines += [f"    {x}" for x in
-                      capsicum.socket_notes(caps, sockets.get(p["id"], {}), holders, p["id"])]
-        if len(unread) == len(confined):
+            socks = sockets.get(p["id"], {})
+            for d in fds:  # procstat -f knows whether a socket is blocking
+                if d["fd"] in socks:
+                    socks[d["fd"]]["flags"] = d["flags"]
+            notes = capsicum.socket_notes(caps, socks, holders, p["id"])
+            if notes:
+                waiting = capsicum.threads_waiting_on_sockets(capsicum.threads(p["id"]))
+                notes.append("threads waiting on a socket: " + (", ".join(waiting) or "none"))
+            lines += [f"    {x}" for x in notes]
+        if gone:
+            lines.append(f"renderers that ended before they were read: {gone}")
+        if unread and len(unread) + len(gone) == len(confined):
             self.unavailable("procstat could not read renderer descriptors "
                              "(security.bsd.unprivileged_proc_debug=0?)")
         if unread and self.strict():
@@ -173,9 +184,13 @@ class SandboxHonesty(BrowserTest):
         locked = [l for l in lines if "capability_mode=1" in l]
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
+        made = [l for l in lines if "socket pair made" in l]
+        threads = sorted({l.split("thread '", 1)[1].split("'", 1)[0]
+                          for l in made if "thread '" in l})
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
-                  f"outside the policy, {len(failed)} failures\n"
-                  + "\n".join((received + failed)[:40]))
+                  f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
+                  f"by confined processes" + (f" on threads {threads}" if threads else "") + "\n"
+                  + "\n".join((received + failed + made[:10])[:50]))
         if self.strict():
             self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
             self.assertEqual(received + failed, [],

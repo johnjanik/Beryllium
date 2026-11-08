@@ -270,11 +270,44 @@ FreeBSD test bed, so an increment must be worth a build.
    not yet reached its lockdown point (`capability_modes` now gives a
    listed renderer five seconds), and the rendering test's canvas read
    back `18,52,87` for `#123456` under the lockdown (86 without it, and
-   86 under the lockdown in 0.20.3.8); the test now also reads a CPU-side
-   canvas, and `test_lockdown_log` reports the lockdown's own log lines
-   (a received descriptor the policy has no kind for is logged as its
-   rights are removed), which is where a changed canvas path would show.
-5. **Sender-side rights and attestation** (next, build 0.20.3.12): the
+   86 under the lockdown in 0.20.3.8). The lockdown's log lines (now
+   reported by `test_lockdown_log`; a received descriptor the policy has
+   no kind for is logged as its rights are removed) showed no refusal and
+   the GPU report was identical; 0.20.3.11's rendering runs with and
+   without the lockdown, and with the canvas forced onto the CPU, all read
+   86: a one-off in the GPU readback, so the test allows the GPU canvas
+   one level and keeps a CPU-side canvas exact.
+   **Results, 0.20.3.11 (8 November 2026, three runs):** the receive
+   window is closed: every socket a renderer receives is cut, the log test
+   shows no refused descriptor, every listed renderer is in capability
+   mode and the idle-CPU test passes. Two sockets per renderer still have
+   every right, and the survey can now say what they are: unix stream
+   sockets, one blocking and one not, each with its other end in the
+   browser, present in blank-page renderers. Not received (the receive
+   paths would have cut them) and not in the table at the snapshot (the
+   sweep would have): the renderer makes them itself with `socketpair()`
+   and sends one end to the browser, and a new socket has every right.
+   Chromium makes socket pairs in three places (`base::CreateSocketPair`,
+   seqpacket, the sandbox IPC request pairs; `base::SyncSocket::CreatePair`,
+   stream, blocking; `mojo::PlatformChannel`, stream, non-blocking), which
+   match the two shapes seen. For 0.20.3.12 all three call
+   `base::freebsd::LimitCreatedSocket()` on both ends, so a socket a
+   confined process creates has a transport's rights from birth, whoever
+   it is for, and logs each pair with the thread that made it, since the
+   0.20.3.11 survey shows the same blocking socket to the browser in the
+   GPU, network and storage processes too: a Chromium pattern to name, not
+   a renderer oddity. The survey and the policy test also list the threads
+   waiting on a socket (`procstat -t`, wchan `sbwait`), which will say
+   whether a pending request holds them. The survey matches socket ends
+   only within one sample now: the kernel reuses a closed socket's
+   address, and matching across samples minutes apart gave wrong peers
+   in the 0.20.3.11 survey (the policy test, which matches within one
+   moment, was right). Two test corrections from the
+   same runs: the five-second wait for a starting renderer applies only
+   under the gate (a survey has nothing to wait for), and a confined
+   renderer that exits before its descriptors are read is reported as
+   ended, not as unreadable.
+5. **Sender-side rights and attestation** (next, build 0.20.3.13): the
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);
    then attestation: the browser checks
