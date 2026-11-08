@@ -119,7 +119,15 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   each kinfo_file record is bounds-checked (a malformed table ends the
   lockdown); and a caph_limit_stdio() failure ends the lockdown instead of
   being logged, since the renderer would keep a standard stream with every
-  right. From build 0.20.3.10.
+  right. From build 0.20.3.10. Results, 0.20.3.10 (7 November 2026, three
+  runs): every renderer the browser listed was in capability mode, the
+  whole suite passed without the lockdown, and with it the policy test
+  found one renderer still starting (the test now waits for a renderer to
+  reach its lockdown point) and the survey found two sockets with every
+  right that arrived during the lockdown itself: the lockdown is not
+  single-threaded (the IO thread is receiving Mojo messages), so from
+  0.20.3.11 it calls base::freebsd::ExpectConfinement() before the table
+  snapshot, which makes the receive paths limit from that moment.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -328,7 +336,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +79,199 @@
+@@ -63,6 +79,205 @@
  namespace sandbox {
  namespace policy {
  
@@ -394,7 +402,12 @@ security-review: required (sandbox setup, process confinement)
 +// process descriptor, a network or named socket...) breaks the policy: the
 +// lockdown fails and the renderer ends. What the renderer creates or
 +// receives after the lockdown is limited where it appears (the message
-+// pump, Mojo's receive path, shared memory creation).
++// pump, the receive paths of Mojo and base::UnixDomainSocket, shared memory
++// creation). The lockdown is not single-threaded: the IO thread is already
++// receiving Mojo messages when InitializeSandbox() runs, so a descriptor can
++// arrive between the table snapshot and cap_enter(); ExpectConfinement()
++// turns the receive-path limits on before the snapshot so that window is
++// covered too (0.20.3.10 showed two such sockets with every right).
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
@@ -491,6 +504,7 @@ security-review: required (sandbox setup, process confinement)
 +    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +    return true;
 +  }
++  base::freebsd::ExpectConfinement();
 +  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
 +    int trap = PROC_TRAPCAP_CTL_ENABLE;
 +    if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
@@ -528,7 +542,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +383,24 @@
+@@ -174,6 +389,24 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  

@@ -60,7 +60,15 @@ USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W
 john     beryllium   4242 text /usr/local 77001 -r-xr-xr-x 210000000  r
 john     beryllium   4242    0 /dev          25 crw-rw-rw-     null  r
 john     beryllium   4242    4* local stream fffff80012345678 <-> fffff80012345000
+john     beryllium   4242   13* local stream fffff80012340013 <-> fffff80012340018
+john     beryllium   4242   18* local stream fffff80012340018 <-> fffff80012340013
+john     beryllium   4242   19* local seqpak fffff80012340019
+john     beryllium   4242   20* local dgram fffff80012340020 -> fffff80012349999
 john     beryllium   4242   21 /tmp       99123 -rw-------  2097152 rw
+"""
+FSTAT_BROWSER = """\
+USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W
+john     beryllium   7777   88* local stream fffff80012345000 <-> fffff80012345678
 """
 KDUMP_TEMP = """\
  7777 beryllium NAMI  "/tmp/.org.chromium.Chromium.a1B2c3"
@@ -223,6 +231,55 @@ class Parse(unittest.TestCase):
                          "on /tmp, inode 99123, 2097152 bytes, mode -rw-------; "
                          "also held by: browser pid 7777 fd 88")
         self.assertIn("could not identify", capsicum.describe_file(None))
+
+    def test_socket_peers_and_holders(self):
+        socks = capsicum.socket_peers(4242, FSTAT)
+        self.assertEqual(sorted(socks, key=int), ["4", "13", "18", "19", "20"])
+        self.assertEqual(socks["4"], {"domain": "local", "type": "stream",
+                                      "pcb": "fffff80012345678", "peer": "fffff80012345000",
+                                      "conn": "<->"})
+        self.assertEqual(socks["19"]["peer"], "")
+        self.assertEqual(socks["20"]["type"], "dgram")
+        by_pid = {4242: socks, 7777: capsicum.socket_peers(7777, FSTAT_BROWSER)}
+        holders = capsicum.socket_holders(by_pid, {4242: "renderer", 7777: "browser"})
+        self.assertEqual(holders["fffff80012345000"], ("browser", 7777, "88"))
+        self.assertEqual(capsicum.describe_socket(socks["4"], holders, 4242),
+                         "unix stream, other end: browser pid 7777 fd 88")
+        self.assertEqual(capsicum.describe_socket(socks["13"], holders, 4242),
+                         "unix stream, other end is fd 18 of this same process (a pair made here)")
+        self.assertEqual(capsicum.describe_socket(socks["19"], holders, 4242),
+                         "unix seqpak, not connected")
+        self.assertIn("no Beryllium process", capsicum.describe_socket(socks["20"], holders, 4242))
+        self.assertIn("could not", capsicum.describe_socket(None, holders, 4242))
+        rights = {"4": {"type": "s", "rights": ["rd", "wr", "ev", "fs"], "name": ""},
+                  "13": {"type": "s", "rights": sorted(capsicum.UNLIMITED_MARKERS | {"rd"}), "name": ""},
+                  "21": {"type": "v", "rights": sorted(capsicum.UNLIMITED_MARKERS), "name": ""}}
+        notes = capsicum.socket_notes(rights, socks, holders, 4242)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("fd 13: socket with every right: unix stream, other end is fd 18", notes[0])
+
+    def test_capability_modes_with_grace(self):
+        clock = [0.0]
+        answers = {1: iter([True]), 2: iter([False, False, True]), 3: iter([False]),
+                   4: iter([None])}
+
+        def mode(pid):
+            try:
+                return next(answers[pid])
+            except StopIteration:
+                return {1: True, 2: True, 3: False, 4: None}[pid]
+        with unittest.mock.patch.object(capsicum, "capability_mode", side_effect=mode), \
+                unittest.mock.patch.object(capsicum, "_clock", side_effect=lambda: clock[0]), \
+                unittest.mock.patch.object(capsicum, "_sleep",
+                                           side_effect=lambda t: clock.__setitem__(0, clock[0] + t)), \
+                unittest.mock.patch.object(capsicum, "process_alive",
+                                           side_effect=lambda pid: pid != 4):
+            modes = capsicum.capability_modes([1, 2, 3, 4], grace=1.0, interval=0.2)
+        self.assertEqual(modes, {1: True, 2: True, 3: False, 4: "gone"})
+        self.assertAlmostEqual(clock[0], 1.0, places=5)  # the full grace, for the stragglers
+        with unittest.mock.patch.object(capsicum, "capability_mode", return_value=False), \
+                unittest.mock.patch.object(capsicum, "process_alive", return_value=True):
+            self.assertEqual(capsicum.capability_modes([5], grace=0), {5: False})
 
     def test_temp_files(self):
         self.assertEqual(capsicum.temp_file_name("/tmp/.org.chromium.Chromium.a1B2c3"),

@@ -244,7 +244,37 @@ FreeBSD test bed, so an increment must be worth a build.
    browser log names it ("fd N: read-only file ... is not under ...") and
    the renderer ends; that file would then need a decision, not a wider
    rule.
-5. **Sender-side rights and attestation** (next, build 0.20.3.11): the
+   **Results, 0.20.3.10 (7 November 2026, three runs with
+   `unprivileged_proc_debug=1`):** without the lockdown the whole suite
+   passes. With it, every renderer the browser listed was in capability
+   mode, idle CPU was 0.00 s, fonts matched, and the survey's descriptor
+   list of a blank-page renderer shows every kqueue, eventfd, shared memory
+   object, resource file and received socket cut to the policy, with two
+   exceptions: fd 13 (a blocking unix socket) and fd 18 (non-blocking),
+   both with every right, both unnamed. They were neither in the table the
+   sweep read nor seen by the receive path, which only acted in capability
+   mode: the lockdown runs in `InitializeSandbox()` after
+   `RenderThreadImpl::Create()`, so the IO thread is already receiving
+   Mojo messages while the main thread reads the table and limits, and a
+   descriptor that arrives in that window kept every right (the reviewer's
+   question "is startup single-threaded?" answered: no). For 0.20.3.11 the
+   lockdown calls `base::freebsd::ExpectConfinement()` before the snapshot,
+   which makes both receive paths (Mojo's `SocketRecvmsg` and
+   `base::UnixDomainSocket::RecvMsgWithFlags`, the latter newly hooked;
+   it carries the sandbox IPC replies with font files) limit from that
+   moment, so the window is covered from both sides. The survey and the
+   policy test now say where each socket's other end is (`fstat -p` pcb
+   matching across the browser's processes), so a socket outside the
+   policy is named by its peer next time. Two more results: the gate
+   failed once on a renderer the browser had just launched and that had
+   not yet reached its lockdown point (`capability_modes` now gives a
+   listed renderer five seconds), and the rendering test's canvas read
+   back `18,52,87` for `#123456` under the lockdown (86 without it, and
+   86 under the lockdown in 0.20.3.8); the test now also reads a CPU-side
+   canvas, and `test_lockdown_log` reports the lockdown's own log lines
+   (a received descriptor the policy has no kind for is logged as its
+   rights are removed), which is where a changed canvas path would show.
+5. **Sender-side rights and attestation** (next, build 0.20.3.12): the
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);
    then attestation: the browser checks
