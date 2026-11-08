@@ -260,6 +260,20 @@ class Parse(unittest.TestCase):
         socks["13"]["flags"] = "rw---n--"
         self.assertTrue(capsicum.socket_notes(rights, socks, holders, 4242)[0].endswith(", non-blocking"))
 
+    def test_process_alive(self):
+        with unittest.mock.patch.object(capsicum, "_ps_state", return_value="S+"):
+            self.assertTrue(capsicum.process_alive(4242))
+        with unittest.mock.patch.object(capsicum, "_ps_state", return_value="Z"):
+            self.assertFalse(capsicum.process_alive(4242))  # exited, not reaped: no fd table
+        with unittest.mock.patch.object(capsicum, "_ps_state", return_value=""):
+            self.assertFalse(capsicum.process_alive(4242))
+        with unittest.mock.patch.object(capsicum, "_ps_state", return_value=None), \
+                unittest.mock.patch.object(capsicum.os, "kill", side_effect=ProcessLookupError):
+            self.assertFalse(capsicum.process_alive(4242))
+        with unittest.mock.patch.object(capsicum, "_ps_state", return_value=None), \
+                unittest.mock.patch.object(capsicum.os, "kill", return_value=None):
+            self.assertTrue(capsicum.process_alive(4242))
+
     def test_threads(self):
         text = """\
   PID    TID COMM                TDNAME              CPU  PRI STATE   WCHAN
