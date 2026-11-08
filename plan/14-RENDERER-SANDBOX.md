@@ -302,7 +302,34 @@ FreeBSD test bed, so an increment must be worth a build.
    only within one sample now: the kernel reuses a closed socket's
    address, and matching across samples minutes apart gave wrong peers
    in the 0.20.3.11 survey (the policy test, which matches within one
-   moment, was right). Two test corrections from the
+   moment, was right).
+   **Results, 0.20.3.12 (8 November 2026, released as v0.20.3.12 with its
+   build manifest; three runs, `unprivileged_proc_debug=0` this time):**
+   every listed renderer in capability mode, the receive path refused
+   nothing, idle CPU zero, and the creation hook's log names the two socket
+   pairs: one made on `CrRendererMain` right after the lockdown (its kept
+   end blocking, so `base::SyncSocket::CreatePair` or a
+   `CancelableSyncSocket`), one on `Compositor` (kept end non-blocking, so
+   `mojo::PlatformChannel` or a `CancelableSyncSocket` after its first
+   send), 14 pairs for 7 renderers, all cut at creation. The descriptor
+   tests failed under the gate only because `procstat` could not read the
+   renderers (the sysctl was 0), which is the gate working. Which Chromium
+   code makes the pairs is still to be named: not the ipcz driver (only
+   brokers create transports), not the thread-type switcher (stubbed on
+   BSD); the browser holds the other ends. **The colour anomaly is not
+   the GPU:** with the lockdown on, both the default and the CPU-drawn
+   canvas read `18,53,86` for `#123456` (green one level up; 0.20.3.10
+   had blue one level up on the GPU canvas), and never without the
+   lockdown (0.20.3.8, 0.20.3.11 and every default run exact). The one-
+   level allowance is withdrawn: the test is exact on both canvases again,
+   and records the context's own `fillStyle`, a `putImageData` round trip
+   and a sweep of greys and primaries on the CPU canvas, so the next
+   occurrence shows whether the parser, the fill or the copy moves the
+   value and which values move. Candidates: a colour transform fed by a
+   failed call in capability mode, or memory the renderer reads
+   uninitialised after one (`cpuset_getaffinity` is the one call refused
+   after the lockdown, once per renderer; `pthread_attr_get_np` uses it,
+   and V8's `Stack::GetStackStart()` calls that on FreeBSD). Two test corrections from the
    same runs: the five-second wait for a starting renderer applies only
    under the gate (a survey has nothing to wait for), and a confined
    renderer that exits before its descriptors are read is reported as

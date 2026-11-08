@@ -29,6 +29,23 @@ PROBE = """(async () => {
   const s = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
   s.fillStyle = '#123456'; s.fillRect(0, 0, 4, 4);
   out.canvas2d_cpu = Array.from(s.getImageData(1, 1, 1, 1).data).join(',');
+  // How the context stores the colour, and a copy with no drawing at all:
+  // under the renderer lockdown a channel has read one level off (plan/14),
+  // and these say whether the parser, the fill or the copy moves it.
+  out.fill_style = s.fillStyle;
+  const img = s.createImageData(1, 1); img.data.set([18, 52, 86, 255]);
+  s.putImageData(img, 0, 0);
+  out.put_get = Array.from(s.getImageData(0, 0, 1, 1).data).join(',');
+  // A sweep of greys and primaries on the CPU canvas: which values move.
+  const off = [];
+  const probe = (r, g, b) => {
+    s.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')'; s.fillRect(0, 0, 2, 2);
+    const d = s.getImageData(0, 0, 1, 1).data;
+    if (d[0] !== r || d[1] !== g || d[2] !== b || d[3] !== 255) off.push([r, g, b].join(',') + '->' + Array.from(d).join(','));
+  };
+  for (let v = 0; v < 256; v += 5) probe(v, v, v);
+  for (const c of [[255,0,0],[0,255,0],[0,0,255],[18,52,86],[86,52,18],[200,100,50],[1,2,3],[254,253,252]]) probe(...c);
+  out.sweep_off = off;
   return out;
 })()"""
 
@@ -39,14 +56,15 @@ class Rendering(BrowserTest):
         page = self.browser.new_page(self.ctx.fixtures().url("blank.html"))
         out = page.eval(PROBE)
         self.note(json.dumps(out))
+        # Exact on both canvases. Under the renderer lockdown a channel has
+        # read one level off (18,52,87 in 0.20.3.10 on the GPU canvas;
+        # 18,53,86 in 0.20.3.12 on both), never without it; the sweep above
+        # is recorded to find out why (plan/14).
+        self.assertEqual(out.get("sweep_off"), [],
+                         "colours that did not read back as drawn on the CPU canvas")
+        self.assertEqual(out["put_get"], "18,52,86,255", "a copied pixel changed")
         self.assertEqual(out["canvas2d_cpu"], "18,52,86,255", "the CPU canvas is wrong")
-        # The default canvas is GPU-backed; its readback was one level off
-        # once (0.20.3.10, 18,52,87) and exact in every other run, so one
-        # level is allowed there and the exact value is on record above.
-        got = [int(x) for x in out["canvas2d"].split(",")]
-        self.assertEqual(len(got), 4, out["canvas2d"])
-        self.assertTrue(all(abs(a - b) <= 1 for a, b in zip(got, [18, 52, 86, 255])),
-                        f"the default canvas read {out['canvas2d']} for #123456")
+        self.assertEqual(out["canvas2d"], "18,52,86,255", "the default canvas is wrong")
         if not self.browser.headless:
             self.assertTrue(out["webgl"], "WebGL is not available")
 

@@ -30,7 +30,7 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.7**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.12**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
@@ -39,7 +39,41 @@ and Helium 0.20.3.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
 
-### New since 0.20.3.1
+### New in 0.20.3.12 (since 0.20.3.7)
+
+Everything in this release is about the renderer lockdown and about being
+able to check it. Nothing changes for everyday browsing unless you switch
+the lockdown on.
+
+- **Least rights on every descriptor.** With the lockdown on, every file,
+  socket, kqueue, eventfd and shared memory object a renderer holds is
+  cut to the rights its kind needs, with Capsicum: at the lockdown point
+  for what the renderer already has, at creation for what it makes
+  afterwards (the message pump's kqueue and eventfd, shared memory), and
+  on arrival for what the browser passes it over Mojo.
+- **Admission by place and shape.** At the lockdown a read-only file is
+  accepted only under `/usr/local/share/beryllium/` (the browser's own
+  resources); a socket only as an unnamed Mojo socket pair, bound and
+  connected to no path; a directory is closed; anything else ends the
+  renderer instead of running unconfined. A failure to limit the standard
+  streams ends it too. These came out of an external adversarial review of
+  the code ([plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md)), which
+  also found that the test suite could pass with no renderer confined.
+- **The sandbox tests are a gate.** Run with the lockdown switched on, the
+  suite fails if any renderer is not in capability mode by the kernel's
+  answer, if its descriptors cannot be read, if any descriptor is outside
+  the policy, or if the lockdown's own log shows a refused descriptor.
+  Without the switch it surveys and skips, as before.
+- **Release provenance.** Every package carries a build manifest (version,
+  Chromium and Helium versions, the imported FreeBSD patch set, the SHA-256
+  of every Beryllium patch). The release tool refuses a package that was
+  not built from the commit it names, and publishes the manifest with the
+  release as `BUILD-MANIFEST-FreeBSD-16-amd64.json`.
+- **No renderer spins on its kqueue.** 0.20.3.8 withheld one right from
+  the message pump's kqueue and every confined renderer polled instead of
+  sleeping; a test now watches idle CPU.
+
+### New since 0.20.3.1 (releases 0.20.3.2 to 0.20.3.7)
 
 - **New logo and icons.** The logo is rebuilt as vector artwork from the
   same design, and the 16, 22, 24 and 32 px icons are drawn pixel by pixel
@@ -103,17 +137,51 @@ If the lockdown fails, the renderer ends instead of running unconfined. To check
 procstat -s $(pgrep -f -- --type=renderer)
 ```
 
-It is off by default because it is not yet a complete sandbox: renderers
-still keep some descriptors with more rights than they need, and the
-browser does not yet check each renderer with the kernel. Those steps,
-and turning the lockdown on by default, are the next milestones
-([plan/14](plan/14-RENDERER-SANDBOX.md)). An external adversarial review
-of the lockdown, its tests and the release tools (7 November 2026), and
-what changed because of it, is recorded in
+It is off by default because it is not yet a complete sandbox. What it
+does today: every descriptor a confined renderer holds is cut to the
+rights its kind needs, a renderer that cannot be confined ends, and the
+suite checks all of it from outside with `procstat`. What is still
+missing is listed under [Still to finish](#still-to-finish). An external
+adversarial review of the lockdown, its tests and the release tools
+(7 November 2026), and what changed because of it, is recorded in
 [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md). Reports of anything
 that breaks with it on are welcome; the test suite runs with it on through
 `--browser-arg=--enable-features=BerylliumCapsicumRenderer`, which also
 turns its sandbox tests into a gate that fails on any unconfined renderer.
+
+#### Still to finish
+
+In the order they are planned ([plan/14](plan/14-RENDERER-SANDBOX.md)
+has the detail and the results of each build):
+
+1. **Two sockets per renderer.** Each confined renderer makes one socket
+   pair on its main thread and one on its compositor thread, one end of
+   which goes to the browser; in 0.20.3.12 they keep every right. The next
+   build cuts them at creation and names what makes them.
+2. **A colour off by one.** In two of five runs with the lockdown on, a
+   canvas colour read back one level off in one channel (`18,52,87` and
+   `18,53,86` for `#123456`), on a CPU-drawn canvas as well as a GPU one,
+   never without the lockdown. Not understood yet; the rendering test now
+   records a colour sweep to find the pattern.
+3. **The browser cuts before it sends.** Today the renderer limits what it
+   receives, which a compromised renderer could skip; the browser must
+   limit every descriptor before sending it (S-IPC-01).
+4. **The kernel's word on each renderer.** The browser checks each
+   renderer's capability mode with the kernel before it gets a page, and
+   a `beryllium://sandbox` page shows the answer per process.
+5. **Lockdown before the renderer's threads start.** Today it runs after
+   the IO and compositor threads exist, which is where a descriptor could
+   slip past it; moving it earlier makes the sweep single-threaded.
+6. **On by default, fail closed.** When the suite passes the gate on every
+   run, the production package turns the lockdown on.
+7. **The other processes.** GPU, network, audio and utility processes get
+   their own policies, or an explicit statement that they have none.
+8. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
+   verified by `install.sh`; the proposal is in plan/16.
+9. **Assurance.** A FreeBSD test machine for CI, review records for the
+   217 imported FreeBSD patches on security paths, and the allocator
+   hardening flags the review named as the main deficit.
+10. **WebGPU** finds no adapter.
 
 ## Install
 
@@ -176,6 +244,9 @@ set it, and the launcher will not start the browser without it.
 ### Known issues
 
 - **WebGPU** finds no adapter.
+- **With the experimental lockdown on,** a canvas colour has read back one
+  level off in one channel in two of five runs (see
+  [Still to finish](#still-to-finish)); the lockdown is off by default.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
@@ -268,11 +339,11 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.7, clean descriptors at launch, anonymous shared memory, no swap file and an opt-in lockdown; still to come, the descriptor allowlist, least rights on each descriptor, the kernel check and the lockdown on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.12, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, and a test suite that is a gate; still to come, the browser cutting what it sends, the kernel check, the lockdown before the renderer's threads start and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |
-| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite) |
+| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite, build manifests checked before publishing); signing proposed |
 
 Every feature the project must implement, build and test, with its status,
 is in the [feature matrix](plan/13-FEATURE-MATRIX.md). Details are in the
