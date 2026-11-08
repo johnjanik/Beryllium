@@ -250,8 +250,12 @@ it, and the Capsicum survey with it, all with
   For 0.20.3.11 the lockdown turns the receive-path limits on before the
   snapshot (`ExpectConfinement()`), and `base::UnixDomainSocket`'s receive
   path (sandbox IPC replies carrying font files) is limited like Mojo's.
-  The survey now names each socket's other end, so the next run can say
-  what those two sockets were.
+  0.20.3.11 (8 November 2026) confirmed the window closed and showed the
+  two remaining sockets to be ones the renderer creates itself with
+  `socketpair()`, one end sent to the browser (unix stream, one blocking
+  and one not, as `base::SyncSocket` and `mojo::PlatformChannel` make
+  them). A new socket has every right; from 0.20.3.12 every socket pair a
+  confined process creates is cut to a transport's rights at creation.
 - **BER-03, stdio:** no failure; every renderer locked down.
 - **BER-04, the gate:** it worked as intended once and once too well: the
   policy test failed on a renderer the browser had just launched and that

@@ -257,6 +257,23 @@ class Parse(unittest.TestCase):
         notes = capsicum.socket_notes(rights, socks, holders, 4242)
         self.assertEqual(len(notes), 1)
         self.assertIn("fd 13: socket with every right: unix stream, other end is fd 18", notes[0])
+        socks["13"]["flags"] = "rw---n--"
+        self.assertTrue(capsicum.socket_notes(rights, socks, holders, 4242)[0].endswith(", non-blocking"))
+
+    def test_threads(self):
+        text = """\
+  PID    TID COMM                TDNAME              CPU  PRI STATE   WCHAN
+ 4242 100123 beryllium           beryllium             2  120 sleep   kqread
+ 4242 100124 beryllium           Chrome_ChildIOT      -1  120 sleep   kqread
+ 4242 100125 beryllium           ThreadPoolForeg       3  152 sleep   sbwait
+ 4242 100126 beryllium           Compositor            0  120 run
+"""
+        ths = capsicum.threads(4242, text)
+        self.assertEqual([t["name"] for t in ths],
+                         ["beryllium", "Chrome_ChildIOT", "ThreadPoolForeg", "Compositor"])
+        self.assertEqual(ths[3]["wchan"], "-")
+        self.assertEqual(capsicum.threads_waiting_on_sockets(ths), ["ThreadPoolForeg"])
+        self.assertEqual(capsicum.threads(4242, ""), [])
 
     def test_capability_modes_with_grace(self):
         clock = [0.0]

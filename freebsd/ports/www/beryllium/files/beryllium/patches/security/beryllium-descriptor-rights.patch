@@ -62,10 +62,19 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   turns the receive-path limits on from that moment. The same limit now
   also covers base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC
   replies that carry font files), the other recvmsg path in the renderer.
+  Sockets a confined process creates (0.20.3.11, 8 November 2026): with the
+  receive window covered, each confined renderer still held two sockets
+  with every right, both unix stream, one blocking and one not, with the
+  browser at the other end, and the log showed nothing refused: they were
+  made in the renderer with socketpair() and one end sent away. A new
+  socket has every right, so LimitCreatedSocket() cuts both ends of every
+  pair a confined process makes to a transport's rights, at the three
+  places Chromium makes them: base::CreateSocketPair (the sandbox IPC
+  request pairs), base::SyncSocket::CreatePair and mojo::PlatformChannel.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The 0.20.3.10
-  state compiled and ran (7 November 2026); the receive window and
-  UnixDomainSocket changes are for build 0.20.3.11, not yet compiled.
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
+  0.20.3.11 state compiled and ran (8 November 2026); the created-socket
+  limits are for build 0.20.3.12, not yet compiled.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -118,7 +127,7 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,358 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
@@ -442,8 +451,23 @@ security-review: required (descriptor rights in confined processes)
 +  g_confining.store(true, std::memory_order_release);
 +}
 +
++bool Confining() {
++  return g_confining.load(std::memory_order_acquire) || InCapabilityMode();
++}
++
++void LimitCreatedSocket(int fd) {
++  if (!Confining()) {
++    return;
++  }
++  if (!LimitDescriptorRights(fd, DescriptorKind::kSocket)) {
++    PLOG(ERROR) << "beryllium-sandbox: created socket (fd " << fd
++                << ") could not be limited";
++    RemoveAllRights(fd);
++  }
++}
++
 +void LimitReceivedDescriptor(int fd) {
-+  if (!g_confining.load(std::memory_order_acquire) && !InCapabilityMode()) {
++  if (!Confining()) {
 +    return;
 +  }
 +  std::string what;
@@ -464,7 +488,7 @@ security-review: required (descriptor rights in confined processes)
 +}  // namespace base::freebsd
 --- a/base/posix/capsicum_rights.h
 +++ b/base/posix/capsicum_rights.h
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,86 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +//
@@ -542,6 +566,12 @@ security-review: required (descriptor rights in confined processes)
 +// that it does nothing.
 +BASE_EXPORT void LimitReceivedDescriptor(int fd);
 +
++// The same for a socket this process has just created with socketpair()
++// (base::CreateSocketPair, base::SyncSocket, mojo::PlatformChannel): a new
++// socket has every right, and a confined process may hold sockets only as
++// transports. Before ExpectConfinement() it does nothing.
++BASE_EXPORT void LimitCreatedSocket(int fd);
++
 +}  // namespace base::freebsd
 +
 +#endif  // BASE_POSIX_CAPSICUM_RIGHTS_H_
@@ -558,7 +588,20 @@ security-review: required (descriptor rights in confined processes)
  namespace base {
  
  
-@@ -172,6 +176,12 @@
+@@ -36,6 +40,12 @@
+   if (socketpair(AF_UNIX, flags, 0, raw_socks) == -1) {
+     return false;
+   }
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: in a confined process a new socket keeps only a transport's
++  // rights (plan/06 section 3.2), whichever end stays here.
++  freebsd::LimitCreatedSocket(raw_socks[0]);
++  freebsd::LimitCreatedSocket(raw_socks[1]);
++#endif
+   one->reset(raw_socks[0]);
+   two->reset(raw_socks[1]);
+   return true;
+@@ -172,6 +182,12 @@
  
    if (wire_fds) {
      for (size_t i = 0; i < wire_fds_len; ++i) {
@@ -571,6 +614,59 @@ security-review: required (descriptor rights in confined processes)
        fds->emplace_back(UNSAFE_TODO(wire_fds[i]));
      }
    }
+--- a/base/sync_socket_posix.cc
++++ b/base/sync_socket_posix.cc
+@@ -21,6 +21,10 @@
+ #include "base/threading/scoped_blocking_call.h"
+ #include "build/build_config.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ #if BUILDFLAG(IS_SOLARIS)
+ #include <sys/filio.h>
+ #endif
+@@ -59,6 +63,12 @@
+     if (socketpair(AF_UNIX, SOCK_STREAM, 0, raw_handles) != 0) {
+       return false;
+     }
++#if BUILDFLAG(IS_FREEBSD)
++    // Beryllium: in a confined process a new socket keeps only a transport's
++    // rights (plan/06 section 3.2).
++    freebsd::LimitCreatedSocket(raw_handles[0]);
++    freebsd::LimitCreatedSocket(raw_handles[1]);
++#endif
+     handles[0].reset(raw_handles[0]);
+     handles[1].reset(raw_handles[1]);
+   }
+--- a/mojo/public/cpp/platform/platform_channel.cc
++++ b/mojo/public/cpp/platform/platform_channel.cc
+@@ -48,6 +48,10 @@
+ #include <sys/socket.h>
+ #endif
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ namespace mojo {
+ 
+ namespace {
+@@ -157,6 +161,13 @@
+   PCHECK(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+   PCHECK(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: in a confined process a new socket keeps only a transport's
++  // rights (plan/06 section 3.2); F_SETFL stays allowed.
++  base::freebsd::LimitCreatedSocket(fds[0]);
++  base::freebsd::LimitCreatedSocket(fds[1]);
++#endif
++
+   *local_endpoint = PlatformHandle(base::ScopedFD(fds[0]));
+   *remote_endpoint = PlatformHandle(base::ScopedFD(fds[1]));
+   DCHECK(local_endpoint->is_valid());
 --- a/mojo/public/cpp/platform/socket_utils_posix.cc
 +++ b/mojo/public/cpp/platform/socket_utils_posix.cc
 @@ -16,6 +16,10 @@

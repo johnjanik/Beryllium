@@ -149,6 +149,7 @@ class PolicyTest(unittest.TestCase):
         with modes(by_pid), \
                 mock.patch.object(sandbox.capsicum, "descriptors", return_value=[]), \
                 mock.patch.object(sandbox.capsicum, "socket_peers", return_value={}), \
+                mock.patch.object(sandbox.capsicum, "threads", return_value=[]), \
                 mock.patch.object(sandbox.capsicum, "rights",
                                   side_effect=lambda pid: rights_by_pid.get(pid, {})), \
                 mock.patch.object(sandbox.capsicum, "policy_problems", return_value=list(problems)):
@@ -177,6 +178,20 @@ class PolicyTest(unittest.TestCase):
         with self.assertRaises(AssertionError) as e:
             self.run_case(LOCKDOWN, {2: True, 3: True}, {2: RIGHTS_OK})
         self.assertIn("unreadable for renderers [3]", str(e.exception))
+
+    def test_gate_ignores_a_confined_renderer_that_ended_before_it_was_read(self):
+        """modes() answers True for 3 but it is gone when its descriptors are read."""
+        t = case("test_confined_renderer_descriptors_follow_the_policy", LOCKDOWN, RENDERERS)
+        with modes({1: False, 2: True, 3: True}), \
+                mock.patch.object(sandbox.capsicum, "process_alive", side_effect=lambda pid: pid != 3), \
+                mock.patch.object(sandbox.capsicum, "descriptors", return_value=[]), \
+                mock.patch.object(sandbox.capsicum, "socket_peers", return_value={}), \
+                mock.patch.object(sandbox.capsicum, "threads", return_value=[]), \
+                mock.patch.object(sandbox.capsicum, "rights",
+                                  side_effect=lambda pid: RIGHTS_OK if pid == 2 else {}), \
+                mock.patch.object(sandbox.capsicum, "policy_problems", return_value=[]):
+            t.test_confined_renderer_descriptors_follow_the_policy()
+        self.assertIn("ended before they were read: [3]", t.ctx.note.call_args[0][1])
 
     def test_gate_fails_when_no_renderer_is_readable(self):
         with self.assertRaises(AssertionError):
@@ -208,6 +223,8 @@ class PolicyTest(unittest.TestCase):
                 mock.patch.object(sandbox.capsicum, "descriptors", return_value=[]), \
                 mock.patch.object(sandbox.capsicum, "socket_peers",
                                   side_effect=lambda pid: socks.get(pid, {})), \
+                mock.patch.object(sandbox.capsicum, "threads", return_value=[
+                    {"tid": "1", "name": "ThreadPoolForeg", "state": "sleep", "wchan": "sbwait"}]), \
                 mock.patch.object(sandbox.capsicum, "rights",
                                   side_effect=lambda pid: rights if pid == 2 else RIGHTS_OK), \
                 self.assertRaises(AssertionError):
@@ -215,6 +232,7 @@ class PolicyTest(unittest.TestCase):
         noted = t.ctx.note.call_args[0][1]
         self.assertIn("fd 13: socket with every right: unix stream, other end: browser pid 1 fd 88",
                       noted)
+        self.assertIn("threads waiting on a socket: ThreadPoolForeg", noted)
         self.assertIn("fd 13 (s): rights not limited", noted)
 
 

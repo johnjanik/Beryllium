@@ -193,6 +193,7 @@ class CapsicumSurvey(unittest.TestCase):
                 s["fds"] = capsicum.descriptors(pid)
                 s["rights"] = capsicum.rights(pid)
                 s["sockets"] = sockets_by_pid[pid]
+                s["threads"] = capsicum.threads(pid)
 
         try:
             sample("start")

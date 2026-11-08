@@ -363,6 +363,33 @@ def describe_socket(sock, holders, pid):
     return f"{kind}, other end: {ptype} pid {hpid} fd {hfd}"
 
 
+def threads(pid, text=None):
+    """[{tid, name, state, wchan}] from procstat -t: each thread's name and
+    what it sleeps on (sbwait: a socket's buffer, a blocking send or
+    receive; kqread: a kqueue; umtxn: a lock...)."""
+    lines = (text if text is not None else _run(["procstat", "-t", str(pid)])).splitlines()
+    out = []
+    if not lines:
+        return out
+    header = lines[0].split()
+    want = ("TID", "TDNAME", "STATE", "WCHAN")
+    if not all(h in header for h in want):
+        return out
+    for line in lines[1:]:
+        cells = line.split()
+        if len(cells) < len(header):
+            cells += ["-"] * (len(header) - len(cells))
+        row = dict(zip(header, cells))
+        out.append({"tid": row["TID"], "name": row["TDNAME"], "state": row["STATE"],
+                    "wchan": row["WCHAN"]})
+    return out
+
+
+def threads_waiting_on_sockets(ths):
+    """Thread names blocked in a socket operation (wchan sbwait)."""
+    return [t["name"] for t in ths if t["wchan"] == "sbwait"]
+
+
 def socket_notes(rights_by_fd, sockets, holders, pid):
     """One line per socket whose rights nobody limited: what it is and where
     it leads, the question the 0.20.3.10 survey left open."""
@@ -370,8 +397,12 @@ def socket_notes(rights_by_fd, sockets, holders, pid):
     for fd in sorted(rights_by_fd, key=int):
         r = rights_by_fd[fd]
         if r["type"] == "s" and UNLIMITED_MARKERS <= set(r["rights"]):
+            sock = sockets.get(fd)
+            blocking = ""
+            if sock is not None and sock.get("flags") is not None:
+                blocking = ", non-blocking" if "n" in sock["flags"] else ", blocking"
             out.append(f"fd {fd}: socket with every right: "
-                       f"{describe_socket(sockets.get(fd), holders, pid)}")
+                       f"{describe_socket(sock, holders, pid)}{blocking}")
     return out
 
 
@@ -631,6 +662,11 @@ def report(summary, samples, readable_from=None, holders=None):
                     tail += f"  {describe_socket(socks[d['fd']], holders, sample['pid'])}"
                 lines.append(f"  {d['fd']:>5} {d['type']:<2}{d.get('vtype', ''):<2} "
                              f"{d['flags']:<10} {d['name'].rstrip()}{tail}")
+            ths = sample.get("threads")
+            if ths:
+                waiting = threads_waiting_on_sockets(ths)
+                lines.append(f"Threads: {len(ths)}; waiting on a socket (sbwait): "
+                             + (", ".join(waiting) or "none"))
             lines.append(f"Environment variable names: {', '.join(sample.get('env', [])) or '(none)'}")
             lim = sample.get("limits", {})
             if lim:

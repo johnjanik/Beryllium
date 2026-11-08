@@ -277,7 +277,30 @@ FreeBSD test bed, so an increment must be worth a build.
    without the lockdown, and with the canvas forced onto the CPU, all read
    86: a one-off in the GPU readback, so the test allows the GPU canvas
    one level and keeps a CPU-side canvas exact.
-5. **Sender-side rights and attestation** (next, build 0.20.3.12): the
+   **Results, 0.20.3.11 (8 November 2026, three runs):** the receive
+   window is closed: every socket a renderer receives is cut, the log test
+   shows no refused descriptor, every listed renderer is in capability
+   mode and the idle-CPU test passes. Two sockets per renderer still have
+   every right, and the survey can now say what they are: unix stream
+   sockets, one blocking and one not, each with its other end in the
+   browser, present in blank-page renderers. Not received (the receive
+   paths would have cut them) and not in the table at the snapshot (the
+   sweep would have): the renderer makes them itself with `socketpair()`
+   and sends one end to the browser, and a new socket has every right.
+   Chromium makes socket pairs in three places (`base::CreateSocketPair`,
+   seqpacket, the sandbox IPC request pairs; `base::SyncSocket::CreatePair`,
+   stream, blocking; `mojo::PlatformChannel`, stream, non-blocking), which
+   match the two shapes seen. For 0.20.3.12 all three call
+   `base::freebsd::LimitCreatedSocket()` on both ends, so a socket a
+   confined process creates has a transport's rights from birth, whoever
+   it is for. The survey and the policy test also list the threads
+   waiting on a socket (`procstat -t`, wchan `sbwait`), which will say
+   whether a pending request holds them. Two test corrections from the
+   same runs: the five-second wait for a starting renderer applies only
+   under the gate (a survey has nothing to wait for), and a confined
+   renderer that exits before its descriptors are read is reported as
+   ended, not as unreadable.
+5. **Sender-side rights and attestation** (next, build 0.20.3.13): the
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);
    then attestation: the browser checks
