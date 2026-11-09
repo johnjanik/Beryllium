@@ -659,12 +659,24 @@ def summarise(kdump, types, readable=None):
     return out
 
 
+# kdump cannot name the right behind some refusals: on FreeBSD 16-CURRENT the
+# kernel's constant rights sets (CAP_RIGHTS_INITIALIZER) leave the index bits
+# of their unused word unset, and sysdecode_cap_rights rejects the set instead
+# of printing it. The descriptor's held rights still say what it is.
+UNDECODED = "operation requires invalid cap_rights_t"
+UNDECODED_NOTE = ("(kdump could not decode the needed right on this kernel; "
+                  "a descriptor holding a socket's policy rights was asked for "
+                  "something outside them, getsockname/getpeername in 0.20.3.13)")
+
+
 def _failures(lines, counter, paths, title):
     if not counter:
         return
     lines.append(title)
     for message, n in counter.most_common():
         lines.append(f"  {n:6d}  {message}")
+        if message.startswith(UNDECODED):
+            lines.append(f"            {UNDECODED_NOTE}")
         for path in paths.get(message, []):
             lines.append(f"            {path}")
     lines.append("")

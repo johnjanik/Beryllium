@@ -154,29 +154,35 @@ turns its sandbox tests into a gate that fails on any unconfined renderer.
 In the order they are planned ([plan/14](plan/14-RENDERER-SANDBOX.md)
 has the detail and the results of each build):
 
-1. **Two sockets per renderer, to be named.** Each confined renderer makes
-   one socket pair on its main thread and one on its compositor thread,
-   one end of which goes to the browser. 0.20.3.12 cuts them at creation,
-   and with that every descriptor of every renderer the suite could read
-   was within the policy for the first time. Which Chromium code makes
-   them is still to be named.
-2. **A colour off by one.** In three of six runs with the lockdown on, a
-   canvas colour read back one level off in one channel (`18,52,87` twice
-   and `18,53,86` for `#123456`), on a CPU-drawn canvas as well as a GPU
-   one and the same on both, never without the lockdown. Not understood
-   yet; the rendering test now records a colour sweep to find the pattern.
-3. **The browser cuts before it sends.** Written for the next build: the
-   browser cuts every descriptor bound for a confined renderer to its
-   kind's rights before sending it, so a renderer that skips its own
-   receive-side limit gains nothing (S-IPC-01). Still receiver-limited
-   only: what the GPU process sends a renderer directly.
+1. **Two sockets per renderer: `mojo::PlatformChannel`.** The 0.20.3.13
+   test build names the maker of both pairs each confined renderer makes:
+   `mojo::PlatformChannel`, one on the main thread and one on the
+   compositor thread, all cut at creation. Which Chromium code opens them
+   is still to be named; 0.20.3.14 logs a stack trace for the first pair
+   at each site.
+2. **A colour off by one.** Not the lockdown's doing: the 0.20.3.13 sweep
+   found one in four of the sampled greys one level off in one channel,
+   with the lockdown off as well as on, on a CPU-drawn canvas (the GPU
+   canvas and `#123456` itself were exact); the direction was up in one
+   run and down in the other, the channel varied, and the values differed
+   between runs. The rendering test now records every grey, by fill and
+   by copy, on both canvases, and when a value moves runs the probe again
+   with the display profile forced to sRGB and with the GPU off; the next
+   run says where it comes from.
+3. **The browser cuts before it sends.** Done in the 0.20.3.13 test build
+   (S-IPC-01): the browser cut between 1 and 88 descriptors per renderer
+   before sending them, none was refused, and every renderer the suite
+   read stayed within the policy. Still receiver-limited only: what the
+   GPU process sends a renderer directly.
 4. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
 5. **Single-threaded lockdown, verified.** Chromium orders the renderer's
    sandbox before its other threads exist, so the descriptor sweep should
-   see every descriptor; the next build records the thread count at that
-   point and the gate requires it to be one.
+   see every descriptor. 0.20.3.13 tried to record the thread count at
+   that point and the kernel query failed in every renderer without
+   saying why; 0.20.3.14 reads it another way and logs the failure, and
+   the gate requires one thread.
 6. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
 7. **The other processes.** GPU, network, audio and utility processes get
@@ -263,9 +269,13 @@ set it, and the launcher will not start the browser without it.
   suite's `fonts` group now fails on any script drawn without its glyphs
   and names the package.
 - **WebGPU** finds no adapter.
-- **With the experimental lockdown on,** a canvas colour has read back one
-  level off in one channel in three of six runs (see
-  [Still to finish](#still-to-finish)); the lockdown is off by default.
+- **Some canvas colours read back one level off** in one channel: in
+  the 0.20.3.13 test build, one in four of the sampled greys, on a
+  CPU-drawn canvas as on a GPU one, with and without the lockdown; which
+  values, which channel and which direction differ between runs. Not
+  understood yet (see [Still to finish](#still-to-finish)); the
+  rendering test now records every grey and repeats the probe with the
+  display profile forced to sRGB and with the GPU off.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:

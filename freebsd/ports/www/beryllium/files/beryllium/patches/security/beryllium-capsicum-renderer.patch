@@ -82,7 +82,8 @@ Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
   patch-base_system_sys__info__posix.cc (stage 2).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Built and
-  run since 0.20.3.3.
+  run since 0.20.3.3; the thread count's rewrite is for 0.20.3.14, not yet
+  compiled.
 Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
   test_50_sandbox shows renderers in capability mode and the rest of the
@@ -136,7 +137,15 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the feature kBerylliumCapsicumRenderer is declared in
   base/posix/capsicum_rights.h (beryllium-descriptor-rights.patch), where
   the browser reads it as well to treat its renderers as confined peers;
-  this patch uses it from there.
+  this patch uses it from there. 0.20.3.13 (9 November 2026, three runs
+  with unprivileged_proc_debug=1): every listed renderer in capability
+  mode, the policy held on every renderer read, the receive path refused
+  nothing, and threads=-1 in every renderer: kern.proc.pid failed before
+  cap_enter() and the code said nothing about why. From 0.20.3.14 the
+  count asks with KERN_PROC_INC_THREAD and counts the records by their own
+  ki_structsize, so a kernel whose kinfo_proc is not the size of the
+  build's headers still counts, and it logs errno or the sizes when it
+  fails.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -303,7 +312,7 @@ security-review: required (sandbox setup, process confinement)
    std::string arch(info.machine);
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -4,18 +4,33 @@
+@@ -4,18 +4,34 @@
  
  #include "sandbox/policy/freebsd/sandbox_freebsd.h"
  
@@ -329,6 +338,7 @@ security-review: required (sandbox setup, process confinement)
  #include <unistd.h>
  
 +#include <cstddef>
++#include <cstring>
  #include <limits>
  #include <memory>
 +#include <optional>
@@ -337,7 +347,7 @@ security-review: required (sandbox setup, process confinement)
  #include <vector>
  
  #include "base/command_line.h"
-@@ -27,6 +42,7 @@
+@@ -27,6 +43,7 @@
  #include "base/logging.h"
  #include "base/memory/singleton.h"
  #include "base/path_service.h"
@@ -345,7 +355,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +79,224 @@
+@@ -63,6 +80,249 @@
  namespace sandbox {
  namespace policy {
  
@@ -429,15 +439,40 @@ security-review: required (sandbox setup, process confinement)
 +  std::string violation;  // empty when the policy held
 +};
 +
-+// The number of threads in this process, from the kernel, or -1.
++// The number of threads in this process, from the kernel, or -1 with the
++// reason in the log. kern.proc.pid with KERN_PROC_INC_THREAD answers one
++// kinfo_proc per thread, each starting with its own size (ki_structsize),
++// so the count holds even on a kernel whose kinfo_proc is not the size of
++// the headers this was built with. 0.20.3.13 asked for one record of the
++// built-in size, got -1 in every renderer, and logged nothing about why.
 +int ThreadCount() {
-+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(getpid())};
-+  struct kinfo_proc kp;
-+  size_t len = sizeof(kp);
-+  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp)) {
++  static_assert(offsetof(struct kinfo_proc, ki_structsize) == 0,
++                "ki_structsize is read as the first int of each record");
++  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID | KERN_PROC_INC_THREAD,
++                static_cast<int>(getpid())};
++  size_t len = 0;
++  if (sysctl(mib, 4, nullptr, &len, nullptr, 0) != 0 || len == 0) {
++    PLOG(WARNING) << "beryllium-sandbox: kern.proc.pid (size), len=" << len;
 +    return -1;
 +  }
-+  return kp.ki_numthreads;
++  len += len / 2;  // room for records added meanwhile
++  std::vector<char> records(len);
++  if (sysctl(mib, 4, records.data(), &len, nullptr, 0) != 0) {
++    PLOG(WARNING) << "beryllium-sandbox: kern.proc.pid, len=" << len;
++    return -1;
++  }
++  int structsize = 0;
++  if (len >= sizeof(structsize)) {
++    memcpy(&structsize, records.data(), sizeof(structsize));
++  }
++  if (structsize <= 0 || len % static_cast<size_t>(structsize) != 0) {
++    LOG(WARNING) << "beryllium-sandbox: kern.proc.pid answered " << len
++                 << " bytes in records of " << structsize
++                 << " (kinfo_proc is " << sizeof(struct kinfo_proc)
++                 << " here)";
++    return -1;
++  }
++  return static_cast<int>(len / static_cast<size_t>(structsize));
 +}
 +
 +// Applies the policy above to every descriptor. On a violation, |violation|
@@ -570,7 +605,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +408,25 @@
+@@ -174,6 +434,25 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
