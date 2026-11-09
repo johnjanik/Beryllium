@@ -379,6 +379,33 @@ def describe_socket(sock, holders, pid):
     return f"{kind}, other end: {ptype} pid {hpid} fd {hfd}"
 
 
+MAKER_RE = re.compile(r"socket pair made (?:at (\S+) )?on thread '([^']*)'")
+THREADS_RE = re.compile(r"capability_mode=1 .*\bthreads=(-?\d+)")
+
+
+def socket_pair_makers(log_lines):
+    """{"site on thread": count} from the lockdown's "socket pair made" log
+    lines (the site is named from 0.20.3.13; before that only the thread)."""
+    out = collections.Counter()
+    for line in log_lines:
+        m = MAKER_RE.search(line)
+        if m:
+            site, thread = m.group(1) or "?", m.group(2)
+            out[f"{site} on {thread}"] += 1
+    return dict(sorted(out.items()))
+
+
+def threads_at_lockdown(log_lines):
+    """The thread counts the lockdown reports (threads=N, from 0.20.3.13),
+    one per renderer that locked down; [] for older builds."""
+    out = []
+    for line in log_lines:
+        m = THREADS_RE.search(line)
+        if m:
+            out.append(int(m.group(1)))
+    return out
+
+
 def threads(pid, text=None):
     """[{tid, name, state, wchan}] from procstat -t: each thread's name and
     what it sleeps on (sbwait: a socket's buffer, a blocking send or

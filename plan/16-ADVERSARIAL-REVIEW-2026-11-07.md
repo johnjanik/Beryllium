@@ -242,14 +242,17 @@ it, and the Capsicum survey with it, all with
   rules (no file outside the assets directory was in the way, as the
   0.20.3.8 survey predicted), every kind in the survey is allowed, and the
   received sockets are cut. Two sockets per renderer kept every right.
-  They arrived during the lockdown itself: `InitializeSandbox()` runs after
-  the renderer's IO thread is up and receiving Mojo messages, so a
-  descriptor delivered between the table snapshot and `cap_enter()` was in
-  neither the sweep nor the receive path, which waited for capability
-  mode. This answers the reviewer's "is startup single-threaded?" with no.
-  For 0.20.3.11 the lockdown turns the receive-path limits on before the
-  snapshot (`ExpectConfinement()`), and `base::UnixDomainSocket`'s receive
-  path (sandbox IPC replies carrying font files) is limited like Mojo's.
+  The first explanation given here, that the IO thread was already
+  receiving Mojo messages during the sweep, was wrong: `RendererMain()`
+  enables the sandbox before `RenderThreadImpl` exists, so the reviewer's
+  question "is startup single-threaded?" is answered yes by Chromium's
+  ordering, and from 0.20.3.13 the lockdown logs the thread count at that
+  point and the gate requires one. The two sockets were pairs the renderer
+  made itself after the lockdown (0.20.3.11, 0.20.3.12). For 0.20.3.11 the
+  lockdown turns the receive-path limits on before the snapshot
+  (`ExpectConfinement()`) as a precaution, and `base::UnixDomainSocket`'s
+  receive path (sandbox IPC replies carrying font files) is limited like
+  Mojo's.
   0.20.3.11 (8 November 2026) confirmed the window closed and showed the
   two remaining sockets to be ones the renderer creates itself with
   `socketpair()`, one end sent to the browser (unix stream, one blocking

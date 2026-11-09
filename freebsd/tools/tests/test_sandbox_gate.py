@@ -242,7 +242,8 @@ class LogTest(unittest.TestCase):
         t.browser.log_lines.return_value = list(lines)
         t.test_lockdown_log()
 
-    LOCKED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=2 capability_mode=1 closed_directories=0 limited=12"
+    LOCKED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=2 capability_mode=1 closed_directories=0 limited=12 threads=1"
+    THREADED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=3 capability_mode=1 closed_directories=0 limited=12 threads=2"
     RECEIVED = "[2:5:1107/000000.000000:ERROR:capsicum_rights.cc(330)] beryllium-sandbox: received device (fd 40), which a confined process may not hold: every right removed"
 
     def test_gate_needs_lockdown_reports(self):
@@ -259,14 +260,23 @@ class LogTest(unittest.TestCase):
         self.run_case([], [])
         self.run_case([], [self.RECEIVED])
 
-    def test_socket_pairs_made_are_recorded_by_thread(self):
+    def test_socket_pairs_made_are_recorded_by_site_and_thread(self):
         made = ("[2:7:1108/120000.000000:WARNING:capsicum_rights.cc(340)] beryllium-sandbox: "
-                "socket pair made on thread 'Chrome_ChildIOThread' (fd 13, fd 14): limited")
+                "socket pair made at mojo::PlatformChannel on thread 'Compositor' "
+                "(fd 19, fd 22): limited")
         t = case("test_lockdown_log", LOCKDOWN, RENDERERS)
         t.browser.log_lines.return_value = [self.LOCKED, made]
         t.test_lockdown_log()
-        self.assertIn("1 socket pairs made by confined processes on threads ['Chrome_ChildIOThread']",
-                      t.ctx.note.call_args[0][1])
+        noted = t.ctx.note.call_args[0][1]
+        self.assertIn("1 socket pairs made by confined processes: "
+                      "{'mojo::PlatformChannel on Compositor': 1}", noted)
+        self.assertIn("threads at the lockdown point: [1]", noted)
+
+    def test_gate_fails_when_a_renderer_locked_down_with_other_threads(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_case(LOCKDOWN, [self.LOCKED, self.THREADED])
+        self.assertIn("other threads at its lockdown point", str(e.exception))
+        self.run_case([], [self.LOCKED, self.THREADED])  # a survey only records it
 
 
 if __name__ == "__main__":

@@ -185,17 +185,25 @@ class SandboxHonesty(BrowserTest):
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
         made = [l for l in lines if "socket pair made" in l]
-        threads = sorted({l.split("thread '", 1)[1].split("'", 1)[0]
-                          for l in made if "thread '" in l})
+        makers = capsicum.socket_pair_makers(made)
+        threads_at_lockdown = capsicum.threads_at_lockdown(locked)
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
-                  f"by confined processes" + (f" on threads {threads}" if threads else "") + "\n"
+                  f"by confined processes" + (f": {makers}" if makers else "")
+                  + (f"\nthreads at the lockdown point: {threads_at_lockdown}"
+                     if threads_at_lockdown else "") + "\n"
                   + "\n".join((received + failed + made[:10])[:50]))
         if self.strict():
             self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
             self.assertEqual(received + failed, [],
                              "the lockdown logged received descriptors outside the policy, "
                              "or failures")
+            # The sweep is single-threaded by Chromium's ordering (RendererMain
+            # locks down before RenderThreadImpl exists); from 0.20.3.13 the
+            # lockdown records the thread count, and this checks the claim.
+            if threads_at_lockdown:
+                self.assertEqual(set(threads_at_lockdown), {1},
+                                 "a renderer had other threads at its lockdown point")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which

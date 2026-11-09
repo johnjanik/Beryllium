@@ -171,9 +171,10 @@ has the detail and the results of each build):
 4. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-5. **Lockdown before the renderer's threads start.** Today it runs after
-   the IO and compositor threads exist, which is where a descriptor could
-   slip past it; moving it earlier makes the sweep single-threaded.
+5. **Single-threaded lockdown, verified.** Chromium orders the renderer's
+   sandbox before its other threads exist, so the descriptor sweep should
+   see every descriptor; the next build records the thread count at that
+   point and the gate requires it to be one.
 6. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
 7. **The other processes.** GPU, network, audio and utility processes get

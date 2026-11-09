@@ -53,15 +53,16 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   SO_ACCEPTCONN, getsockname, getpeername for a received one). A network
   socket or one connected to a named service keeps authority that rights
   cannot take back, so it ends the lockdown or loses every right.
-  The receive window (0.20.3.10, 7 November 2026): the survey of a confined
-  renderer showed two sockets with every right among limited ones. The
-  lockdown runs with the IO thread already receiving Mojo messages, so a
-  descriptor that arrives between the table snapshot and cap_enter() was in
-  neither the sweep nor the receive path (which waited for capability
-  mode). ExpectConfinement(), called by the lockdown before the snapshot,
-  turns the receive-path limits on from that moment. The same limit now
-  also covers base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC
-  replies that carry font files), the other recvmsg path in the renderer.
+  ExpectConfinement() (0.20.3.11): the lockdown calls it before the table
+  snapshot, so the receive paths limit from that moment rather than from
+  capability mode, closing any window between the snapshot and cap_enter()
+  for a thread that might run meanwhile. (It was written in the belief that
+  the IO thread was already receiving Mojo messages at the lockdown; it is
+  not: RendererMain() locks down before RenderThreadImpl exists, and the
+  two unlimited sockets of 0.20.3.10 were pairs the renderer made itself,
+  below. The precaution stays.) The same limit also covers
+  base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC replies that
+  carry font files), the other recvmsg path in the renderer.
   Sockets a confined process creates (0.20.3.11, 8 November 2026): with the
   receive window covered, each confined renderer still held two sockets
   with every right, both unix stream, one blocking and one not, with the
@@ -71,10 +72,11 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   every pair a confined process makes to a transport's rights, at the
   three places Chromium makes them: base::CreateSocketPair (the sandbox
   IPC request pairs), base::SyncSocket::CreatePair and
-  mojo::PlatformChannel, and logs the pair with the thread that made it
-  (the survey of 0.20.3.11 also showed one such blocking socket to the
-  browser in every child process type, so this is Chromium's pattern,
-  to be named from the log).
+  mojo::PlatformChannel, and logs the pair with the site and the thread that
+  made it (0.20.3.12: one pair on CrRendererMain right after the lockdown,
+  one on Compositor, and the survey of 0.20.3.11 showed one such blocking
+  socket to the browser in every child process type, so this is Chromium's
+  pattern; the site in the log, from 0.20.3.13, names it).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
   0.20.3.11 state compiled and ran (8 November 2026); the created-socket
@@ -460,7 +462,7 @@ security-review: required (descriptor rights in confined processes)
 +  return g_confining.load(std::memory_order_acquire) || InCapabilityMode();
 +}
 +
-+void LimitCreatedSocketPair(int a, int b) {
++void LimitCreatedSocketPair(const char* site, int a, int b) {
 +  if (!Confining()) {
 +    return;
 +  }
@@ -471,9 +473,9 @@ security-review: required (descriptor rights in confined processes)
 +      RemoveAllRights(fd);
 +    }
 +  }
-+  LOG(WARNING) << "beryllium-sandbox: socket pair made on thread '"
-+               << PlatformThread::GetName() << "' (fd " << a << ", fd " << b
-+               << "): limited";
++  LOG(WARNING) << "beryllium-sandbox: socket pair made at " << site
++               << " on thread '" << PlatformThread::GetName() << "' (fd " << a
++               << ", fd " << b << "): limited";
 +}
 +
 +void LimitReceivedDescriptor(int fd) {
@@ -498,7 +500,7 @@ security-review: required (descriptor rights in confined processes)
 +}  // namespace base::freebsd
 --- a/base/posix/capsicum_rights.h
 +++ b/base/posix/capsicum_rights.h
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,89 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +//
@@ -577,12 +579,13 @@ security-review: required (descriptor rights in confined processes)
 +BASE_EXPORT void LimitReceivedDescriptor(int fd);
 +
 +// The same for the two ends of a socket pair this process has just created
-+// with socketpair() (base::CreateSocketPair, base::SyncSocket,
-+// mojo::PlatformChannel): a new socket has every right, and a confined
-+// process may hold sockets only as transports. Logs the pair and the thread
-+// that made it, so the survey can say where a confined process's own sockets
-+// come from. Before ExpectConfinement() it does nothing.
-+BASE_EXPORT void LimitCreatedSocketPair(int a, int b);
++// with socketpair(): a new socket has every right, and a confined process
++// may hold sockets only as transports. |site| names the code that made the
++// pair (base::CreateSocketPair, base::SyncSocket::CreatePair,
++// mojo::PlatformChannel); it is logged with the thread, so the survey can
++// say where a confined process's own sockets come from. Before
++// ExpectConfinement() it does nothing.
++BASE_EXPORT void LimitCreatedSocketPair(const char* site, int a, int b);
 +
 +}  // namespace base::freebsd
 +
@@ -600,19 +603,20 @@ security-review: required (descriptor rights in confined processes)
  namespace base {
  
  
-@@ -36,6 +40,11 @@
+@@ -36,6 +40,12 @@
    if (socketpair(AF_UNIX, flags, 0, raw_socks) == -1) {
      return false;
    }
 +#if BUILDFLAG(IS_FREEBSD)
 +  // Beryllium: in a confined process a new socket keeps only a transport's
 +  // rights (plan/06 section 3.2), whichever end stays here.
-+  freebsd::LimitCreatedSocketPair(raw_socks[0], raw_socks[1]);
++  freebsd::LimitCreatedSocketPair("base::CreateSocketPair", raw_socks[0],
++                                  raw_socks[1]);
 +#endif
    one->reset(raw_socks[0]);
    two->reset(raw_socks[1]);
    return true;
-@@ -172,6 +181,12 @@
+@@ -172,6 +182,12 @@
  
    if (wire_fds) {
      for (size_t i = 0; i < wire_fds_len; ++i) {
@@ -638,14 +642,15 @@ security-review: required (descriptor rights in confined processes)
  #if BUILDFLAG(IS_SOLARIS)
  #include <sys/filio.h>
  #endif
-@@ -59,6 +63,11 @@
+@@ -59,6 +63,12 @@
      if (socketpair(AF_UNIX, SOCK_STREAM, 0, raw_handles) != 0) {
        return false;
      }
 +#if BUILDFLAG(IS_FREEBSD)
 +    // Beryllium: in a confined process a new socket keeps only a transport's
 +    // rights (plan/06 section 3.2).
-+    freebsd::LimitCreatedSocketPair(raw_handles[0], raw_handles[1]);
++    freebsd::LimitCreatedSocketPair("base::SyncSocket::CreatePair",
++                                    raw_handles[0], raw_handles[1]);
 +#endif
      handles[0].reset(raw_handles[0]);
      handles[1].reset(raw_handles[1]);
@@ -663,14 +668,15 @@ security-review: required (descriptor rights in confined processes)
  namespace mojo {
  
  namespace {
-@@ -157,6 +161,12 @@
+@@ -157,6 +161,13 @@
    PCHECK(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
    PCHECK(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
  
 +#if BUILDFLAG(IS_FREEBSD)
 +  // Beryllium: in a confined process a new socket keeps only a transport's
 +  // rights (plan/06 section 3.2); F_SETFL stays allowed.
-+  base::freebsd::LimitCreatedSocketPair(fds[0], fds[1]);
++  base::freebsd::LimitCreatedSocketPair("mojo::PlatformChannel", fds[0],
++                                        fds[1]);
 +#endif
 +
    *local_endpoint = PlatformHandle(base::ScopedFD(fds[0]));

@@ -252,17 +252,20 @@ FreeBSD test bed, so an increment must be worth a build.
    object, resource file and received socket cut to the policy, with two
    exceptions: fd 13 (a blocking unix socket) and fd 18 (non-blocking),
    both with every right, both unnamed. They were neither in the table the
-   sweep read nor seen by the receive path, which only acted in capability
-   mode: the lockdown runs in `InitializeSandbox()` after
-   `RenderThreadImpl::Create()`, so the IO thread is already receiving
-   Mojo messages while the main thread reads the table and limits, and a
-   descriptor that arrives in that window kept every right (the reviewer's
-   question "is startup single-threaded?" answered: no). For 0.20.3.11 the
-   lockdown calls `base::freebsd::ExpectConfinement()` before the snapshot,
-   which makes both receive paths (Mojo's `SocketRecvmsg` and
-   `base::UnixDomainSocket::RecvMsgWithFlags`, the latter newly hooked;
-   it carries the sandbox IPC replies with font files) limit from that
-   moment, so the window is covered from both sides. The survey and the
+   sweep read nor seen by the receive path. The explanation written here
+   at the time, that the IO thread was already receiving Mojo messages
+   during the sweep, was wrong: `RendererMain()` enables the sandbox before
+   `RenderProcessImpl` and `RenderThreadImpl` exist (the early path every
+   platform but Windows and macOS takes; startup tracing and the hang
+   watcher wait for the sandbox on Linux and BSD), so no IO thread runs
+   during the sweep. The two sockets were pairs the renderer made itself
+   after the lockdown, as 0.20.3.11 and 0.20.3.12 showed below. For
+   0.20.3.11 the lockdown calls `base::freebsd::ExpectConfinement()`
+   before the snapshot, which makes both receive paths (Mojo's
+   `SocketRecvmsg` and `base::UnixDomainSocket::RecvMsgWithFlags`, the
+   latter newly hooked; it carries the sandbox IPC replies with font files)
+   limit from that moment; that stays as a precaution against any thread
+   that does run. The survey and the
    policy test now say where each socket's other end is (`fstat -p` pcb
    matching across the browser's processes), so a socket outside the
    policy is named by its peer next time. Two more results: the gate
@@ -316,7 +319,12 @@ FreeBSD test bed, so an increment must be worth a build.
    renderers (the sysctl was 0), which is the gate working. Which Chromium
    code makes the pairs is still to be named: not the ipcz driver (only
    brokers create transports), not the thread-type switcher (stubbed on
-   BSD); the browser holds the other ends. **The colour anomaly is not
+   BSD); the browser holds the other ends. From 0.20.3.13 the log line
+   names the site (`base::CreateSocketPair`, `base::SyncSocket::CreatePair`
+   or `mojo::PlatformChannel`), and the lockdown line carries `threads=N`,
+   the process's thread count at the lockdown point from `kern.proc.pid`,
+   which the gate requires to be 1: the single-threaded sweep is then a
+   checked fact, not an inference from Chromium's source. **The colour anomaly is not
    the GPU:** with the lockdown on, both the default and the CPU-drawn
    canvas read `18,53,86` for `#123456` (green one level up; 0.20.3.10
    had blue one level up on the GPU canvas), and never without the
@@ -349,7 +357,17 @@ FreeBSD test bed, so an increment must be worth a build.
    under the gate (a survey has nothing to wait for), and a confined
    renderer that exits before its descriptors are read is reported as
    ended, not as unreadable.
-5. **Sender-side rights and attestation** (next, build 0.20.3.13): the
+5. **Sender-side rights and attestation** (next, build 0.20.3.14; the
+   hook points, read from Chromium 156: the browser's
+   `ChildProcessLauncherHelper::PostLaunchOnLauncherThread` knows the
+   child's pid and sandbox type before it sends the Mojo invitation, and
+   `mojo::core::ipcz_driver::Transport::Transmit()` is the one place a
+   transport sends platform handles and knows its `remote_process_`; a
+   registry of confined renderer pids, filled at launch and emptied at
+   exit, lets `Transmit()` cut every handle bound for a renderer to its
+   kind's rights before `sendmsg`. Open question for that increment: files
+   the user grants a page (File System Access) are writable on purpose and
+   need a kind of their own on both sides.) The
    browser cuts every descriptor it sends to a renderer to its kind's
    rights before sending (the transport must know it leads to a renderer);
    then attestation: the browser checks

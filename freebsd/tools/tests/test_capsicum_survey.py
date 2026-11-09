@@ -274,6 +274,23 @@ class Parse(unittest.TestCase):
                 unittest.mock.patch.object(capsicum.os, "kill", return_value=None):
             self.assertTrue(capsicum.process_alive(4242))
 
+    def test_lockdown_log_parsers(self):
+        made = ["[2:7:...] beryllium-sandbox: socket pair made at base::SyncSocket::CreatePair "
+                "on thread 'CrRendererMain' (fd 13, fd 14): limited",
+                "[2:9:...] beryllium-sandbox: socket pair made at mojo::PlatformChannel on "
+                "thread 'Compositor' (fd 19, fd 22): limited",
+                "[3:7:...] beryllium-sandbox: socket pair made on thread 'CrRendererMain' "
+                "(fd 13, fd 14): limited"]
+        self.assertEqual(capsicum.socket_pair_makers(made),
+                         {"? on CrRendererMain": 1,
+                          "base::SyncSocket::CreatePair on CrRendererMain": 1,
+                          "mojo::PlatformChannel on Compositor": 1})
+        locked = ["[2:2:...] beryllium-sandbox: renderer pid=2 capability_mode=1 "
+                  "closed_directories=0 limited=12 threads=1",
+                  "[3:3:...] beryllium-sandbox: renderer pid=3 capability_mode=1 "
+                  "closed_directories=0 limited=12"]
+        self.assertEqual(capsicum.threads_at_lockdown(locked), [1])
+
     def test_threads(self):
         text = """\
   PID    TID COMM                TDNAME              CPU  PRI STATE   WCHAN
