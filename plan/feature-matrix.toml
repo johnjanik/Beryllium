@@ -2225,10 +2225,11 @@ phase = 6
 implemented = "done"
 built = "no"
 tested = "passing"
-where = [".github/workflows/freebsd-checks.yml"]
+where = [".github/workflows/freebsd-checks.yml", ".github/workflows/codeql.yml", ".github/codeql/codeql-config.yml", ".github/dependabot.yml"]
 tests = ["freebsd/tools/tests/test_feature_matrix.py"]
 evidence = "GitHub Actions on every push"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §4", "RT-10"]
+notes = "From 9 Nov 2026: CodeQL code scanning (Python, JavaScript, the workflows) as an advanced setup, with the FreeBSD port's patch files excluded (the ports convention names a patch after the file it patches, so a diff of a .py file is itself *.py and GitHub's default setup parsed them as code); Dependabot keeps the commit-pinned actions current."
 
 [[feature]]
 id = "R-TST-06"

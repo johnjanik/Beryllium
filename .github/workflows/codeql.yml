@@ -1,0 +1,45 @@
+# CodeQL code scanning (advanced setup). Replaces GitHub's default setup,
+# which cannot be told which paths to skip: the FreeBSD port's patch files
+# end in the extension of the file they patch, so default setup parsed
+# unified diffs as Python and Rust. The paths to skip, and why, are in
+# .github/codeql/codeql-config.yml.
+#
+# Languages: python (the tools, the tests and the browser suite),
+# javascript-typescript (branding/tools) and actions (these workflows). The
+# Capsicum oracle (C) needs a FreeBSD toolchain and is compiled and run by
+# freebsd-checks.yml instead.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"  # Mondays, 05:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
