@@ -112,20 +112,31 @@ stack (the June 2026 `SA-26:28.capsicum` `sigqueue` case is the model):
 
 ## 6. Security policy and disclosure
 
-`SECURITY.md` at the repository root states:
+`SECURITY.md` at the repository root (written 9 November 2026) states:
 
 - Supported versions: the latest Beryllium release only, on the FreeBSD
   branches listed in the release notes.
-- Reporting channel: a dedicated email with a published PGP key, and the
-  policy that Chromium engine bugs are redirected to Chromium, while bugs in
-  the inherited privacy patch set, sandbox, packaging and FreeBSD-specific
+- Reporting channel: GitHub's private vulnerability reporting for the
+  repository, which reaches the maintainer alone and can become a
+  published advisory with credit. The dedicated email address with a
+  published PGP key that this section first called for is deferred until
+  the project has a second maintainer to hold the key; `SECURITY.md` says
+  there is none yet. The policy that Chromium engine bugs are redirected
+  to Chromium and FreeBSD kernel bugs to FreeBSD, while bugs in the
+  inherited privacy patch set, the sandbox, packaging and FreeBSD-specific
   issues are handled here (Beryllium does not forward reports to Helium,
   charter D8).
 - Response targets: acknowledgement in 3 days, assessment in 7, fix or
-  mitigation timeline communicated after assessment.
+  mitigation timeline communicated after assessment, publication 90 days
+  after receipt or earlier by agreement.
 - The sandbox status table (what is enforced, what is configured but not
   tested, what is aspirational) is published with every release and linked
-  from `SECURITY.md`, so that the project never overstates its protection.
+  from `SECURITY.md`, so that the project never overstates its protection;
+  a false security claim is in scope as a vulnerability.
+- Dependencies: `.github/dependabot.yml` watches the commit-pinned GitHub
+  Actions; the Helium submodule and the FreeBSD patch set are moved by the
+  update procedure (section 3), not by Dependabot, whose submodule updates
+  follow a branch head rather than releases.
 
 ## 7. Handover test
 

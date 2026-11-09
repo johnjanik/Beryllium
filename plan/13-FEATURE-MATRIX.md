@@ -12,7 +12,7 @@ Status as of 2026-11-04, latest release v0.20.3.1-1. Every feature the project m
 | Privacy | 31 | 17 | 10 | 8 |
 | Security | 59 | 45 | 7 | 9 |
 | Build, packaging and install | 22 | 17 | 11 | 10 |
-| Testing, release and maintenance | 16 | 13 | 4 | 5 |
+| Testing, release and maintenance | 16 | 13 | 5 | 5 |
 
 "Implemented" counts done and inherited; "tested" counts passing and manual.
 
@@ -388,7 +388,7 @@ Test infrastructure, CI, releases, keeping up with Helium, Chromium and FreeBSD,
 | `R-REL-03` | **Licence and component manifest.** Each release ships a licence and component manifest. | must | 6 | **todo** | no | **planned**<br>licence manifest check in the release gate | helium-freebsd-security-port-spec.md §11.3<br>plan/08-TESTING-AND-VERIFICATION.md §3 |
 | `R-REL-04` | **Security fixes within 72 hours.** A package follows each Helium security release within 72 hours, measured, for a month before the first public release. | must | 6 | **todo** | no | **none** | plan/11-MAINTENANCE-AND-RELEASE.md §1<br>plan/09-ROADMAP.md §9<br>RT-11 |
 | `R-REL-05` | **Update procedure.** A written procedure takes Beryllium to a new Helium and Chromium release, including re-importing the FreeBSD patches, and has been run on a newer tag. | must | 6 | **partial**<br>`plan/11-MAINTENANCE-AND-RELEASE.md`<br>`freebsd/tools/import-bsd-patches` | no | **none** | plan/11-MAINTENANCE-AND-RELEASE.md §3<br>plan/05-PATCH-STRATEGY.md §7 |
-| `R-REL-06` | **Security policy and advisories.** SECURITY.md (supported versions, private reporting, response times) and freebsd/ADVISORIES.md (kernel advisories the browser checks) exist. | must | 6 | **todo** | no | **none** | plan/11-MAINTENANCE-AND-RELEASE.md §4<br>plan/11-MAINTENANCE-AND-RELEASE.md §6 |
+| `R-REL-06` | **Security policy and advisories.** SECURITY.md (supported versions, private reporting, response times) and freebsd/ADVISORIES.md (kernel advisories the browser checks) exist. *Written 9 Nov 2026. The reporting channel is GitHub's private vulnerability reporting (to be enabled in the repository settings), not yet a dedicated address with a PGP key; plan/11 section 6 was amended to say so. ADVISORIES.md holds the format and no entry yet. Dependabot watches the pinned GitHub Actions.* | must | 6 | **done**<br>`SECURITY.md`<br>`freebsd/ADVISORIES.md`<br>`.github/dependabot.yml` | no | **none** | plan/11-MAINTENANCE-AND-RELEASE.md §4<br>plan/11-MAINTENANCE-AND-RELEASE.md §6 |
 | `R-REL-07` | **Handover test.** Someone other than the author follows the written procedure to a signed package. | must | 6 | **todo** | no | **none** | plan/11-MAINTENANCE-AND-RELEASE.md §7<br>plan/09-ROADMAP.md §9 |
 
 ### Documentation
