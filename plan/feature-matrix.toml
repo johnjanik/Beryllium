@@ -285,10 +285,10 @@ priority = "should"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "failing"
+tested = "written"
 tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas",
          "freebsd/tests/browser/tests/test_40_rendering.py::test_gpu_info"]
-evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026; Intel and AMD untested; owner, 0.20.3.10, 7 Nov 2026: passing without the lockdown; with it the default canvas read back 18,52,87 for #123456 (86 expected, as in 0.20.3.8 with the lockdown), WebGL fine; owner, 0.20.3.11, 8 Nov 2026: three rendering runs (lockdown off, on, 2D canvas forced to software) all read 86 on the default and on a CPU canvas, so the 87 looked like a one-off GPU readback; owner, 0.20.3.12, 8 Nov 2026, lockdown on: both the default and the CPU canvas read 18,53,86, so it is not the GPU and happens only under the lockdown (2 of 5 lockdown runs, 0 of 7 default runs); the test is exact on both canvases again and records a colour sweep (plan/14 increment 4); the same day, lockdown on, both canvases read 18,52,87 again: three of six lockdown runs off by one, zero of eight default runs; owner, 0.20.3.13, 9 Nov 2026: the grey sweep found one in four sampled greys one level off in one channel on the CPU canvas, with and without the lockdown (+1 throughout one run, -1 throughout the other, channel varying); #123456 and the default canvas exact in both; WebGL fine, WebGPU no adapter"
+evidence = "owner, 0.20.3.1 on NVIDIA, suite run 4 Nov 2026; Intel and AMD untested; owner, 0.20.3.10, 7 Nov 2026: passing without the lockdown; with it the default canvas read back 18,52,87 for #123456 (86 expected, as in 0.20.3.8 with the lockdown), WebGL fine; owner, 0.20.3.11, 8 Nov 2026: three rendering runs (lockdown off, on, 2D canvas forced to software) all read 86 on the default and on a CPU canvas, so the 87 looked like a one-off GPU readback; owner, 0.20.3.12, 8 Nov 2026, lockdown on: both the default and the CPU canvas read 18,53,86, so it is not the GPU and happens only under the lockdown (2 of 5 lockdown runs, 0 of 7 default runs); the test is exact on both canvases again and records a colour sweep (plan/14 increment 4); the same day, lockdown on, both canvases read 18,52,87 again: three of six lockdown runs off by one, zero of eight default runs; owner, 0.20.3.13, 9 Nov 2026: the grey sweep found one in four sampled greys one level off in one channel on the CPU canvas, with and without the lockdown (+1 throughout one run, -1 throughout the other, channel varying); #123456 and the default canvas exact in both; WebGL fine, WebGPU no adapter; 9 Nov 2026, six more 0.20.3.13 runs: the moved greys of each run share one residue modulo 4 with a per-run seed, which is Helium's canvas fingerprinting noise (P-FPR-04), not a rendering fault; the rendering test now runs with the noise off and awaits its first run"
 source = ["plan/01-PROJECT-CHARTER.md D6", "plan/08-TESTING-AND-VERIFICATION.md §2.4"]
 
 [[feature]]
@@ -1671,9 +1671,12 @@ priority = "must"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "none"
+tested = "written"
 where = ["helium/patches/helium/core/noise/core.patch", "helium/patches/helium/core/noise/canvas.patch"]
+tests = ["freebsd/tests/browser/tests/test_60_privacy.py::CanvasNoise"]
 source = ["README.md"]
+evidence = "owner, 0.20.3.8 to 0.20.3.13, 7 to 9 Nov 2026: canvas readbacks of a flat fill carried one-level noise in one RGB channel on a quarter of the values, with a seed that changed per browser session (seen by the rendering test as a colour off by one and identified on 9 Nov 2026); WebAudio, hardwareConcurrency, the setting and per-site exceptions unobserved"
+notes = "Canvas: helium/patches/helium/core/noise/canvas.patch, feature HeliumNoiseCanvas under HeliumNoise, both on by default, flag helium-noise-canvas; on getImageData, toDataURL and toBlob a pixel in a smooth neighbourhood has one RGB channel moved by one level when a hash of the per-session per-origin token, its coordinates and its value selects it (one in four); the channel and direction come from the content hash. test_60_privacy CanvasNoise (written 9 Nov 2026) checks presence, shape, stability within a session, difference between 127.0.0.1 and localhost, and absence with --disable-features=HeliumNoiseCanvas; the rendering group runs with that switch."
 
 [[feature]]
 id = "P-FPR-05"

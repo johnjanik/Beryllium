@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Graphics: WebGL, WebGPU and canvas work, and what the GPU process reports."""
+"""Graphics: WebGL, WebGPU and canvas work, and what the GPU process reports.
+
+Helium's canvas noise (helium/patches/helium/core/noise/canvas.patch, the
+feature HeliumNoiseCanvas, on by default) changes one RGB channel of about
+one in four pixels of a flat area by one level on every readback, chosen by
+a per-session, per-site token: that is what the suite saw as "a colour off
+by one" from 0.20.3.8 to 0.20.3.13 (plan/14). It is a privacy feature
+(test_60_privacy checks it), so this group turns it off to test the
+rasterizer itself."""
 
 import json
 import re
@@ -43,10 +51,9 @@ PROBE = """(async () => {
   // Every grey, drawn on the same pixel by a fill or copied in with
   // putImageData, on the CPU canvas and on the default one, read twice.
   // Only the values that do not read back as drawn are kept, as
-  // "v->r,g,b,a" (and " then r,g,b,a" if the second read differed). Some
-  // greys read one level off in one channel on the test machine, with and
-  // without the renderer lockdown (0.20.3.13); which values, which channel
-  // and which direction changed between runs (plan/14).
+  // "v->r,g,b,a" (and " then r,g,b,a" if the second read differed). With
+  // Helium's canvas noise on, a quarter of the greys read one level off in
+  // one channel; this group runs with it off.
   const sweep = (ctx, how) => {
     const off = [];
     for (let v = 0; v < 256; v++) {
@@ -117,13 +124,18 @@ def sweep_summary(entries):
             f" with gaps {gaps}" + (f"; {unstable} read differently the second time" if unstable else ""))
 
 
+NO_NOISE = "--disable-features=HeliumNoiseCanvas"
+
+
 class Rendering(BrowserTest):
+    BROWSER_ARGS = (NO_NOISE,)
+
     def probe_with(self, name, args):
-        """The probe in a second browser started with |args|; its CPU fill
-        sweep summary, or the error."""
+        """The probe in a second browser started with |args| (and the noise
+        off); its CPU fill sweep summary, or the error."""
         browser = None
         try:
-            browser = Browser(self.ctx, name, args=args).start()
+            browser = Browser(self.ctx, name, args=[NO_NOISE] + list(args)).start()
             page = browser.new_page(self.ctx.fixtures().url("blank.html"))
             out = page.eval(PROBE)
             return sweep_summary(out.get("sweep_off", []))
@@ -135,7 +147,8 @@ class Rendering(BrowserTest):
 
     def test_webgl_webgpu_canvas(self):
         """Canvas colours read back as drawn, on a CPU canvas and the default
-        one; WebGL is available in a window (headless may lack it)."""
+        one, with Helium's canvas noise off; WebGL is available in a window
+        (headless may lack it)."""
         page = self.browser.new_page(self.ctx.fixtures().url("blank.html"))
         out = page.eval(PROBE)
         self.note(json.dumps(out))
@@ -149,12 +162,16 @@ class Rendering(BrowserTest):
                  f"fillStyle of the first greys that moved: {out.get('fill_style_of')}",
                  f"context attributes: {out.get('attributes')}; screen: {out.get('screen')}"]
         if off and not self.browser.headless:
-            # The same probe under two switches, to place the fault: the
-            # display colour profile forced to sRGB, and no GPU at all.
+            # The same probe under three switches, to place the fault: the
+            # display colour profile forced to sRGB, no GPU at all, and
+            # Skia's baseline CPU code instead of the AVX paths it picks at
+            # run time (the port is built with the system compiler).
             lines.append("with --force-color-profile=srgb, CPU canvas, fill: "
                          + self.probe_with("rendering-srgb", ["--force-color-profile=srgb"]))
             lines.append("with --disable-gpu, CPU canvas, fill: "
                          + self.probe_with("rendering-nogpu", ["--disable-gpu"]))
+            lines.append("with --disable-skia-runtime-opts, CPU canvas, fill: "
+                         + self.probe_with("rendering-baseline", ["--disable-skia-runtime-opts"]))
         self.note("\n".join(lines))
         self.assertEqual(off, [], "greys that did not read back as drawn on the CPU canvas:\n"
                          + "\n".join(lines))
