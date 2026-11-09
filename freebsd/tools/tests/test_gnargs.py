@@ -73,7 +73,10 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(origin["google_api_key"], "helium/flags.gn")
 
     def test_fragment_cannot_set_privacy_key(self):
-        fx = self.fixture('google_api_key="AIzaSyBsp9n41JLW8jCokwn7vhoaMejDFRd1mp8"\n')
+        # Any value will do: a fragment may not set a privacy-tagged key at
+        # all. Not a key-shaped string, so that secret scanning has nothing
+        # to flag in this repository.
+        fx = self.fixture('google_api_key="a-fragment-may-not-set-this"\n')
         with self.assertRaisesRegex(gnargs.GnArgsError, "privacy-tagged"):
             fx.collect()
 
