@@ -395,6 +395,21 @@ def socket_pair_makers(log_lines):
     return dict(sorted(out.items()))
 
 
+CUT_RE = re.compile(r"beryllium-sandbox: cut (.*?) \(fd \d+\) bound for confined renderer pid (\d+)")
+
+
+def sent_cuts(log_lines):
+    """{renderer pid: count} of descriptors the browser cut before sending
+    (VLOG(1) lines of base/posix/capsicum_rights.cc, so the browser must run
+    with --vmodule=capsicum_rights=1)."""
+    out = collections.Counter()
+    for line in log_lines:
+        m = CUT_RE.search(line)
+        if m:
+            out[int(m.group(2))] += 1
+    return dict(sorted(out.items()))
+
+
 def threads_at_lockdown(log_lines):
     """The thread counts the lockdown reports (threads=N, from 0.20.3.13),
     one per renderer that locked down; [] for older builds."""
@@ -464,6 +479,16 @@ POLICY = {
     "f": {"rd", "wr", "ev", "fs", "fc", "io"},              # fifo
     "h": {"rd", "wr", "se", "mm", "fs", "fc"},              # shared memory
 }
+# A file the browser handed the renderer on purpose: a File System Access
+# sync access handle, which only exists for files of the origin private
+# file system under the profile's "File System" directory. It is writable,
+# with these rights and no more: never executable mapping, ownership or
+# mode changes.
+WRITABLE_FILE = {"rd", "wr", "se", "mm", "fs", "fc", "ft", "fy"}
+
+
+def handed_over_file(name):
+    return "/File System/" in name
 RIGHT_ALIASES = {"prd", "pwr", "mmr", "mmw", "mrw", "mrx", "mwx", "mma", "re", "sd",
                  "scl", "ssr"}
 ASSETS = "/usr/local/share/beryllium/"
@@ -499,8 +524,14 @@ def policy_problems(fds, rights_by_fd, assets=ASSETS):
                 out.append(f"fd {fd}: vnode type {d.get('vtype')!r} not allowed ({name or 'no name'})")
                 continue
             if "w" in d.get("flags", ""):
-                out.append(f"fd {fd}: writable file {name or 'with no name'}")
-                continue
+                if not handed_over_file(name):
+                    out.append(f"fd {fd}: writable file {name or 'with no name'}")
+                    continue
+                extra = (names - RIGHT_ALIASES) - WRITABLE_FILE
+                if extra:
+                    out.append(f"fd {fd}: writable file {name} with rights beyond a "
+                               f"handed-over file's: {','.join(sorted(extra))}")
+                continue  # a file of the origin private file system, within its kind
             if not allowed_file(name, assets):
                 out.append(f"fd {fd}: file that is not a resource or font file: "
                            f"{name or '(no name)'}")

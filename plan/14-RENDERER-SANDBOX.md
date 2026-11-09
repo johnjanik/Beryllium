@@ -357,20 +357,42 @@ FreeBSD test bed, so an increment must be worth a build.
    under the gate (a survey has nothing to wait for), and a confined
    renderer that exits before its descriptors are read is reported as
    ended, not as unreadable.
-5. **Sender-side rights and attestation** (next, build 0.20.3.14; the
-   hook points, read from Chromium 156: the browser's
-   `ChildProcessLauncherHelper::PostLaunchOnLauncherThread` knows the
+5. **Sender-side rights** (written 9 November 2026, build 0.20.3.13:
+   `patches/security/beryllium-sender-side-rights.patch`, S-IPC-01): the
+   browser cuts every descriptor it sends a confined renderer to its
+   kind's rights before `sendmsg()`, so a renderer that stops running our
+   receive-side code gains nothing. The hook points, read from Chromium
+   156: `ChildProcessLauncherHelper::PostLaunchOnLauncherThread` knows the
    child's pid and sandbox type before it sends the Mojo invitation, and
+   registers a renderer launched with the lockdown feature on as a
+   confined peer (`base::freebsd::ExpectConfinedPeer`; forgotten when the
+   launcher helper goes, since pids are reused);
    `mojo::core::ipcz_driver::Transport::Transmit()` is the one place a
-   transport sends platform handles and knows its `remote_process_`; a
-   registry of confined renderer pids, filled at launch and emptied at
-   exit, lets `Transmit()` cut every handle bound for a renderer to its
-   kind's rights before `sendmsg`. Open question for that increment: files
-   the user grants a page (File System Access) are writable on purpose and
-   need a kind of their own on both sides.) The
-   browser cuts every descriptor it sends to a renderer to its kind's
-   rights before sending (the transport must know it leads to a renderer);
-   then attestation: the browser checks
+   transport sends platform handles and knows its `remote_process_`, and
+   cuts every handle bound for a confined peer
+   (`base::freebsd::LimitSentDescriptor`): read-only files, writable
+   files, sockets, kqueues, eventfds and pipes, shared memory by kind; a
+   device, a directory or anything else loses every right and is logged.
+   The feature `kBerylliumCapsicumRenderer` moved to
+   `base/posix/capsicum_rights.h` so the browser reads the same switch.
+   New kind `kWritableFile` (pread, pwrite, ftruncate, fsync, read-write
+   mapping, fstat, F_GETFL): a File System Access sync access handle is a
+   file the browser hands a renderer on purpose; the receive path admits it
+   with those rights, the lockdown point still refuses any writable file,
+   and the suite accepts one only under the profile's `File System`
+   directory with no right beyond the kind. **Verification:** the sandbox
+   class runs with `--vmodule=capsicum_rights=1`; the browser logs each cut
+   at VLOG(1), and `test_lockdown_log` counts them per renderer and, on a
+   build that reports the thread count, requires at least one and no
+   outright refusal. **Not covered:** the transports between a renderer
+   and the GPU process (introduced by the browser, they carry no remote
+   process in either end's `Transport`), so what the GPU process sends a
+   renderer is still limited by the receiver only; a device descriptor (a
+   GPU memory buffer) would be refused on both sides today, which is where
+   a `kGpuBuffer` kind would go if renderers ever receive one; and a
+   verification that the sender alone suffices needs a development-only
+   build switch that turns the receiver's limit off, listed in section 4.
+   **Then attestation** (next, build 0.20.3.14): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

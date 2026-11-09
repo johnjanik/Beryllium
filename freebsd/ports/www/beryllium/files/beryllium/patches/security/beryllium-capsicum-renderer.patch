@@ -132,7 +132,11 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   before RenderProcessImpl and RenderThreadImpl exist, so no IO thread runs
   during the sweep; from 0.20.3.13 the lockdown records the process's
   thread count at that point (kern.proc.pid, logged as threads=N) so the
-  single-threaded claim is checked by the suite, not assumed.
+  single-threaded claim is checked by the suite, not assumed. From 0.20.3.13
+  the feature kBerylliumCapsicumRenderer is declared in
+  base/posix/capsicum_rights.h (beryllium-descriptor-rights.patch), where
+  the browser reads it as well to treat its renderers as confined peers;
+  this patch uses it from there.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -341,7 +345,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +79,222 @@
+@@ -63,6 +79,224 @@
  namespace sandbox {
  namespace policy {
  
@@ -349,12 +353,13 @@ security-review: required (sandbox setup, process confinement)
 +
 +// Beryllium, Phase 2 (plan/14-RENDERER-SANDBOX.md, feature matrix S-REN-01):
 +// renderers enter Capsicum capability mode at the end of InitializeSandbox(),
-+// for now only when this feature is enabled
-+// (--enable-features=BerylliumCapsicumRenderer), so the lockdown can be tested
-+// without affecting daily use. BerylliumCapsicumTrap also sets
-+// PROC_TRAPCAP_CTL, so the first call capability mode refuses ends the
-+// renderer with SIGTRAP and a backtrace instead of failing quietly.
-+BASE_FEATURE(kBerylliumCapsicumRenderer, base::FEATURE_DISABLED_BY_DEFAULT);
++// for now only when base::freebsd::kBerylliumCapsicumRenderer is enabled
++// (--enable-features=BerylliumCapsicumRenderer; the browser reads the same
++// feature to treat its renderers as confined peers and cut what it sends
++// them), so the lockdown can be tested without affecting daily use.
++// BerylliumCapsicumTrap also sets PROC_TRAPCAP_CTL, so the first call
++// capability mode refuses ends the renderer with SIGTRAP and a backtrace
++// instead of failing quietly.
 +BASE_FEATURE(kBerylliumCapsicumTrap, base::FEATURE_DISABLED_BY_DEFAULT);
 +
 +// Written with utrace(2) at the lockdown point, whether or not the renderer
@@ -521,7 +526,8 @@ security-review: required (sandbox setup, process confinement)
 +// the lockdown.
 +bool LockDownRenderer(Confinement* confinement) {
 +  WarmUpForCapabilityMode();
-+  if (!base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer)) {
++  if (!base::FeatureList::IsEnabled(
++          base::freebsd::kBerylliumCapsicumRenderer)) {
 +    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +    return true;
 +  }
@@ -564,13 +570,13 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +406,25 @@
+@@ -174,6 +408,25 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
 +  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer) {
-+    const bool requested =
-+        base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer);
++    const bool requested = base::FeatureList::IsEnabled(
++        base::freebsd::kBerylliumCapsicumRenderer);
 +    // Fail closed when the lockdown was asked for: a renderer that should be
 +    // confined and is not must not handle web content.
 +    Confinement confinement;

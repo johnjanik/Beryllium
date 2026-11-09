@@ -27,6 +27,8 @@ class SandboxHonesty(BrowserTest):
     available, or they fail. Otherwise they survey and skip."""
 
     NEEDS_FREEBSD = True
+    # The browser's sender-side cuts are VLOG(1) lines of capsicum_rights.cc.
+    BROWSER_ARGS = ("--vmodule=capsicum_rights=1",)
     # How long a renderer the browser has just listed may take to reach its
     # lockdown point before it counts as unconfined.
     GRACE_SECONDS = 5.0
@@ -187,12 +189,16 @@ class SandboxHonesty(BrowserTest):
         made = [l for l in lines if "socket pair made" in l]
         makers = capsicum.socket_pair_makers(made)
         threads_at_lockdown = capsicum.threads_at_lockdown(locked)
+        cuts = capsicum.sent_cuts(lines)
+        refused = [l for l in lines if "bound for confined renderer" in l and "every right removed" in l]
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")
                   + (f"\nthreads at the lockdown point: {threads_at_lockdown}"
-                     if threads_at_lockdown else "") + "\n"
-                  + "\n".join((received + failed + made[:10])[:50]))
+                     if threads_at_lockdown else "")
+                  + f"\ndescriptors the browser cut before sending, per renderer: {cuts or 'none'}"
+                  + (f"; refused outright: {len(refused)}" if refused else "") + "\n"
+                  + "\n".join((received + failed + refused + made[:10])[:60]))
         if self.strict():
             self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
             self.assertEqual(received + failed, [],
@@ -204,6 +210,13 @@ class SandboxHonesty(BrowserTest):
             if threads_at_lockdown:
                 self.assertEqual(set(threads_at_lockdown), {1},
                                  "a renderer had other threads at its lockdown point")
+                # The same builds carry the sender's side (S-IPC-01): the
+                # browser must have cut something before sending to its
+                # confined renderers.
+                self.assertTrue(cuts, "the browser cut no descriptor before sending it to a "
+                                      "confined renderer (is --vmodule=capsicum_rights=1 on?)")
+                self.assertEqual(refused, [], "the browser sent a confined renderer a descriptor "
+                                              "the policy has no kind for")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which

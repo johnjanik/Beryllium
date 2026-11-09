@@ -244,16 +244,30 @@ class LogTest(unittest.TestCase):
 
     LOCKED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=2 capability_mode=1 closed_directories=0 limited=12 threads=1"
     THREADED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=3 capability_mode=1 closed_directories=0 limited=12 threads=2"
+    CUT = "[1:5:1109/000000.000000:VERBOSE1:capsicum_rights.cc(360)] beryllium-sandbox: cut shared memory (fd 71) bound for confined renderer pid 2"
+    REFUSED_SEND = "[1:5:1109/000000.000000:ERROR:capsicum_rights.cc(372)] beryllium-sandbox: device (fd 81) bound for confined renderer pid 2, which it may not hold: every right removed before sending"
     RECEIVED = "[2:5:1107/000000.000000:ERROR:capsicum_rights.cc(330)] beryllium-sandbox: received device (fd 40), which a confined process may not hold: every right removed"
 
     def test_gate_needs_lockdown_reports(self):
         with self.assertRaises(AssertionError):
             self.run_case(LOCKDOWN, [])
-        self.run_case(LOCKDOWN, [self.LOCKED])
+        self.run_case(LOCKDOWN, [self.LOCKED, self.CUT])
+
+    def test_gate_needs_the_browser_to_have_cut_something_on_a_build_that_reports_threads(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_case(LOCKDOWN, [self.LOCKED])
+        self.assertIn("cut no descriptor before sending", str(e.exception))
+        old_build = self.LOCKED.replace(" threads=1", "")
+        self.run_case(LOCKDOWN, [old_build])  # 0.20.3.12 and before: nothing to check
+
+    def test_gate_fails_when_the_browser_refused_a_descriptor_outright(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_case(LOCKDOWN, [self.LOCKED, self.CUT, self.REFUSED_SEND])
+        self.assertIn("the policy has no kind for", str(e.exception))
 
     def test_gate_fails_on_a_received_descriptor_outside_the_policy(self):
         with self.assertRaises(AssertionError) as e:
-            self.run_case(LOCKDOWN, [self.LOCKED, self.RECEIVED])
+            self.run_case(LOCKDOWN, [self.LOCKED, self.CUT, self.RECEIVED])
         self.assertIn("received descriptors outside the policy", str(e.exception))
 
     def test_survey_only_records(self):
@@ -265,16 +279,17 @@ class LogTest(unittest.TestCase):
                 "socket pair made at mojo::PlatformChannel on thread 'Compositor' "
                 "(fd 19, fd 22): limited")
         t = case("test_lockdown_log", LOCKDOWN, RENDERERS)
-        t.browser.log_lines.return_value = [self.LOCKED, made]
+        t.browser.log_lines.return_value = [self.LOCKED, made, self.CUT]
         t.test_lockdown_log()
         noted = t.ctx.note.call_args[0][1]
         self.assertIn("1 socket pairs made by confined processes: "
                       "{'mojo::PlatformChannel on Compositor': 1}", noted)
         self.assertIn("threads at the lockdown point: [1]", noted)
+        self.assertIn("cut before sending, per renderer: {2: 1}", noted)
 
     def test_gate_fails_when_a_renderer_locked_down_with_other_threads(self):
         with self.assertRaises(AssertionError) as e:
-            self.run_case(LOCKDOWN, [self.LOCKED, self.THREADED])
+            self.run_case(LOCKDOWN, [self.LOCKED, self.THREADED, self.CUT])
         self.assertIn("other threads at its lockdown point", str(e.exception))
         self.run_case([], [self.LOCKED, self.THREADED])  # a survey only records it
 

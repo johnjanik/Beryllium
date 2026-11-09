@@ -165,9 +165,11 @@ has the detail and the results of each build):
    and `18,53,86` for `#123456`), on a CPU-drawn canvas as well as a GPU
    one and the same on both, never without the lockdown. Not understood
    yet; the rendering test now records a colour sweep to find the pattern.
-3. **The browser cuts before it sends.** Today the renderer limits what it
-   receives, which a compromised renderer could skip; the browser must
-   limit every descriptor before sending it (S-IPC-01).
+3. **The browser cuts before it sends.** Written for the next build: the
+   browser cuts every descriptor bound for a confined renderer to its
+   kind's rights before sending it, so a renderer that skips its own
+   receive-side limit gains nothing (S-IPC-01). Still receiver-limited
+   only: what the GPU process sends a renderer directly.
 4. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
