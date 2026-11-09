@@ -22,7 +22,7 @@ The two flag sets disagree on the points that matter most. Snapshot values:
 | Flag | Helium `flags.gn` | FreeBSD `www/chromium` Makefile | Beryllium |
 |---|---|---|---|
 | `enable_hangout_services_extension` | `false` | `true` | `false` |
-| `google_api_key` | `""` | FreeBSD project key (`AIzaSyBsp9...`) | `""` |
+| `google_api_key` | `""` | the FreeBSD project's own key, set in the www/chromium Makefile (not reproduced here) | `""` |
 | `google_default_client_id` / `_secret` | `""` | unset (defaults) | `""` |
 | `use_official_google_api_keys` | `false` | unset | `false` |
 | `safe_browsing_mode` | `0` | unset (Chromium default, on) | `0` |
