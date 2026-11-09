@@ -160,39 +160,30 @@ has the detail and the results of each build):
    compositor thread, all cut at creation. Which Chromium code opens them
    is still to be named; 0.20.3.14 logs a stack trace for the first pair
    at each site.
-2. **A colour off by one.** Not the lockdown's doing: the 0.20.3.13 sweep
-   found one in four of the sampled greys one level off in one channel,
-   with the lockdown off as well as on, on a CPU-drawn canvas (the GPU
-   canvas and `#123456` itself were exact); the direction was up in one
-   run and down in the other, the channel varied, and the values differed
-   between runs. The rendering test now records every grey, by fill and
-   by copy, on both canvases, and when a value moves runs the probe again
-   with the display profile forced to sRGB and with the GPU off; the next
-   run says where it comes from.
-3. **The browser cuts before it sends.** Done in the 0.20.3.13 test build
+2. **The browser cuts before it sends.** Done in the 0.20.3.13 test build
    (S-IPC-01): the browser cut between 1 and 88 descriptors per renderer
    before sending them, none was refused, and every renderer the suite
    read stayed within the policy. Still receiver-limited only: what the
    GPU process sends a renderer directly.
-4. **The kernel's word on each renderer.** The browser checks each
+3. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-5. **Single-threaded lockdown, verified.** Chromium orders the renderer's
+4. **Single-threaded lockdown, verified.** Chromium orders the renderer's
    sandbox before its other threads exist, so the descriptor sweep should
    see every descriptor. 0.20.3.13 tried to record the thread count at
    that point and the kernel query failed in every renderer without
    saying why; 0.20.3.14 reads it another way and logs the failure, and
    the gate requires one thread.
-6. **On by default, fail closed.** When the suite passes the gate on every
+5. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
-7. **The other processes.** GPU, network, audio and utility processes get
+6. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
-8. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
+7. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
    verified by `install.sh`; the proposal is in plan/16.
-9. **Assurance.** A FreeBSD test machine for CI, review records for the
+8. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
-10. **WebGPU** finds no adapter.
+9. **WebGPU** finds no adapter.
 
 ## Install
 
@@ -269,13 +260,6 @@ set it, and the launcher will not start the browser without it.
   suite's `fonts` group now fails on any script drawn without its glyphs
   and names the package.
 - **WebGPU** finds no adapter.
-- **Some canvas colours read back one level off** in one channel: in
-  the 0.20.3.13 test build, one in four of the sampled greys, on a
-  CPU-drawn canvas as on a GPU one, with and without the lockdown; which
-  values, which channel and which direction differ between runs. Not
-  understood yet (see [Still to finish](#still-to-finish)); the
-  rendering test now records every grey and repeats the probe with the
-  display profile forced to sRGB and with the GPU off.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
@@ -342,6 +326,11 @@ From Helium's open-source patch set, Beryllium keeps:
   base;
 - the bundled uBlock Origin, its filter defaults and CNAME uncloaking;
 - native `!bangs`, fingerprinting noise, and the other privacy settings.
+  The canvas noise changes one channel of about one pixel in four of a
+  flat area by one level on every readback, the same within a session
+  and different per site; `beryllium://flags/#helium-noise-canvas`
+  turns it off. (The test suite mistook it for a rendering fault
+  until 9 November 2026.)
 
 What differs:
 

@@ -441,7 +441,29 @@ FreeBSD test bed, so an increment must be worth a build.
    each twice, records the context attributes, the screen's gamut and the
    GPU page's display colour information, and when a value moves runs
    the same probe in a browser with `--force-color-profile=srgb` and in
-   one with `--disable-gpu`; no build is needed for that. Fonts, from the
+   one with `--disable-gpu`; no build is needed for that. **Resolved the
+   same evening:** six more runs (three with `unprivileged_proc_debug=0`,
+   three with 1) showed every grey that moved in a run sharing one residue
+   modulo 4 (3, 3, 1, 3; the run of 19:33 had 0 with -1), with the channel
+   varying: a quarter of all values, selected by value, with a per-run
+   seed. That is Helium's canvas fingerprinting noise
+   (`helium/patches/helium/core/noise/canvas.patch`, feature
+   `HeliumNoiseCanvas`, on by default under `HeliumNoise`): on every
+   `getImageData`, `toDataURL` and `toBlob`, a pixel in a smooth 3x3
+   neighbourhood has one RGB channel moved by one level when a hash of a
+   per-session, per-origin token, its coordinates and its value selects it
+   (one in four), the channel and the direction from a hash of the token
+   and the content. Our probe read one fixed pixel of a flat fill, so the
+   selection fell on the value alone, and `#123456` was hit only in the
+   runs whose residue matched one of its channels (86 and 18 are 2 modulo
+   4, 52 is 0: the `18,52,87` and `18,53,86` of 0.20.3.10 and 0.20.3.12).
+   The lockdown had nothing to do with it; the three-of-six count was the
+   odds. The rendering group now runs with
+   `--disable-features=HeliumNoiseCanvas` and tests the rasterizer, and
+   `test_60_privacy` gains a class that checks the noise itself: present
+   by default on a flat fill, one level in one channel, alpha untouched,
+   the same on a second read, different between `127.0.0.1` and
+   `localhost`, and absent with the feature off (P-FPR-04). Fonts, from the
    same runs: with `noto-sans-sc` installed every script is drawn with a
    font that has its glyphs (Chinese and Japanese in Noto Sans SC, Korean
    in Noto Sans Mono CJK SC), with and without the lockdown.
