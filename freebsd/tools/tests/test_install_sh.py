@@ -96,7 +96,7 @@ class Harness(unittest.TestCase):
             "STUB_LOG": self.log,
             "STUB_RELEASE": self.release,
             "STUB_INSTALLED": "nss",
-            "STUB_DEPS": "nss gtk3 noto-basic",
+            "STUB_DEPS": "nss gtk3 noto-basic noto-sans-sc noto-emoji",
             "STUB_POOLS": "zroot",
             "STUB_JAILS": "",
             "STUB_PORTSTREES": "",
@@ -135,7 +135,7 @@ class InstallPackageTests(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout
         self.assertIn("SHA-256 verified", out)
-        self.assertIn("+ doas pkg install -y gtk3 noto-basic\n", out)
+        self.assertIn("+ doas pkg install -y gtk3 noto-basic noto-sans-sc noto-emoji\n", out)
         self.assertRegex(out, r"\+ doas pkg add \S+/beryllium-FreeBSD-16-amd64\.pkg\n")
         self.assertIn("+ doas sysctl kern.ipc.shm_allow_removed=1\n", out)
         self.assertIn("+ doas sysrc -f /etc/sysctl.conf kern.ipc.shm_allow_removed=1\n", out)
@@ -148,7 +148,7 @@ class InstallPackageTests(Harness):
     def test_reinstall_forces_and_shm_already_set(self):
         self.publish()
         r = self.run_sh(INSTALL, "--dry-run", "--yes",
-                        STUB_INSTALLED="nss gtk3 noto-basic beryllium", STUB_SHM="1")
+                        STUB_INSTALLED="nss gtk3 noto-basic noto-sans-sc noto-emoji beryllium", STUB_SHM="1")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("All dependencies are installed.", r.stdout)
         self.assertRegex(r.stdout, r"\+ doas pkg add -f \S+\.pkg\n")

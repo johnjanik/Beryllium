@@ -207,7 +207,9 @@ sh install.sh
 The installer downloads the package for your FreeBSD version from this
 repository's [releases](https://github.com/johnjanik/Beryllium/releases),
 checks it against the release's `SHA256SUMS`, installs its dependencies
-from the official FreeBSD package repository, and installs it.
+from the official FreeBSD package repository, and installs it. From
+0.20.3.13 the dependencies include the Noto fonts for Chinese, Japanese,
+Korean and emoji (about 215 MB, shared with the rest of the desktop).
 
 | Command | What it does |
 |---|---|
@@ -248,6 +250,18 @@ set it, and the launcher will not start the browser without it.
 
 ### Known issues
 
+- **Chinese, Japanese and Korean text shows as blanks or boxes** on a
+  machine with no font for those scripts, which a FreeBSD desktop does not
+  install by itself; 0.20.3.12 depends on none (`noto-basic` covers Latin,
+  Greek and Cyrillic only), and Firefox on the same machine shows the same
+  blanks. Install a font and restart the browser:
+  `pkg install noto-sans-sc`. From 0.20.3.13 the package depends on Noto
+  Sans CJK SC and Noto Color Emoji. Other scripts (Arabic, Hebrew,
+  Devanagari, Thai and the rest) are drawn with whatever fonts are
+  installed; `pkg install noto-extra` brings the Noto fonts FreeBSD packages
+  for 24 of them, or install one, such as `noto-sans-arabic`. The test
+  suite's `fonts` group now fails on any script drawn without its glyphs
+  and names the package.
 - **WebGPU** finds no adapter.
 - **With the experimental lockdown on,** a canvas colour has read back one
   level off in one channel in three of six runs (see
