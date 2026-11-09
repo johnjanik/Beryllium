@@ -96,18 +96,18 @@ security-review: required (IPC boundary, descriptor rights)
        CHECK(!mojo_channel_, base::NotFatalUntil::M160);
 --- a/content/browser/child_process_launcher_helper.h
 +++ b/content/browser/child_process_launcher_helper.h
-@@ -340,6 +340,11 @@
- 
- #if BUILDFLAG(IS_CHROMEOS)
+@@ -342,6 +342,11 @@
    std::optional<base::ProcessId> process_id_ = std::nullopt;
-+
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
 +#if BUILDFLAG(IS_FREEBSD)
 +  // Beryllium: the pid registered as a confined peer, to forget on exit.
 +  std::optional<base::ProcessId> beryllium_confined_peer_;
 +#endif
- #endif  // BUILDFLAG(IS_CHROMEOS)
- 
++
    // The PlatformChannel that will be used to transmit an invitation to the
+   // child process in most cases. Only used if the platform's helper
+   // implementation doesn't return a server endpoint from
 --- a/mojo/core/ipcz_driver/transport.cc
 +++ b/mojo/core/ipcz_driver/transport.cc
 @@ -31,6 +31,10 @@
