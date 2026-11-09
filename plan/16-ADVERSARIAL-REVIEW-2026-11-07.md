@@ -24,7 +24,7 @@ carry the status.
 | BER-02 | Descriptor admission broader than intended authority | yes | fixed in 0.20.3.10: files only under the assets directory, sockets only as unnamed Mojo pairs, bounds-checked table |
 | BER-03 | A failed stdio rights limit was not fatal | yes | fixed in 0.20.3.10: the lockdown fails and the renderer ends |
 | BER-04 | Sandbox tests accept missing or partial confinement | yes | fixed: with the lockdown requested the tests are a gate; the three negative scenarios now fail (unit-tested) |
-| BER-05 | The startup sweep is not a lifetime policy | yes | receive-side limits were already in `a253314` (defence in depth); the sender-side boundary is the next increment |
+| BER-05 | The startup sweep is not a lifetime policy | yes | receive-side limits were already in `a253314` (defence in depth); the sender-side boundary is written for 0.20.3.13 (the browser cuts before `sendmsg`); the GPU process's sends to renderers remain receiver-limited |
 | BER-06 | One release trust channel; no source binding | yes | publish-release now refuses a package whose build manifest does not match the checkout; signing proposed below, awaiting the owner's key decision |
 | BER-07 | Assurance coverage short of a hardened-release claim | yes | documented where the observation methods stop; no claim is made beyond them |
 
@@ -136,6 +136,17 @@ negative cases (unsolicited directories, over-privileged files and
 sockets, unsealed or wrong-type shared memory, inconsistent lengths), are
 the test plan for that increment.
 
+**Done for 0.20.3.13 (9 November 2026):** the browser registers each
+renderer it launches with the lockdown on as a confined peer and Mojo's
+transport cuts every descriptor bound for one to its kind's rights before
+`sendmsg()` (`patches/security/beryllium-sender-side-rights.patch`;
+plan/14 increment 5). A writable file handed over on purpose (a File
+System Access sync access handle) gets a kind of its own on both sides
+instead of losing every right. Still receiver-limited only: what the GPU
+process sends a renderer over the transport the browser introduced
+between them. Still to do: a verification that the sender alone suffices,
+with the receiver's limit switched off in a development build.
+
 ## BER-06: one release trust channel, no source binding
 
 Two parts.
@@ -242,14 +253,17 @@ it, and the Capsicum survey with it, all with
   rules (no file outside the assets directory was in the way, as the
   0.20.3.8 survey predicted), every kind in the survey is allowed, and the
   received sockets are cut. Two sockets per renderer kept every right.
-  They arrived during the lockdown itself: `InitializeSandbox()` runs after
-  the renderer's IO thread is up and receiving Mojo messages, so a
-  descriptor delivered between the table snapshot and `cap_enter()` was in
-  neither the sweep nor the receive path, which waited for capability
-  mode. This answers the reviewer's "is startup single-threaded?" with no.
-  For 0.20.3.11 the lockdown turns the receive-path limits on before the
-  snapshot (`ExpectConfinement()`), and `base::UnixDomainSocket`'s receive
-  path (sandbox IPC replies carrying font files) is limited like Mojo's.
+  The first explanation given here, that the IO thread was already
+  receiving Mojo messages during the sweep, was wrong: `RendererMain()`
+  enables the sandbox before `RenderThreadImpl` exists, so the reviewer's
+  question "is startup single-threaded?" is answered yes by Chromium's
+  ordering, and from 0.20.3.13 the lockdown logs the thread count at that
+  point and the gate requires one. The two sockets were pairs the renderer
+  made itself after the lockdown (0.20.3.11, 0.20.3.12). For 0.20.3.11 the
+  lockdown turns the receive-path limits on before the snapshot
+  (`ExpectConfinement()`) as a precaution, and `base::UnixDomainSocket`'s
+  receive path (sandbox IPC replies carrying font files) is limited like
+  Mojo's.
   0.20.3.11 (8 November 2026) confirmed the window closed and showed the
   two remaining sockets to be ones the renderer creates itself with
   `socketpair()`, one end sent to the browser (unix stream, one blocking

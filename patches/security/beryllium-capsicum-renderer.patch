@@ -124,10 +124,19 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   whole suite passed without the lockdown, and with it the policy test
   found one renderer still starting (the test now waits for a renderer to
   reach its lockdown point) and the survey found two sockets with every
-  right that arrived during the lockdown itself: the lockdown is not
-  single-threaded (the IO thread is receiving Mojo messages), so from
-  0.20.3.11 it calls base::freebsd::ExpectConfinement() before the table
-  snapshot, which makes the receive paths limit from that moment.
+  right, which 0.20.3.11 and 0.20.3.12 showed to be pairs the renderer
+  makes itself after the lockdown (now cut at creation,
+  beryllium-descriptor-rights.patch). From 0.20.3.11 the lockdown calls
+  base::freebsd::ExpectConfinement() before the table snapshot as a
+  precaution. The lockdown runs early: RendererMain() enables the sandbox
+  before RenderProcessImpl and RenderThreadImpl exist, so no IO thread runs
+  during the sweep; from 0.20.3.13 the lockdown records the process's
+  thread count at that point (kern.proc.pid, logged as threads=N) so the
+  single-threaded claim is checked by the suite, not assumed. From 0.20.3.13
+  the feature kBerylliumCapsicumRenderer is declared in
+  base/posix/capsicum_rights.h (beryllium-descriptor-rights.patch), where
+  the browser reads it as well to treat its renderers as confined peers;
+  this patch uses it from there.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -336,7 +345,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +79,205 @@
+@@ -63,6 +79,224 @@
  namespace sandbox {
  namespace policy {
  
@@ -344,12 +353,13 @@ security-review: required (sandbox setup, process confinement)
 +
 +// Beryllium, Phase 2 (plan/14-RENDERER-SANDBOX.md, feature matrix S-REN-01):
 +// renderers enter Capsicum capability mode at the end of InitializeSandbox(),
-+// for now only when this feature is enabled
-+// (--enable-features=BerylliumCapsicumRenderer), so the lockdown can be tested
-+// without affecting daily use. BerylliumCapsicumTrap also sets
-+// PROC_TRAPCAP_CTL, so the first call capability mode refuses ends the
-+// renderer with SIGTRAP and a backtrace instead of failing quietly.
-+BASE_FEATURE(kBerylliumCapsicumRenderer, base::FEATURE_DISABLED_BY_DEFAULT);
++// for now only when base::freebsd::kBerylliumCapsicumRenderer is enabled
++// (--enable-features=BerylliumCapsicumRenderer; the browser reads the same
++// feature to treat its renderers as confined peers and cut what it sends
++// them), so the lockdown can be tested without affecting daily use.
++// BerylliumCapsicumTrap also sets PROC_TRAPCAP_CTL, so the first call
++// capability mode refuses ends the renderer with SIGTRAP and a backtrace
++// instead of failing quietly.
 +BASE_FEATURE(kBerylliumCapsicumTrap, base::FEATURE_DISABLED_BY_DEFAULT);
 +
 +// Written with utrace(2) at the lockdown point, whether or not the renderer
@@ -402,17 +412,33 @@ security-review: required (sandbox setup, process confinement)
 +// process descriptor, a network or named socket...) breaks the policy: the
 +// lockdown fails and the renderer ends. What the renderer creates or
 +// receives after the lockdown is limited where it appears (the message
-+// pump, the receive paths of Mojo and base::UnixDomainSocket, shared memory
-+// creation). The lockdown is not single-threaded: the IO thread is already
-+// receiving Mojo messages when InitializeSandbox() runs, so a descriptor can
-+// arrive between the table snapshot and cap_enter(); ExpectConfinement()
-+// turns the receive-path limits on before the snapshot so that window is
-+// covered too (0.20.3.10 showed two such sockets with every right).
++// pump, the receive paths of Mojo and base::UnixDomainSocket, socket pair
++// creation, shared memory creation). RendererMain() calls
++// InitializeSandbox() before RenderProcessImpl and RenderThreadImpl exist
++// (content/renderer/renderer_main.cc, the early path every platform but
++// Windows and macOS takes), so no IO thread runs during the sweep; the
++// threads that can exist are startup tracing's and the hang watcher's, not
++// yet started. The lockdown records the thread count at that moment
++// (|threads|, from kern.proc.pid) so the claim is checked, not assumed, and
++// ExpectConfinement() turns the receive-path limits on before the snapshot
++// as a precaution against any thread that does run.
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
++  int threads = -1;       // threads in the process at the lockdown point
 +  std::string violation;  // empty when the policy held
 +};
++
++// The number of threads in this process, from the kernel, or -1.
++int ThreadCount() {
++  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(getpid())};
++  struct kinfo_proc kp;
++  size_t len = sizeof(kp);
++  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp)) {
++    return -1;
++  }
++  return kp.ki_numthreads;
++}
 +
 +// Applies the policy above to every descriptor. On a violation, |violation|
 +// names the descriptor and errno is EPERM; on a failed system call, errno
@@ -500,10 +526,12 @@ security-review: required (sandbox setup, process confinement)
 +// the lockdown.
 +bool LockDownRenderer(Confinement* confinement) {
 +  WarmUpForCapabilityMode();
-+  if (!base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer)) {
++  if (!base::FeatureList::IsEnabled(
++          base::freebsd::kBerylliumCapsicumRenderer)) {
 +    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +    return true;
 +  }
++  confinement->threads = ThreadCount();
 +  base::freebsd::ExpectConfinement();
 +  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
 +    int trap = PROC_TRAPCAP_CTL_ENABLE;
@@ -542,13 +570,13 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +389,24 @@
+@@ -174,6 +408,25 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
 +  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer) {
-+    const bool requested =
-+        base::FeatureList::IsEnabled(kBerylliumCapsicumRenderer);
++    const bool requested = base::FeatureList::IsEnabled(
++        base::freebsd::kBerylliumCapsicumRenderer);
 +    // Fail closed when the lockdown was asked for: a renderer that should be
 +    // confined and is not must not handle web content.
 +    Confinement confinement;
@@ -560,7 +588,8 @@ security-review: required (sandbox setup, process confinement)
 +      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
 +                   << " capability_mode=1 closed_directories="
 +                   << confinement.closed_directories
-+                   << " limited=" << confinement.limited;
++                   << " limited=" << confinement.limited
++                   << " threads=" << confinement.threads;
 +    }
 +  }
 +

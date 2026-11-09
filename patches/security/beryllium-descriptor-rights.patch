@@ -53,15 +53,16 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   SO_ACCEPTCONN, getsockname, getpeername for a received one). A network
   socket or one connected to a named service keeps authority that rights
   cannot take back, so it ends the lockdown or loses every right.
-  The receive window (0.20.3.10, 7 November 2026): the survey of a confined
-  renderer showed two sockets with every right among limited ones. The
-  lockdown runs with the IO thread already receiving Mojo messages, so a
-  descriptor that arrives between the table snapshot and cap_enter() was in
-  neither the sweep nor the receive path (which waited for capability
-  mode). ExpectConfinement(), called by the lockdown before the snapshot,
-  turns the receive-path limits on from that moment. The same limit now
-  also covers base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC
-  replies that carry font files), the other recvmsg path in the renderer.
+  ExpectConfinement() (0.20.3.11): the lockdown calls it before the table
+  snapshot, so the receive paths limit from that moment rather than from
+  capability mode, closing any window between the snapshot and cap_enter()
+  for a thread that might run meanwhile. (It was written in the belief that
+  the IO thread was already receiving Mojo messages at the lockdown; it is
+  not: RendererMain() locks down before RenderThreadImpl exists, and the
+  two unlimited sockets of 0.20.3.10 were pairs the renderer made itself,
+  below. The precaution stays.) The same limit also covers
+  base::UnixDomainSocket::RecvMsgWithFlags (the sandbox IPC replies that
+  carry font files), the other recvmsg path in the renderer.
   Sockets a confined process creates (0.20.3.11, 8 November 2026): with the
   receive window covered, each confined renderer still held two sockets
   with every right, both unix stream, one blocking and one not, with the
@@ -71,14 +72,29 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   every pair a confined process makes to a transport's rights, at the
   three places Chromium makes them: base::CreateSocketPair (the sandbox
   IPC request pairs), base::SyncSocket::CreatePair and
-  mojo::PlatformChannel, and logs the pair with the thread that made it
-  (the survey of 0.20.3.11 also showed one such blocking socket to the
-  browser in every child process type, so this is Chromium's pattern,
-  to be named from the log).
+  mojo::PlatformChannel, and logs the pair with the site and the thread that
+  made it (0.20.3.12: one pair on CrRendererMain right after the lockdown,
+  one on Compositor, and the survey of 0.20.3.11 showed one such blocking
+  socket to the browser in every child process type, so this is Chromium's
+  pattern; the site in the log, from 0.20.3.13, names it).
+  The sender's side (9 November 2026, build 0.20.3.13; plan/14 increment 5,
+  S-IPC-01): the feature kBerylliumCapsicumRenderer moves here from
+  sandbox_freebsd.cc so the browser can read it too; ExpectConfinedPeer(),
+  ForgetConfinedPeer() and IsConfinedPeer() keep the pids of the renderers
+  the browser launched with the lockdown on; LimitSentDescriptor() cuts a
+  descriptor bound for one of them to its kind's rights before sendmsg()
+  (beryllium-sender-side-rights.patch calls it from Mojo's transport and
+  registers the pids from the launcher). A new kind, kWritableFile (pread,
+  pwrite, ftruncate, fsync, read-write mapping, fstat, F_GETFL), is what a
+  file the browser hands a renderer on purpose (a File System Access
+  handle) keeps; the receive path admits it with those rights instead of
+  removing every right, while the lockdown point still refuses any
+  writable file.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
-  0.20.3.11 state compiled and ran (8 November 2026); the created-socket
-  limits are for build 0.20.3.12, not yet compiled.
+  0.20.3.12 state compiled and ran (8 November 2026); the site names, the
+  feature move, the writable kind and the sender's side are for build
+  0.20.3.13, not yet compiled.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -131,7 +147,7 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,424 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
@@ -152,14 +168,30 @@ security-review: required (descriptor rights in confined processes)
 +
 +#include <atomic>
 +#include <cstddef>
++#include <set>
 +
 +#include "base/logging.h"
++#include "base/no_destructor.h"
 +#include "base/strings/string_number_conversions.h"
++#include "base/synchronization/lock.h"
 +#include "base/threading/platform_thread.h"
 +
 +namespace base::freebsd {
 +
++BASE_FEATURE(kBerylliumCapsicumRenderer, FEATURE_DISABLED_BY_DEFAULT);
++
 +namespace {
++
++// The confined peers (ExpectConfinedPeer), read on every send with handles.
++struct ConfinedPeers {
++  Lock lock;
++  std::set<pid_t> pids;
++};
++
++ConfinedPeers& Peers() {
++  static NoDestructor<ConfinedPeers> peers;
++  return *peers;
++}
 +
 +constexpr uint32_t kGetFl = CAP_FCNTL_GETFL;
 +constexpr uint32_t kGetSetFl = CAP_FCNTL_GETFL | CAP_FCNTL_SETFL;
@@ -177,6 +209,11 @@ security-review: required (descriptor rights in confined processes)
 +  switch (kind) {
 +    case DescriptorKind::kReadOnlyFile:
 +      cap_rights_init(rights, CAP_PREAD, CAP_MMAP_R, CAP_FSTAT, CAP_FCNTL);
++      *fcntls = kGetFl;
++      return true;
++    case DescriptorKind::kWritableFile:
++      cap_rights_init(rights, CAP_PREAD, CAP_PWRITE, CAP_FTRUNCATE, CAP_FSYNC,
++                      CAP_MMAP_RW, CAP_FSTAT, CAP_FCNTL);
 +      *fcntls = kGetFl;
 +      return true;
 +    case DescriptorKind::kSocket:
@@ -423,7 +460,7 @@ security-review: required (descriptor rights in confined processes)
 +      return DescriptorKind::kReadOnlyFile;
 +    }
 +    *description = "writable file";
-+    return std::nullopt;
++    return DescriptorKind::kWritableFile;
 +  }
 +  if (S_ISDIR(st.st_mode)) {
 +    *description = "directory";
@@ -460,7 +497,43 @@ security-review: required (descriptor rights in confined processes)
 +  return g_confining.load(std::memory_order_acquire) || InCapabilityMode();
 +}
 +
-+void LimitCreatedSocketPair(int a, int b) {
++void ExpectConfinedPeer(pid_t pid) {
++  AutoLock lock(Peers().lock);
++  Peers().pids.insert(pid);
++}
++
++void ForgetConfinedPeer(pid_t pid) {
++  AutoLock lock(Peers().lock);
++  Peers().pids.erase(pid);
++}
++
++bool IsConfinedPeer(pid_t pid) {
++  AutoLock lock(Peers().lock);
++  return Peers().pids.count(pid) != 0;
++}
++
++void LimitSentDescriptor(int fd, pid_t peer) {
++  std::string what;
++  const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
++  if (kind && *kind != DescriptorKind::kDirectory) {
++    if (!LimitDescriptorRights(fd, *kind)) {
++      PLOG(ERROR) << "beryllium-sandbox: " << what << " (fd " << fd
++                  << ") bound for confined renderer pid " << peer
++                  << " could not be limited";
++      RemoveAllRights(fd);
++      return;
++    }
++    VLOG(1) << "beryllium-sandbox: cut " << what << " (fd " << fd
++            << ") bound for confined renderer pid " << peer;
++    return;
++  }
++  LOG(ERROR) << "beryllium-sandbox: " << what << " (fd " << fd
++             << ") bound for confined renderer pid " << peer
++             << ", which it may not hold: every right removed before sending";
++  RemoveAllRights(fd);
++}
++
++void LimitCreatedSocketPair(const char* site, int a, int b) {
 +  if (!Confining()) {
 +    return;
 +  }
@@ -471,9 +544,9 @@ security-review: required (descriptor rights in confined processes)
 +      RemoveAllRights(fd);
 +    }
 +  }
-+  LOG(WARNING) << "beryllium-sandbox: socket pair made on thread '"
-+               << PlatformThread::GetName() << "' (fd " << a << ", fd " << b
-+               << "): limited";
++  LOG(WARNING) << "beryllium-sandbox: socket pair made at " << site
++               << " on thread '" << PlatformThread::GetName() << "' (fd " << a
++               << ", fd " << b << "): limited";
 +}
 +
 +void LimitReceivedDescriptor(int fd) {
@@ -483,6 +556,9 @@ security-review: required (descriptor rights in confined processes)
 +  std::string what;
 +  const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
 +  if (kind && *kind != DescriptorKind::kDirectory) {
++    // A writable file is admitted here, not at the lockdown point: the
++    // browser handed it over on purpose (a File System Access handle), and
++    // it keeps the writable kind's rights, which the browser cut already.
 +    if (!LimitDescriptorRights(fd, *kind)) {
 +      PLOG(ERROR) << "beryllium-sandbox: received " << what << " (fd " << fd
 +                  << ") could not be limited";
@@ -498,7 +574,7 @@ security-review: required (descriptor rights in confined processes)
 +}  // namespace base::freebsd
 --- a/base/posix/capsicum_rights.h
 +++ b/base/posix/capsicum_rights.h
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,120 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +//
@@ -511,20 +587,34 @@ security-review: required (descriptor rights in confined processes)
 +#ifndef BASE_POSIX_CAPSICUM_RIGHTS_H_
 +#define BASE_POSIX_CAPSICUM_RIGHTS_H_
 +
++#include <sys/types.h>
++
 +#include <optional>
 +#include <string>
 +
 +#include "base/base_export.h"
++#include "base/feature_list.h"
 +#include "base/files/scoped_file.h"
 +
 +struct kinfo_file;
 +
 +namespace base::freebsd {
 +
++// The renderer lockdown (sandbox/policy/freebsd, plan/14): renderers enter
++// Capsicum capability mode, and the browser treats them as confined peers.
++// Off by default while the lockdown is being built;
++// --enable-features=BerylliumCapsicumRenderer switches it on.
++BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumCapsicumRenderer);
++
 +// The kinds of descriptor a confined process may hold, each with the rights
 +// it needs and nothing more.
 +enum class DescriptorKind {
 +  kReadOnlyFile,   // read, seek, read-only mapping, fstat, F_GETFL
++  kWritableFile,   // a file the browser hands a renderer on purpose (a
++                   // File System Access handle): read, write, seek,
++                   // truncate, fsync, mapping, fstat, F_GETFL; never
++                   // executable mapping, ownership or mode changes. Never
++                   // admitted at the lockdown point, only received later.
 +  kSocket,         // send, receive, event, fstat, shutdown, get/setsockopt,
 +                   // F_GETFL/F_SETFL; never connect, bind, listen or accept
 +  kKqueue,         // kevent, event (epoll-shim polls it), fstat
@@ -554,11 +644,28 @@ security-review: required (descriptor rights in confined processes)
 +
 +// The kind of |fd| as far as a process in capability mode can tell: fstat,
 +// then an empty kevent (only a kqueue answers) and F_GET_SEALS (only shared
-+// memory answers), none of which needs a right. A regular file counts as
-+// read-only only when it was opened read-only.
++// memory answers), none of which needs a right. A regular file is
++// kReadOnlyFile when it was opened read-only and kWritableFile otherwise.
 +BASE_EXPORT std::optional<DescriptorKind> DescriptorKindOf(
 +    int fd,
 +    std::string* description);
++
++// The confined peers of this process: the renderers the browser launched
++// with the lockdown on. Registered by the launcher before the Mojo
++// invitation is sent and forgotten when the launcher lets the process go;
++// a pid may be reused by the kernel, so the entry must not outlive the
++// process it names.
++BASE_EXPORT void ExpectConfinedPeer(pid_t pid);
++BASE_EXPORT void ForgetConfinedPeer(pid_t pid);
++BASE_EXPORT bool IsConfinedPeer(pid_t pid);
++
++// Cuts a descriptor this process is about to send to confined peer |peer|
++// to its kind's rights, or removes every right when the policy has no kind
++// for it (a device, a directory, a terminal...), logging what it was. The
++// sent copy carries the rights of the descriptor at sendmsg() time, so this
++// is the boundary: the receiving renderer limits what it receives as well,
++// but a compromised renderer need not (plan/06 section 3.2, S-IPC-01).
++BASE_EXPORT void LimitSentDescriptor(int fd, pid_t peer);
 +
 +// True once this process is in capability mode (a process never leaves it).
 +BASE_EXPORT bool InCapabilityMode();
@@ -577,12 +684,13 @@ security-review: required (descriptor rights in confined processes)
 +BASE_EXPORT void LimitReceivedDescriptor(int fd);
 +
 +// The same for the two ends of a socket pair this process has just created
-+// with socketpair() (base::CreateSocketPair, base::SyncSocket,
-+// mojo::PlatformChannel): a new socket has every right, and a confined
-+// process may hold sockets only as transports. Logs the pair and the thread
-+// that made it, so the survey can say where a confined process's own sockets
-+// come from. Before ExpectConfinement() it does nothing.
-+BASE_EXPORT void LimitCreatedSocketPair(int a, int b);
++// with socketpair(): a new socket has every right, and a confined process
++// may hold sockets only as transports. |site| names the code that made the
++// pair (base::CreateSocketPair, base::SyncSocket::CreatePair,
++// mojo::PlatformChannel); it is logged with the thread, so the survey can
++// say where a confined process's own sockets come from. Before
++// ExpectConfinement() it does nothing.
++BASE_EXPORT void LimitCreatedSocketPair(const char* site, int a, int b);
 +
 +}  // namespace base::freebsd
 +
@@ -600,19 +708,20 @@ security-review: required (descriptor rights in confined processes)
  namespace base {
  
  
-@@ -36,6 +40,11 @@
+@@ -36,6 +40,12 @@
    if (socketpair(AF_UNIX, flags, 0, raw_socks) == -1) {
      return false;
    }
 +#if BUILDFLAG(IS_FREEBSD)
 +  // Beryllium: in a confined process a new socket keeps only a transport's
 +  // rights (plan/06 section 3.2), whichever end stays here.
-+  freebsd::LimitCreatedSocketPair(raw_socks[0], raw_socks[1]);
++  freebsd::LimitCreatedSocketPair("base::CreateSocketPair", raw_socks[0],
++                                  raw_socks[1]);
 +#endif
    one->reset(raw_socks[0]);
    two->reset(raw_socks[1]);
    return true;
-@@ -172,6 +181,12 @@
+@@ -172,6 +182,12 @@
  
    if (wire_fds) {
      for (size_t i = 0; i < wire_fds_len; ++i) {
@@ -638,14 +747,15 @@ security-review: required (descriptor rights in confined processes)
  #if BUILDFLAG(IS_SOLARIS)
  #include <sys/filio.h>
  #endif
-@@ -59,6 +63,11 @@
+@@ -59,6 +63,12 @@
      if (socketpair(AF_UNIX, SOCK_STREAM, 0, raw_handles) != 0) {
        return false;
      }
 +#if BUILDFLAG(IS_FREEBSD)
 +    // Beryllium: in a confined process a new socket keeps only a transport's
 +    // rights (plan/06 section 3.2).
-+    freebsd::LimitCreatedSocketPair(raw_handles[0], raw_handles[1]);
++    freebsd::LimitCreatedSocketPair("base::SyncSocket::CreatePair",
++                                    raw_handles[0], raw_handles[1]);
 +#endif
      handles[0].reset(raw_handles[0]);
      handles[1].reset(raw_handles[1]);
@@ -663,14 +773,15 @@ security-review: required (descriptor rights in confined processes)
  namespace mojo {
  
  namespace {
-@@ -157,6 +161,12 @@
+@@ -157,6 +161,13 @@
    PCHECK(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
    PCHECK(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
  
 +#if BUILDFLAG(IS_FREEBSD)
 +  // Beryllium: in a confined process a new socket keeps only a transport's
 +  // rights (plan/06 section 3.2); F_SETFL stays allowed.
-+  base::freebsd::LimitCreatedSocketPair(fds[0], fds[1]);
++  base::freebsd::LimitCreatedSocketPair("mojo::PlatformChannel", fds[0],
++                                        fds[1]);
 +#endif
 +
    *local_endpoint = PlatformHandle(base::ScopedFD(fds[0]));

@@ -597,7 +597,7 @@ tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_capability_mode_p
          "freebsd/tools/tests/test_sandbox_gate.py"]
 evidence = "owner, 0.20.3.3 with --enable-features=BerylliumCapsicumRenderer, 4 Nov 2026: every renderer in capability mode (procstat), the whole suite passes; trap mode stops renderers at their first refused call (cpuset_getaffinity); owner, 0.20.3.4, 5 Nov 2026: the same, and no inherited directory or profile file left; owner, 0.20.3.6, 5 Nov 2026: every renderer in capability mode, the suite passes apart from the descriptor test (one unnamed file per renderer); owner, 0.20.3.7, 5 Nov 2026: every renderer in capability mode and the whole suite passes; owner, 0.20.3.8, 7 Nov 2026: the same with per-descriptor rights, but renderers spun on a kqueue poll (fixed for 0.20.3.9); owner, 0.20.3.10, 7 Nov 2026: every renderer the browser listed in capability mode, idle CPU 0.00 s; the gate caught one renderer the browser had just launched and not yet at its lockdown point, so the tests now give a listed renderer five seconds to get there; owner, 0.20.3.11, 8 Nov 2026: every listed renderer in capability mode, the lockdown log clean, the gate passing apart from the policy test (two renderer-made sockets, S-REN-05); owner, 0.20.3.12, 8 Nov 2026: every listed renderer in capability mode, the lockdown log clean, the two socket pairs cut at creation (made on CrRendererMain and Compositor); descriptors unreadable in that run (unprivileged_proc_debug=0), so the gate failed the descriptor tests as designed; the same day with the sysctl at 1: every readable renderer within the policy"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §3.1", "RT-04"]
-notes = "Opt-in. Not yet a sandbox: in 0.20.3.3 renderers inherited directories (/, /usr...) and writable profile files, gone in 0.20.3.4 (S-IPC-01); they still hold shared memory as writable unlinked files in /tmp, replaced by sealed memfds with limited rights in 0.20.3.5 (S-SHM-01, S-SHM-02); 0.20.3.7 hands renderers no swap file, so they hold no writable file. Still missing: the allowlist, least rights on every descriptor, the kernel check, default on. From 7 Nov 2026 the sandbox tests are a gate when the lockdown is requested: a renderer not in capability mode, or unreadable, fails them instead of being skipped (plan/16 BER-04)."
+notes = "Opt-in. Not yet a sandbox: in 0.20.3.3 renderers inherited directories (/, /usr...) and writable profile files, gone in 0.20.3.4 (S-IPC-01); they still hold shared memory as writable unlinked files in /tmp, replaced by sealed memfds with limited rights in 0.20.3.5 (S-SHM-01, S-SHM-02); 0.20.3.7 hands renderers no swap file, so they hold no writable file. Still missing: the allowlist, least rights on every descriptor, the kernel check, default on. From 7 Nov 2026 the sandbox tests are a gate when the lockdown is requested: a renderer not in capability mode, or unreadable, fails them instead of being skipped (plan/16 BER-04). From 0.20.3.13 the lockdown logs the thread count at its point (RendererMain locks down before RenderThreadImpl exists) and the gate requires 1."
 
 [[feature]]
 id = "S-REN-02"
@@ -895,11 +895,12 @@ phase = 2
 implemented = "partial"
 built = "no"
 tested = "passing"
-where = ["patches/security/beryllium-close-inherited-descriptors.patch"]
-tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files"]
+where = ["patches/security/beryllium-close-inherited-descriptors.patch", "patches/security/beryllium-sender-side-rights.patch", "patches/security/beryllium-descriptor-rights.patch"]
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files",
+         "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log"]
 evidence = "owner, 0.20.3.4, 5 Nov 2026: the survey lists about 30 descriptors in a renderer instead of about 120, no directory or profile file, with or without the lockdown (the descriptor test still failed on shared memory, S-SHM-01); owner, 0.20.3.7, 5 Nov 2026: the descriptor test passes with and without the lockdown"
 source = ["plan/06-SECURITY-MODEL.md §4", "plan/03-ARCHITECTURE.md §4.2"]
-notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed in 0.20.3.4 with close() and closefrom(2) between fork and exec. Rights limits on what the launcher passes: only shared memory so far (S-SHM-02, 0.20.3.5); from 0.20.3.9 the receiving renderer cuts the rest itself (beryllium-descriptor-rights.patch), which is not a boundary; the browser cutting before sending is next."
+notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed in 0.20.3.4 with close() and closefrom(2) between fork and exec. Rights limits on what the launcher passes: only shared memory so far (S-SHM-02, 0.20.3.5); from 0.20.3.9 the receiving renderer cuts the rest itself (beryllium-descriptor-rights.patch), which is not a boundary; from 0.20.3.13 the browser cuts every descriptor it sends a renderer launched with the lockdown on, before sendmsg (beryllium-sender-side-rights.patch: the launcher registers the pid as a confined peer, Mojo's transport cuts by kind; a writable File System Access handle keeps a writable kind). Still receiver-limited only: what the GPU process sends a renderer over the transport the browser introduced between them; and the sender alone is not yet verified with the receiver's limit off."
 
 [[feature]]
 id = "S-IPC-02"
@@ -2225,10 +2226,11 @@ phase = 6
 implemented = "done"
 built = "no"
 tested = "passing"
-where = [".github/workflows/freebsd-checks.yml"]
+where = [".github/workflows/freebsd-checks.yml", ".github/workflows/codeql.yml", ".github/codeql/codeql-config.yml", ".github/dependabot.yml"]
 tests = ["freebsd/tools/tests/test_feature_matrix.py"]
 evidence = "GitHub Actions on every push"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §4", "RT-10"]
+notes = "From 9 Nov 2026: CodeQL code scanning (Python, JavaScript, the workflows) as an advanced setup, with the FreeBSD port's patch files excluded (the ports convention names a patch after the file it patches, so a diff of a .py file is itself *.py and GitHub's default setup parsed them as code); Dependabot keeps the commit-pinned actions current."
 
 [[feature]]
 id = "R-TST-06"

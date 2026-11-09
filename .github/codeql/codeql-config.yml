@@ -1,0 +1,30 @@
+# CodeQL configuration for this repository (GitHub code scanning).
+#
+# What to leave out, and why:
+#
+# - freebsd/ports/www/beryllium/files/ holds the FreeBSD port's patch files.
+#   The ports convention names a patch after the file it patches, so a patch
+#   to a .py, .rs or .cc file is itself named *.py, *.rs or *.cc although it
+#   is a unified diff. CodeQL picks languages by extension and reported
+#   parse errors on the .py patches and a low-quality Rust analysis of the
+#   three .rs ones; neither is code. The directory also carries the port's
+#   copies of this repository's own tools and patches (files/beryllium/),
+#   kept identical by freebsd/tools/sync-port, which would only duplicate
+#   findings.
+# - helium/ is the pinned Helium submodule: upstream code, not analysed
+#   here, and not checked out by code scanning anyway.
+# - design-intake/ holds the records of artwork review rounds, including
+#   the tool versions reviewed at the time; the current tools are in
+#   branding/tools.
+#
+# What is analysed: the Python tools and tests (freebsd/tools,
+# freebsd/tests), the JavaScript rendering tool (branding/tools) and the
+# workflows themselves. The Capsicum oracle (freebsd/tests/capsicum-standalone,
+# C) needs a FreeBSD toolchain and is outside CodeQL's reach on a Linux
+# runner; it is compiled and run by the freebsd-checks workflow instead.
+
+name: Beryllium
+paths-ignore:
+  - freebsd/ports/**
+  - helium/**
+  - design-intake/**

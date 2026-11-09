@@ -1,0 +1,148 @@
+Beryllium: the browser cuts the rights of every descriptor it sends a confined renderer
+
+Purpose: Phase 2 increment 5 (plan/14-RENDERER-SANDBOX.md; feature matrix
+  S-IPC-01; plan/06 section 3.2; adversarial review plan/16 BER-05). Until
+  now a confined renderer limited what it received (the receive paths in
+  beryllium-descriptor-rights.patch); a compromised renderer need not run
+  that code, so the receiver's limit is defence in depth, not a boundary.
+  The boundary is the sender: a descriptor's rights travel with it through
+  sendmsg(), so what the browser cuts before sending, the renderer can
+  never have.
+  - content/browser/child_process_launcher_helper.cc: when a renderer is
+    launched with the lockdown feature on, its pid is registered as a
+    confined peer (base::freebsd::ExpectConfinedPeer) before the Mojo
+    invitation is sent, so the first message carrying a handle is covered,
+    and forgotten when the launcher helper goes, since the kernel may reuse
+    the pid. The sandbox type comes from the launcher's delegate; the
+    feature from base/posix/capsicum_rights.h.
+  - mojo/core/ipcz_driver/transport.cc, Transport::Transmit(): the one
+    place a Mojo transport sends platform handles. On a transport whose
+    remote process is a confined peer, every handle is cut to its kind's
+    rights (base::freebsd::LimitSentDescriptor): read-only files, writable
+    files (the new kWritableFile kind, for files handed over on purpose),
+    sockets, kqueues, eventfds and pipes, shared memory; a kind the policy
+    does not have (a device, a directory, a terminal) loses every right and
+    is logged. The remote process is known on the transports the browser
+    made for the children it launched; transports between two children (a
+    renderer and the GPU process, introduced by the browser) carry no
+    remote process here, so what the GPU process sends a renderer is still
+    covered only by the receiver's limit.
+  What this does not cover yet: descriptors the browser passes at launch
+    (they are in the table the lockdown sweeps), and the sandbox IPC
+    channel's replies (shared memory the browser creates, already limited
+    at creation by beryllium-anonymous-shared-memory.patch).
+Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
+  (the feature, the peer registry, LimitSentDescriptor, kWritableFile).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (build 0.20.3.13).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log: the
+  suite runs the sandbox class with --vmodule=capsicum_rights=1, counts the
+  browser's "cut ... bound for confined renderer" lines per renderer and,
+  under the gate on a build that reports the lockdown's thread count,
+  requires at least one; test_confined_renderer_descriptors_follow_the_policy
+  keeps checking the result from outside with procstat. A verification
+  that the sender alone suffices (the receiver's limit switched off) needs
+  a development-only build switch and is listed as open in plan/14.
+security-review: required (IPC boundary, descriptor rights)
+
+--- a/content/browser/child_process_launcher_helper.cc
++++ b/content/browser/child_process_launcher_helper.cc
+@@ -37,6 +37,12 @@
+ #include "mojo/public/cpp/platform/platform_channel.h"
+ #include "services/tracing/public/cpp/trace_startup.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/feature_list.h"
++#include "base/posix/capsicum_rights.h"
++#include "sandbox/policy/mojom/sandbox.mojom.h"
++#endif
++
+ #if BUILDFLAG(IS_ANDROID)
+ #include "content/browser/android/launcher_thread.h"
+ #endif
+@@ -248,6 +254,11 @@
+ }
+ 
+ ChildProcessLauncherHelper::~ChildProcessLauncherHelper() {
++#if BUILDFLAG(IS_FREEBSD)
++  if (beryllium_confined_peer_) {
++    base::freebsd::ForgetConfinedPeer(*beryllium_confined_peer_);
++  }
++#endif
+ #if BUILDFLAG(IS_CHROMEOS)
+   if (base::FeatureList::IsEnabled(features::kSchedQoSOnResourcedForChrome) &&
+       process_id_.has_value()) {
+@@ -412,6 +423,20 @@
+   }
+ 
+   if (process.process.IsValid()) {
++#if BUILDFLAG(IS_FREEBSD)
++    // Beryllium: a renderer launched with the lockdown on (plan/14) is a
++    // confined peer, and every descriptor the browser sends it leaves with
++    // its kind's Capsicum rights (base/posix/capsicum_rights.h, S-IPC-01).
++    // Registered before the invitation is sent, so the first message that
++    // carries a handle is covered; forgotten when this helper goes, since
++    // the kernel may reuse the pid.
++    if (delegate_->GetSandboxType() == sandbox::mojom::Sandbox::kRenderer &&
++        base::FeatureList::IsEnabled(
++            base::freebsd::kBerylliumCapsicumRenderer)) {
++      beryllium_confined_peer_ = process.process.Pid();
++      base::freebsd::ExpectConfinedPeer(*beryllium_confined_peer_);
++    }
++#endif
+ #if !BUILDFLAG(IS_FUCHSIA)
+     if (mojo_named_channel_) {
+       CHECK(!mojo_channel_, base::NotFatalUntil::M160);
+--- a/content/browser/child_process_launcher_helper.h
++++ b/content/browser/child_process_launcher_helper.h
+@@ -340,6 +340,11 @@
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+   std::optional<base::ProcessId> process_id_ = std::nullopt;
++
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: the pid registered as a confined peer, to forget on exit.
++  std::optional<base::ProcessId> beryllium_confined_peer_;
++#endif
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+   // The PlatformChannel that will be used to transmit an invitation to the
+--- a/mojo/core/ipcz_driver/transport.cc
++++ b/mojo/core/ipcz_driver/transport.cc
+@@ -31,6 +31,10 @@
+ #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
+ #include "third_party/ipcz/include/ipcz/ipcz.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+ #include "base/win/win_util.h"
+ #include "mojo/public/cpp/platform/platform_handle_security_util_win.h"
+@@ -407,6 +411,24 @@
+     platform_handles.push_back(transmissible_handle->TakeHandle());
+   }
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: a descriptor bound for a confined renderer leaves with its
++  // kind's Capsicum rights (base/posix/capsicum_rights.h; plan/06 section
++  // 3.2, S-IPC-01). The renderer limits what it receives as well, but a
++  // compromised renderer need not, so the sender is the boundary. The
++  // remote process is known on the transports the browser made for the
++  // children it launched; sends from other processes are untouched here.
++  if (remote_process_.IsValid() && !remote_process_.is_current() &&
++      base::freebsd::IsConfinedPeer(remote_process_.Pid())) {
++    for (const PlatformHandle& handle : platform_handles) {
++      if (handle.is_valid_fd()) {
++        base::freebsd::LimitSentDescriptor(handle.GetFD().get(),
++                                           remote_process_.Pid());
++      }
++    }
++  }
++#endif
++
+   scoped_refptr<Channel> channel;
+   {
+     base::AutoLock lock(lock_);
