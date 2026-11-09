@@ -158,9 +158,10 @@ SUB_LIST+=	COMMENT="${COMMENT}"
 
 OPTIONS_DEFINE=		CODECS CUPS DEBUG DRIVER KERBEROS LTO PIPEWIRE SEARCHICONS SYMBOLS WIDEVINE
 OPTIONS_DEFAULT=	CODECS CUPS DRIVER KERBEROS PIPEWIRE SEARCHICONS SNDIO ALSA PULSEAUDIO \
-			SYMBOLS
-OPTIONS_GROUP=		AUDIO
+			SYMBOLS CJKFONTS EMOJIFONT
+OPTIONS_GROUP=		AUDIO FONTS
 OPTIONS_GROUP_AUDIO=	ALSA PULSEAUDIO SNDIO
+OPTIONS_GROUP_FONTS=	CJKFONTS EMOJIFONT WORLDFONTS
 OPTIONS_RADIO=		KERBEROS
 OPTIONS_RADIO_KERBEROS=	HEIMDAL HEIMDAL_BASE MIT
 OPTIONS_SUB=		yes
@@ -171,6 +172,20 @@ HEIMDAL_DESC=		Heimdal Kerberos (security/heimdal)
 MIT_DESC=		MIT Kerberos (security/krb5)
 SEARCHICONS_DESC=	Search engine icons from helium-nonfree-assets (licence under review, plan/10 Q5)
 SYMBOLS_DESC=		Keep function names in the browser binary (named crash backtraces; larger package)
+
+# Fonts. Chromium draws a character with whatever installed font has its
+# glyph (fontconfig, through the browser's FontService); with no such font
+# the text is boxes or blank. noto-basic covers Latin, Greek and Cyrillic
+# only, so the package depends on fonts for the scripts a desktop otherwise
+# lacks: Noto Sans CJK SC (Chinese, Japanese and Korean; one regional
+# variant carries every CJK glyph), Noto Color Emoji, and optionally the
+# Noto fonts FreeBSD packages for the other scripts.
+CJKFONTS_DESC=		Noto Sans CJK SC for Chinese, Japanese and Korean text (x11-fonts/noto-sans-sc, 200 MB)
+CJKFONTS_RUN_DEPENDS=	noto-sans-sc>0:x11-fonts/noto-sans-sc
+EMOJIFONT_DESC=		Noto Color Emoji (x11-fonts/noto-emoji, 15 MB)
+EMOJIFONT_RUN_DEPENDS=	noto-emoji>0:x11-fonts/noto-emoji
+WORLDFONTS_DESC=	Noto fonts for the other scripts: Arabic, Hebrew, Devanagari, Thai and 20 more (x11-fonts/noto-extra, 40 packages, 250 MB)
+WORLDFONTS_RUN_DEPENDS=	noto-extra>0:x11-fonts/noto-extra
 
 ALSA_LIB_DEPENDS=	libasound.so:audio/alsa-lib
 ALSA_RUN_DEPENDS=	${LOCALBASE}/lib/alsa-lib/libasound_module_pcm_oss.so:audio/alsa-plugins \

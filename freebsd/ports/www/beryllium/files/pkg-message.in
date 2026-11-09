@@ -14,6 +14,12 @@ status of each release is published at https://github.com/johnjanik/Beryllium.
 - Updates: install a newer Beryllium package (install.sh, or a new
   Poudriere build); there is no in-browser updater.
 - Profile: ~/.config/beryllium (override with BERYLLIUM_CONFIG_HOME).
+- Fonts: text is drawn with whatever installed font has its glyphs. The
+  package brings Noto Sans (Latin, Greek, Cyrillic), Noto Sans CJK SC
+  (Chinese, Japanese, Korean) and Noto Color Emoji. For other scripts
+  install their fonts, for example noto-sans-arabic, noto-sans-hebrew,
+  noto-sans-devanagari, noto-sans-thai, or all of them with noto-extra
+  (250 MB). `fc-list :lang=xx` shows what covers a language.
 - Policies: %%PREFIX%%/etc/beryllium/policies/managed/
 - Wayland is recommended. Under X11, any program in the session can read
   input from and inject input into other windows.

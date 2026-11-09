@@ -82,11 +82,16 @@ title = "Everyday basics"
 need = "Clipboard, cookies, CJK and emoji fonts, and private windows work."
 priority = "should"
 phase = 1
-implemented = "inherited"
+implemented = "partial"
 built = "v0.20.3.1-1"
-tested = "planned"
-planned_test = "functional suite: one check each"
+tested = "failing"
+where = ["freebsd/ports/www/beryllium/Makefile (FONTS options: CJKFONTS, EMOJIFONT on by default, WORLDFONTS)"]
+tests = ["freebsd/tests/browser/tests/test_45_fonts.py",
+         "freebsd/tools/tests/test_fonts_check.py"]
+planned_test = "functional suite: one check each for clipboard, cookies and private windows"
+evidence = "owner, 0.20.3.12, 8 and 9 Nov 2026: the fonts test set CJK text in Liberation Serif (22 glyphs), a font with no CJK glyph, with and without the lockdown; a Chinese page printed to PDF from Beryllium and from Firefox on the same machine showed no Chinese in either (Beryllium's PDF carries the text in Liberation Serif, Firefox's drops it): the machine had no CJK font. Arabic, Hebrew, Devanagari, Thai and emoji were set in fonts other packages had installed (DejaVu Sans, Liberation Serif, FreeSans, FreeSerif, Noto Color Emoji)"
 source = ["plan/08-TESTING-AND-VERIFICATION.md §2.4"]
+notes = "Chromium draws a character with whatever installed font has its glyph (fontconfig through the browser's FontService; CachedFontSet checks the charset and reports no fallback when none has it, so the page's font draws boxes or blanks). The port depended on noto-basic only (Latin, Greek, Cyrillic), like www/chromium. From 0.20.3.13 it depends on noto-sans-sc and noto-emoji by default and offers noto-extra for the other scripts (off), and the fonts test fails on any script drawn without its glyphs, by fc-list's charset answer, naming the package. Clipboard, cookies and private windows: not yet tested."
 
 [[feature]]
 id = "F-WEB-06"
