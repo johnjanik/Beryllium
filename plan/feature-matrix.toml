@@ -2318,10 +2318,12 @@ title = "Security policy and advisories"
 need = "SECURITY.md (supported versions, private reporting, response times) and freebsd/ADVISORIES.md (kernel advisories the browser checks) exist."
 priority = "must"
 phase = 6
-implemented = "todo"
+implemented = "done"
 built = "no"
 tested = "none"
+where = ["SECURITY.md", "freebsd/ADVISORIES.md", ".github/dependabot.yml"]
 source = ["plan/11-MAINTENANCE-AND-RELEASE.md §4", "plan/11-MAINTENANCE-AND-RELEASE.md §6"]
+notes = "Written 9 Nov 2026. The reporting channel is GitHub's private vulnerability reporting (to be enabled in the repository settings), not yet a dedicated address with a PGP key; plan/11 section 6 was amended to say so. ADVISORIES.md holds the format and no entry yet. Dependabot watches the pinned GitHub Actions."
 
 [[feature]]
 id = "R-REL-07"

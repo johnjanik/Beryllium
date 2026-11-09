@@ -264,10 +264,12 @@ set it, and the launcher will not start the browser without it.
 
 ## Reporting a problem
 
-Open an [issue](https://github.com/johnjanik/Beryllium/issues). The browser
-test suite collects most of what is needed: it runs the installed Beryllium
-in throwaway profiles (your own profile is never opened) and writes a
-report.
+Open an [issue](https://github.com/johnjanik/Beryllium/issues). For a
+security problem, something exploitable or a false security claim, use
+private reporting instead, as [SECURITY.md](SECURITY.md) describes. The
+browser test suite collects most of what is needed: it runs the installed
+Beryllium in throwaway profiles (your own profile is never opened) and
+writes a report.
 
 ```sh
 freebsd/tests/browser/run

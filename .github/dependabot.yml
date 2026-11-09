@@ -1,0 +1,41 @@
+# Dependabot opens a pull request when something this repository pins has
+# a newer version (https://docs.github.com/code-security/dependabot).
+#
+# What is pinned here and what watches it:
+#
+# - The GitHub Actions in .github/workflows are pinned by commit, with the
+#   version in a comment (plan/16 BER-07, supply-chain hygiene). Dependabot
+#   moves the commit and the comment together, and CI runs on the result.
+#   That is the one ecosystem below.
+#
+# - The helium submodule pins the Helium release Beryllium is built from,
+#   and with it the Chromium version. Dependabot's submodule updates follow
+#   the latest commit of Helium's default branch, not its releases, and
+#   moving the pin is never a one-line change: it is the update procedure
+#   of plan/11 section 3 (refresh the patches, run sync-port, regenerate the
+#   matrix, build, test). So the submodule is not listed; watch Helium's
+#   releases on GitHub instead.
+#
+# - Chromium and the FreeBSD ports patch set are pinned in freebsd/ports
+#   (distinfo, files/IMPORTED-FROM) and updated by hand with the same
+#   procedure.
+#
+# - The Python and Node tools (fontTools, uharfbuzz, Pillow, Playwright)
+#   have no manifest in this repository: they come from FreeBSD packages or
+#   the developer's system and are not part of the browser.
+#
+# Security updates for the Actions come through the same entry. Dependabot
+# alerts are a repository setting (Settings, Code security).
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
