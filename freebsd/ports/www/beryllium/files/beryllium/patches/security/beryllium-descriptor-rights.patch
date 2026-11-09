@@ -76,7 +76,12 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   made it (0.20.3.12: one pair on CrRendererMain right after the lockdown,
   one on Compositor, and the survey of 0.20.3.11 showed one such blocking
   socket to the browser in every child process type, so this is Chromium's
-  pattern; the site in the log, from 0.20.3.13, names it).
+  pattern; the site in the log, from 0.20.3.13, names it). 0.20.3.13
+  (9 November 2026) named it: mojo::PlatformChannel on both CrRendererMain
+  and Compositor, one pair each per renderer, all cut at creation. Which
+  caller opens them is still to be named: from 0.20.3.14 the first pair
+  made at each site on each thread is logged with a stack trace (the
+  package keeps function names), once per process.
   The sender's side (9 November 2026, build 0.20.3.13; plan/14 increment 5,
   S-IPC-01): the feature kBerylliumCapsicumRenderer moves here from
   sandbox_freebsd.cc so the browser can read it too; ExpectConfinedPeer(),
@@ -89,12 +94,24 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   file the browser hands a renderer on purpose (a File System Access
   handle) keeps; the receive path admits it with those rights instead of
   removing every right, while the lockdown point still refuses any
-  writable file.
+  writable file. 0.20.3.13 ran it (9 November 2026): the browser cut 1 to
+  88 descriptors per renderer, none refused outright, and the policy held
+  on every renderer read. One effect on the receive path: a socket the
+  browser has cut arrives without CAP_GETSOCKNAME and CAP_GETPEERNAME, so
+  the receive path's getsockname() and getpeername() were refused, 242
+  times in 20 renderers in the 0.20.3.13 survey (two per received socket;
+  kdump printed the needed right as "invalid cap_rights_t", because on
+  this CURRENT the kernel's constant rights sets, CAP_RIGHTS_INITIALIZER,
+  leave the index bits of their unused word unset and libsysdecode
+  rejects the set instead of naming the right). From 0.20.3.14 the
+  receive path asks a socket's names only when it holds the rights to ask
+  (cap_rights_get), and takes a socket its sender cut as unnamed and
+  unconnected, which the sender checked with the rights it had.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
-  0.20.3.12 state compiled and ran (8 November 2026); the site names, the
-  feature move, the writable kind and the sender's side are for build
-  0.20.3.13, not yet compiled.
+  0.20.3.13 state compiled and ran (9 November 2026); the rights check
+  before getsockname and the stack trace are for build 0.20.3.14, not yet
+  compiled.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -147,7 +164,7 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,424 @@
+@@ -0,0 +1,458 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
@@ -170,6 +187,7 @@ security-review: required (descriptor rights in confined processes)
 +#include <cstddef>
 +#include <set>
 +
++#include "base/debug/stack_trace.h"
 +#include "base/logging.h"
 +#include "base/no_destructor.h"
 +#include "base/strings/string_number_conversions.h"
@@ -415,15 +433,30 @@ security-review: required (descriptor rights in confined processes)
 +    getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len);
 +    len = sizeof(int);
 +    getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &len);
++    // The names are asked only with the rights to ask them. A socket the
++    // browser has already cut to a socket's rights before sending it
++    // (0.20.3.13) refuses getsockname and getpeername, and each refusal
++    // showed in the 0.20.3.13 survey as a failure after the lockdown (242
++    // in 20 renderers). Whoever cut it checked its shape with the rights
++    // it had then; here it is unnamed and unconnected by construction.
 +    struct sockaddr_un local = {}, peer = {};
-+    socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
-+    if (getsockname(fd, reinterpret_cast<struct sockaddr*>(&local),
-+                    &local_len) != 0) {
-+      local_len = 0;
-+    }
-+    if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&peer),
-+                    &peer_len) != 0) {
-+      peer_len = 0;  // not connected: it cannot connect without CAP_CONNECT
++    socklen_t local_len = 0, peer_len = 0;
++    cap_rights_t have;
++    const bool can_name =
++        cap_rights_get(fd, &have) != 0 ||
++        (cap_rights_is_set(&have, CAP_GETSOCKNAME) &&
++         cap_rights_is_set(&have, CAP_GETPEERNAME));
++    if (can_name) {
++      local_len = sizeof(local);
++      if (getsockname(fd, reinterpret_cast<struct sockaddr*>(&local),
++                      &local_len) != 0) {
++        local_len = 0;
++      }
++      peer_len = sizeof(peer);
++      if (getpeername(fd, reinterpret_cast<struct sockaddr*>(&peer),
++                      &peer_len) != 0) {
++        peer_len = 0;  // not connected: it cannot connect without CAP_CONNECT
++      }
 +    }
 +    std::string why;
 +    if (!MojoSocketShape(domain, type,
@@ -533,6 +566,17 @@ security-review: required (descriptor rights in confined processes)
 +  RemoveAllRights(fd);
 +}
 +
++// True the first time |key| is seen in this process. The code behind each
++// socket pair a confined process makes is named once per site and thread
++// with a stack trace: the 0.20.3.13 log named mojo::PlatformChannel on
++// CrRendererMain and on Compositor, and could not say which caller.
++bool FirstTime(const std::string& key) {
++  static NoDestructor<Lock> lock;
++  static NoDestructor<std::set<std::string>> seen;
++  AutoLock hold(*lock);
++  return seen->insert(key).second;
++}
++
 +void LimitCreatedSocketPair(const char* site, int a, int b) {
 +  if (!Confining()) {
 +    return;
@@ -544,9 +588,16 @@ security-review: required (descriptor rights in confined processes)
 +      RemoveAllRights(fd);
 +    }
 +  }
++  const char* thread = PlatformThread::GetName();
++  const std::string thread_name = thread ? thread : "";
 +  LOG(WARNING) << "beryllium-sandbox: socket pair made at " << site
-+               << " on thread '" << PlatformThread::GetName() << "' (fd " << a
-+               << ", fd " << b << "): limited";
++               << " on thread '" << thread_name << "' (fd " << a << ", fd "
++               << b << "): limited";
++  if (FirstTime(std::string(site) + " on " + thread_name)) {
++    LOG(WARNING) << "beryllium-sandbox: the first socket pair made at " << site
++                 << " on thread '" << thread_name << "' came from:\n"
++                 << debug::StackTrace().ToString();
++  }
 +}
 +
 +void LimitReceivedDescriptor(int fd) {

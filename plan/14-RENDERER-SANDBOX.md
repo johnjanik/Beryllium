@@ -392,7 +392,61 @@ FreeBSD test bed, so an increment must be worth a build.
    a `kGpuBuffer` kind would go if renderers ever receive one; and a
    verification that the sender alone suffices needs a development-only
    build switch that turns the receiver's limit off, listed in section 4.
-   **Then attestation** (next, build 0.20.3.14): the browser checks
+   **Results, 0.20.3.13 (9 November 2026, three runs with
+   `unprivileged_proc_debug=1`; the first build failed because the
+   confined-peer member was declared inside Chromium's ChromeOS block,
+   fixed the same day):** every listed renderer in capability mode; the
+   policy held on all four renderers read (20 to 36 descriptors each,
+   none outside it); the receive path refused nothing; the browser cut
+   between 1 and 88 descriptors per renderer before sending (`cut` lines
+   at VLOG(1)), none refused outright. The creation hook named both
+   socket pairs: `mojo::PlatformChannel`, one on `CrRendererMain` and one
+   on `Compositor` per renderer, so the earlier reading of the blocking
+   one as a `SyncSocket` was wrong; the caller is still to be named, and
+   0.20.3.14 logs a stack trace for the first pair at each site and
+   thread (the package keeps function names). Three findings against the
+   increment. (1) `threads=-1` in every renderer: `kern.proc.pid` failed
+   before `cap_enter()` and the code logged nothing about why (the kernel
+   answers one record per process unless `KERN_PROC_INC_THREAD` is asked,
+   so it was not a size overrun). 0.20.3.14 asks with
+   `KERN_PROC_INC_THREAD`, counts the records by their own
+   `ki_structsize`, so a kernel whose `kinfo_proc` is not the size of the
+   build's headers still counts, and logs errno or the sizes on failure.
+   (2) The survey's after-lockdown list gained 242 refusals on sockets
+   holding exactly the socket policy's rights, printed by kdump as
+   `operation requires invalid cap_rights_t`: the receive path's own
+   `getsockname()` and `getpeername()` on sockets the browser had already
+   cut (the policy has neither `CAP_GETSOCKNAME` nor `CAP_GETPEERNAME`),
+   two per received socket, about twelve per renderer. From 0.20.3.14 the
+   receive path asks only when it holds the rights (`cap_rights_get`) and
+   takes a socket its sender cut as unnamed and unconnected, which the
+   sender checked. The `invalid` is kdump's, not a sign of a malformed
+   check: on this CURRENT the kernel's constant rights sets
+   (`CAP_RIGHTS_INITIALIZER` in `sys/capsicum.h`) leave the index bits of
+   their unused word unset and `sysdecode_cap_rights` rejects the set
+   instead of naming the right; a FreeBSD matter for the maintainer to
+   raise if he wishes. (3) **The colour anomaly is not the lockdown's:**
+   the sweep written for 0.20.3.12 ran for the first time and found, with
+   the lockdown off as well as on, every fourth sampled grey (step 5, so
+   a period near 20 levels) one level off in one channel, plus one or two
+   of the mixed colours, on the CPU canvas; the default canvas and
+   `#123456` itself were exact in both runs. The direction was +1
+   throughout one run and -1 throughout the other, the channel varied,
+   and the set of values differed between runs; the three-of-six count
+   with the lockdown was chance in which values a run hit. Candidates
+   now: a colour transform with a periodic rounding error (a lookup table
+   or a display profile reaching the canvas's colour space), or a GPU
+   readback despite `willReadFrequently`. The rendering test now sweeps
+   all 256 greys by fill and by `putImageData` on both canvases, reads
+   each twice, records the context attributes, the screen's gamut and the
+   GPU page's display colour information, and when a value moves runs
+   the same probe in a browser with `--force-color-profile=srgb` and in
+   one with `--disable-gpu`; no build is needed for that. Fonts, from the
+   same runs: with `noto-sans-sc` installed every script is drawn with a
+   font that has its glyphs (Chinese and Japanese in Noto Sans SC, Korean
+   in Noto Sans Mono CJK SC), with and without the lockdown.
+   **Then attestation** (next, build 0.20.3.15; 0.20.3.14 carries the
+   three corrections above): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
