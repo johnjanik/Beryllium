@@ -82,8 +82,8 @@ Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
   patch-base_system_sys__info__posix.cc (stage 2).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Built and
-  run since 0.20.3.3; the thread count's assignment fix is for 0.20.3.15,
-  not yet compiled.
+  run since 0.20.3.3; the thread names are for 0.20.3.16, not yet
+  compiled.
 Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
   test_50_sandbox shows renderers in capability mode and the rest of the
@@ -149,7 +149,14 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   logged, because the count was never lost in the kernel: LockDownRenderer
   stored it in the Confinement that `*confinement = ConfineDescriptors()`
   then replaced. From 0.20.3.15 the count is read before the sweep and
-  assigned after it.
+  assigned after it. 0.20.3.15 (10 November 2026): threads=2 in every
+  renderer, so one thread besides CrRendererMain exists at the lockdown
+  point, against the reading of Chromium's ordering (the thread pool is
+  created but not started before RendererMain, the hang watcher and
+  startup tracing wait for the sandbox, PreSandboxInit starts nothing
+  visible). From 0.20.3.16 the lockdown line also carries
+  thread_names=a,b (ki_tdname of each kinfo_proc record, the names
+  Chromium sets), so the other thread is named by the next report.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -359,7 +366,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +80,254 @@
+@@ -63,6 +80,277 @@
  namespace sandbox {
  namespace policy {
  
@@ -439,8 +446,9 @@ security-review: required (sandbox setup, process confinement)
 +struct Confinement {
 +  int closed_directories = 0;
 +  int limited = 0;
-+  int threads = -1;       // threads in the process at the lockdown point
-+  std::string violation;  // empty when the policy held
++  int threads = -1;          // threads in the process at the lockdown point
++  std::string thread_names;  // their names (ki_tdname), comma-separated
++  std::string violation;     // empty when the policy held
 +};
 +
 +// The number of threads in this process, from the kernel, or -1 with the
@@ -449,7 +457,13 @@ security-review: required (sandbox setup, process confinement)
 +// so the count holds even on a kernel whose kinfo_proc is not the size of
 +// the headers this was built with. 0.20.3.13 asked for one record of the
 +// built-in size, got -1 in every renderer, and logged nothing about why.
-+int ThreadCount() {
++// |names| receives the threads' names (ki_tdname, what Chromium set with
++// pthread_set_name_np, or tid<N> for an unnamed one), comma-separated,
++// when the records are the size this was built for: 0.20.3.15 counted two
++// threads in every renderer at its lockdown point, against Chromium's
++// ordering (RendererMain enables the sandbox before RenderThreadImpl, the
++// thread pool and the hang watcher start), and the name says which.
++int ThreadCount(std::string* names) {
 +  static_assert(offsetof(struct kinfo_proc, ki_structsize) == 0,
 +                "ki_structsize is read as the first int of each record");
 +  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID | KERN_PROC_INC_THREAD,
@@ -476,7 +490,21 @@ security-review: required (sandbox setup, process confinement)
 +                 << " here)";
 +    return -1;
 +  }
-+  return static_cast<int>(len / static_cast<size_t>(structsize));
++  const int count = static_cast<int>(len / static_cast<size_t>(structsize));
++  if (static_cast<size_t>(structsize) == sizeof(struct kinfo_proc)) {
++    for (int i = 0; i < count; ++i) {
++      struct kinfo_proc kp;
++      memcpy(&kp, records.data() + static_cast<size_t>(i) * sizeof(kp),
++             sizeof(kp));
++      if (!names->empty()) {
++        *names += ",";
++      }
++      *names += kp.ki_tdname[0] != '\0'
++                    ? std::string(kp.ki_tdname)
++                    : "tid" + base::NumberToString(kp.ki_tid);
++    }
++  }
++  return count;
 +}
 +
 +// Applies the policy above to every descriptor. On a violation, |violation|
@@ -574,7 +602,8 @@ security-review: required (sandbox setup, process confinement)
 +  // a whole Confinement, and 0.20.3.13 and 0.20.3.14 stored the count in
 +  // the one that assignment replaced, which is how every lockdown line
 +  // said threads=-1 while the kernel had answered.
-+  const int threads = ThreadCount();
++  std::string thread_names;
++  const int threads = ThreadCount(&thread_names);
 +  base::freebsd::ExpectConfinement();
 +  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
 +    int trap = PROC_TRAPCAP_CTL_ENABLE;
@@ -584,6 +613,7 @@ security-review: required (sandbox setup, process confinement)
 +  }
 +  *confinement = ConfineDescriptors();
 +  confinement->threads = threads;
++  confinement->thread_names = thread_names;
 +  if (!confinement->violation.empty()) {
 +    return false;
 +  }
@@ -614,7 +644,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +439,25 @@
+@@ -174,6 +462,28 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
@@ -633,7 +663,10 @@ security-review: required (sandbox setup, process confinement)
 +                   << " capability_mode=1 closed_directories="
 +                   << confinement.closed_directories
 +                   << " limited=" << confinement.limited
-+                   << " threads=" << confinement.threads;
++                   << " threads=" << confinement.threads << " thread_names="
++                   << (confinement.thread_names.empty()
++                           ? "-"
++                           : confinement.thread_names);
 +    }
 +  }
 +

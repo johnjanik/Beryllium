@@ -190,6 +190,8 @@ class SandboxHonesty(BrowserTest):
         made = [l for l in lines if "socket pair made" in l]
         makers = capsicum.socket_pair_makers(made)
         threads_at_lockdown = capsicum.threads_at_lockdown(locked)
+        thread_names = capsicum.thread_names_at_lockdown(locked)
+        other_threads = sorted({n for names in thread_names for n in names if n != "CrRendererMain"})
         cuts = capsicum.sent_cuts(lines)
         refused = [l for l in lines if "bound for confined renderer" in l and "every right removed" in l]
         # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
@@ -211,6 +213,7 @@ class SandboxHonesty(BrowserTest):
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")
                   + (f"\nthreads at the lockdown point: {threads_at_lockdown}"
+                     + (f"; besides CrRendererMain: {other_threads}" if other_threads else "")
                      if threads_at_lockdown else "")
                   + f"\ndescriptors the browser cut before sending, per renderer: {cuts or 'none'}"
                   + (f"; refused outright: {len(refused)}" if refused else "") + "\n"
@@ -227,8 +230,10 @@ class SandboxHonesty(BrowserTest):
             # lockdown records the thread count, and this checks the claim.
             if threads_at_lockdown:
                 self.assertEqual(set(threads_at_lockdown), {1},
-                                 "a renderer had other threads at its lockdown point, or the "
-                                 "count could not be read (-1):\n" + "\n".join(thread_errors[:6]))
+                                 "a renderer had other threads at its lockdown point"
+                                 + (f" ({', '.join(other_threads)})" if other_threads else "")
+                                 + ", or the count could not be read (-1):\n"
+                                 + "\n".join(thread_errors[:6]))
                 # The same builds carry the sender's side (S-IPC-01): the
                 # browser must have cut something before sending to its
                 # confined renderers.

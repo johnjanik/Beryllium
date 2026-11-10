@@ -497,8 +497,35 @@ FreeBSD test bed, so an increment must be worth a build.
    return address as module+offset on the same line; the suite names the
    offsets in the browser binary with `llvm-symbolizer` (the package keeps
    function names) and prints the chain in the lockdown-log note.
-   **Then attestation** (next, build 0.20.3.16; 0.20.3.15 carries these
-   two corrections): the browser checks
+   **Results, 0.20.3.15 (10 November 2026, three runs):** everything
+   passes but the thread count. The return addresses named both
+   socket-pair callers, and both are Mojo's own: on `CrRendererMain`,
+   `mojo::core::ipcz_driver::BaseSharedMemoryService::CreateClient()`
+   while `Invitation::Accept()` takes the browser's invitation in
+   `ChildThreadImpl::Init()`, one end for the browser (the blocking socket
+   the survey had seen since 0.20.3.11); on `Compositor`,
+   `mojo::core::ipcz_driver::Transport::CreatePair()` for
+   `mojo::internal::ThreadLocalNode`, made when
+   `blink::WidgetInputHandlerImpl` binds on the compositor thread, both
+   ends staying in the renderer (fd 19 and 23 in the survey). Nothing to
+   change: both are cut at creation. The canvas noise tests passed in both
+   runs, the second origin moving other pixels on its first load. The
+   survey's after-lockdown list is `cpuset_getaffinity` alone. **The
+   thread count reads 2 in every renderer.** So one thread besides
+   `CrRendererMain` exists at the lockdown point, against the reading of
+   Chromium's ordering: `ContentMainRunnerImpl` creates the renderer's
+   thread pool before `RendererMain` but does not start it, the hang
+   watcher and startup tracing wait for the sandbox on Linux and BSD, and
+   `PreSandboxInit` (sysinfo, BoringSSL, WebRTC, WebNN, cpuinfo) starts
+   nothing visible; a candidate is a thread one of those libraries starts
+   for itself. 0.20.3.16 logs the names (`thread_names=` on the lockdown
+   line, from each `kinfo_proc` record's `ki_tdname`), and the suite
+   prints the ones besides `CrRendererMain`. If the thread is one that
+   cannot open or receive descriptors, the sweep's claim stands with that
+   qualification; if not, the lockdown has to move earlier or stop that
+   thread first. The gate keeps requiring one thread until then.
+   **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
+   thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
