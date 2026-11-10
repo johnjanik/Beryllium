@@ -3,6 +3,11 @@
 says. Lists every Beryllium process and whether it is in Capsicum
 capability mode (procstat -s shows C in FLAGS)."""
 
+import os
+import shutil
+import signal
+import time
+
 from berytest import capsicum
 from berytest.base import BrowserTest
 from berytest.browser import DIRECT_BINARY
@@ -190,8 +195,17 @@ class SandboxHonesty(BrowserTest):
         made = [l for l in lines if "socket pair made" in l]
         makers = capsicum.socket_pair_makers(made)
         threads_at_lockdown = capsicum.threads_at_lockdown(locked)
-        thread_names = capsicum.thread_names_at_lockdown(locked)
-        other_threads = sorted({n for names in thread_names for n in names if n != "CrRendererMain"})
+        # The kernel's names for those threads, per renderer. Up to 0.20.3.16
+        # they say nothing: this port's PlatformThread::SetName() never told
+        # the kernel, so every thread carries the process's name, and
+        # "beryllium,beryllium" is the main thread and one other. Which
+        # other, ThreadsAtLockdown below finds from the stacks.
+        name_sets = capsicum.thread_name_sets(capsicum.thread_names_at_lockdown(locked))
+        names_note = ", ".join(f"{n} x [{names}]" for names, n in sorted(name_sets.items()))
+        own_name = os.path.basename(DIRECT_BINARY)
+        if name_sets and all(set(names.split(",")) <= {own_name} for names in name_sets):
+            names_note += (" (the process's own name: this build gives its threads no "
+                           "kernel names; see the ThreadsAtLockdown test for which they are)")
         cuts = capsicum.sent_cuts(lines)
         refused = [l for l in lines if "bound for confined renderer" in l and "every right removed" in l]
         # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
@@ -213,7 +227,8 @@ class SandboxHonesty(BrowserTest):
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")
                   + (f"\nthreads at the lockdown point: {threads_at_lockdown}"
-                     + (f"; besides CrRendererMain: {other_threads}" if other_threads else "")
+                     + (f"; the kernel's names for them, per renderer: {names_note}"
+                        if names_note else "")
                      if threads_at_lockdown else "")
                   + f"\ndescriptors the browser cut before sending, per renderer: {cuts or 'none'}"
                   + (f"; refused outright: {len(refused)}" if refused else "") + "\n"
@@ -231,7 +246,7 @@ class SandboxHonesty(BrowserTest):
             if threads_at_lockdown:
                 self.assertEqual(set(threads_at_lockdown), {1},
                                  "a renderer had other threads at its lockdown point"
-                                 + (f" ({', '.join(other_threads)})" if other_threads else "")
+                                 + (f" (kernel names: {names_note})" if names_note else "")
                                  + ", or the count could not be read (-1):\n"
                                  + "\n".join(thread_errors[:6]))
                 # The same builds carry the sender's side (S-IPC-01): the
@@ -268,3 +283,56 @@ class SandboxHonesty(BrowserTest):
         self.assertGreater(objects, 0, "no renderer holds a shared memory object: "
                            "is shared memory still kept as files in TMPDIR?")
         self.assertEqual(problems, [], "shared memory descriptors with too many rights")
+
+
+class ThreadsAtLockdown(BrowserTest):
+    """Which threads a renderer has at its lockdown point, from their stacks.
+    The descriptor sweep there is complete only if no other thread can make
+    or receive a descriptor meanwhile, and the lockdown has counted two
+    threads since 0.20.3.15. A renderer started with
+    --renderer-startup-dialog pauses when RendererMain begins; lldb lists
+    its threads, runs it on to the lockdown's marker and lists them again.
+    A record, not a gate: the count is checked in test_lockdown_log."""
+
+    NEEDS_FREEBSD = True
+    BROWSER_ARGS = ("--renderer-startup-dialog",)
+
+    def paused_renderers(self, wait=20):
+        deadline = time.monotonic() + wait
+        while True:
+            pids = [int(m.group(1)) for l in self.browser.log_lines("paused waiting for debugger")
+                    for m in [capsicum.PAUSED.search(l)] if m]
+            if pids or time.monotonic() > deadline:
+                return pids
+            time.sleep(0.5)
+
+    def test_threads_at_the_lockdown_point(self):
+        """Every thread of one renderer, when RendererMain begins and at the
+        lockdown, with where each was started and what it waits in."""
+        if not shutil.which("lldb"):
+            self.skipTest("no lldb to read the threads' stacks")
+        pids = self.paused_renderers()
+        if not pids:
+            self.skipTest("no renderer paused for --renderer-startup-dialog")
+        pid = pids[0]
+        try:
+            text = capsicum.run_to_lockdown(pid)
+        finally:
+            for other in self.paused_renderers(wait=0):
+                try:
+                    os.kill(other, signal.SIGUSR1)  # let the rest start as well
+                except OSError:
+                    pass
+        with open(self.ctx.artifact("threads-at-lockdown.txt"), "w") as f:
+            f.write(text)
+        dumps, images = capsicum.parse_lldb(text)
+        moments = ["when RendererMain begins (paused by --renderer-startup-dialog)",
+                   "at the lockdown point (stopped at the lockdown's utrace marker or cap_enter)"]
+        lines = [f"renderer {pid} under lldb; its whole output is threads-at-lockdown.txt"]
+        for moment, dump in zip(moments, dumps):
+            lines.append(f"{moment}: {len(dump)} thread(s)")
+            lines += ["  " + l for l in capsicum.describe_dump(dump, images, DIRECT_BINARY)]
+        if len(dumps) < 2:
+            lines.append("lldb did not get as far as the lockdown; the end of its output:")
+            lines += ["  " + l for l in text.splitlines()[-12:]]
+        self.note("\n".join(lines))
