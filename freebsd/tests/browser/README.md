@@ -108,6 +108,16 @@ directory. The next test of the class gets a new browser with a log of its
 own (`<Class>-2.stderr.log`, and so on), and a test that would have passed
 over a dead browser, such as the idle privacy test, fails instead.
 
+One line fills these logs on Wayland and means nothing: `WaylandBufferHandle::
+SyncMethod::kSyncobj is not supported!`. The FreeBSD port's patch to
+Chromium's `wayland_frame_manager.cc` writes it as a warning for every frame
+shown, with any GPU (6469 times in one run of 0.20.3.16). The suite leaves it
+out of its excerpts; when reading a log yourself, filter it:
+
+```sh
+grep -v kSyncobj ~/beryllium-test-results/<run>/Startup.stderr.log | tail -30
+```
+
 ## Getting a backtrace
 
 Core dumps go to `kern.corefile` (default `%N.core` in the crashing

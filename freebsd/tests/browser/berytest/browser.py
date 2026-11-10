@@ -78,12 +78,46 @@ def describe_exit(status):
 TELLING = re.compile(r":FATAL:|:ERROR:|Received signal|[Ee]rror|Goodbye|[Ff]ailed|"
                      r"[Ww]ayland|wl_|terminat|[Ll]ost|crash", re.ASCII)
 FRAME = re.compile(r"^\s*(#\d+ 0x|\[end of stack trace\]|[a-z0-9]{2,3}: [0-9a-f]{16}\b)")
+# Lines a healthy browser writes over and over. The FreeBSD port's patch to
+# wayland_frame_manager.cc logs this warning for every frame shown, with any
+# GPU and whichever way the buffer is synchronised (6469 times in one suite
+# run of 0.20.3.16); it says nothing about a failure and would fill every
+# excerpt.
+NOISE = re.compile(r"SyncMethod::kSyncobj is not supported")
+# "[pid:tid:MMDD/HHMMSS.micro:" in front of a log line: differs on every
+# line, so it is left out when two lines are compared.
+STAMP = re.compile(r"^\[\d+:\d+:\d+/[\d.]+:")
+
+
+def quiet(lines):
+    """Log lines without the per-frame noise and the blank ones."""
+    return [l for l in lines if l.strip() and not NOISE.search(l)]
+
+
+def collapse(lines):
+    """Runs of lines that differ only in their stamp, as one line each with
+    the count."""
+    out, last, count = [], None, 0
+    for line in lines:
+        key = STAMP.sub("[", line)
+        if key == last:
+            count += 1
+            continue
+        if count > 1:
+            out[-1] += f" ({count} times)"
+        out.append(line)
+        last, count = key, 1
+    if count > 1:
+        out[-1] += f" ({count} times)"
+    return out
 
 
 def telling_lines(lines, limit=8, window=200):
-    """The last limit lines, of the last window, that say something about a
-    failure; without any, the last limit lines that are not stack frames."""
-    recent = [l.strip() for l in lines[-window:] if l.strip() and not FRAME.match(l)]
+    """The last limit lines, of the last window that are neither noise nor
+    stack frames, that say something about a failure; without any, the last
+    limit of that window."""
+    recent = [l.strip() for l in quiet(lines) if not FRAME.match(l)][-window:]
+    recent = collapse(recent)
     telling = [l for l in recent if TELLING.search(l)]
     return [l[:300] for l in (telling or recent)[-limit:]]
 
@@ -319,12 +353,8 @@ class Browser:
             return []
 
     def log_tail(self, lines=40):
-        try:
-            with open(self.log_path, "rb") as f:
-                data = f.read().decode(errors="replace").splitlines()
-        except OSError:
-            return ""
-        return "\n".join(data[-lines:])
+        """The end of the log, without the per-frame noise (see NOISE)."""
+        return "\n".join(collapse(quiet(self._log()))[-lines:])
 
     def record_version(self):
         """The first browser started in a run names the browser in the report."""

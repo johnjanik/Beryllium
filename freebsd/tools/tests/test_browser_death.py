@@ -70,6 +70,47 @@ class TellingLines(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(browser.telling_lines([]), [])
 
+    def test_the_per_frame_warning_is_not_telling(self):
+        # What the owner's grep of a 0.20.3.16 run found 6469 times.
+        spam = [f"[100:100:1110/1631{i:02d}.5:WARNING:ui/ozone/platform/wayland/host/"
+                "wayland_frame_manager.cc:537] WaylandBufferHandle::SyncMethod::kSyncobj "
+                "is not supported!" for i in range(60)]
+        lines = browser.telling_lines(LOG.splitlines()[:4] + spam * 10)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("Goodbye", lines[-1])
+        self.assertEqual(browser.telling_lines(spam), [])
+
+    def test_repeats_are_collapsed(self):
+        repeated = [f"[1:1:1110/16310{i}.1:ERROR:a.cc:1] the same thing" for i in range(5)]
+        lines = browser.telling_lines(["[1:1:1110/163100.0:ERROR:b.cc:2] first"] + repeated
+                                      + ["[1:1:1110/163109.0:ERROR:c.cc:3] last"])
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[1].endswith("the same thing (5 times)"))
+        self.assertTrue(lines[2].endswith("last"))
+
+
+class QuietAndCollapse(unittest.TestCase):
+    def test_quiet_drops_noise_and_blank_lines(self):
+        self.assertEqual(browser.quiet(["a", "", "  ", "x SyncMethod::kSyncobj is not "
+                                        "supported! y", "b"]), ["a", "b"])
+
+    def test_collapse_ignores_the_stamp_only(self):
+        self.assertEqual(browser.collapse(["[1:2:1110/163100.1:INFO:a.cc:1] x",
+                                           "[1:3:1110/163100.2:INFO:a.cc:1] x",
+                                           "[1:3:1110/163100.3:INFO:a.cc:2] x"]),
+                         ["[1:2:1110/163100.1:INFO:a.cc:1] x (2 times)",
+                          "[1:3:1110/163100.3:INFO:a.cc:2] x"])
+
+    def test_collapse_of_nothing_and_of_distinct_lines(self):
+        self.assertEqual(browser.collapse([]), [])
+        self.assertEqual(browser.collapse(["a", "b", "a"]), ["a", "b", "a"])
+
+    def test_log_tail_is_quiet(self):
+        b = fake_browser(1, "one\n" + "w SyncMethod::kSyncobj is not supported!\n" * 50
+                         + "two\n")
+        self.addCleanup(os.unlink, b.log_path)
+        self.assertEqual(b.log_tail(5), "one\ntwo")
+
 
 class KernelLines(unittest.TestCase):
     def test_finds_the_process(self):

@@ -593,7 +593,19 @@ FreeBSD test bed, so an increment must be worth a build.
    plain start fails too and this is a fault to fix. The suite's run
    script gains `--lockdown` and says before its first test whether the
    lockdown is requested; the rendering note names the render node and who
-   chose it.
+   chose it. The owner's search of the newest run's logs for `libwayland`,
+   `Wayland` and `FATAL` found one line, 6469 times, and nothing else:
+   "WaylandBufferHandle::SyncMethod::kSyncobj is not supported!", a
+   warning the FreeBSD port's patch to `wayland_frame_manager.cc` writes
+   for every frame shown, in the explicit-sync branch and, with the same
+   words, in the implicit one. It is noise on any GPU, and it matched the
+   suite's own pattern for telling lines, so the suite now leaves it out
+   and collapses repeated lines. If that newest run was an Intel one, no
+   Wayland error and no fatal message was logged, which rules out the
+   candidate above and the GPU process being given up on, since both
+   always log one; the search took the newest directory, so that is not
+   yet certain. The next look picks the run by its report and reads the
+   end of one browser's log without that line, with the kernel's record.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
