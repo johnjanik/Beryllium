@@ -38,6 +38,7 @@ def case(method, browser_args, processes, grace=0):
     t.browser = mock.Mock()
     t.browser.conn.send.return_value = {"processInfo": processes}
     t.browser.log_lines.return_value = []
+    t.browser.log_context.return_value = []
     t.ctx = mock.Mock()
     t.ctx.options = argparse.Namespace(browser_args=list(browser_args))
     return t
@@ -296,3 +297,35 @@ class LogTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogContext(unittest.TestCase):
+    """browser.context_lines: a log line and the unprefixed lines of the
+    same message after it (a stack trace), stopping at the next record."""
+
+    def test_trace_block_ends_at_the_next_record(self):
+        from berytest import browser
+        lines = [
+            "[1:2:1110/065457.967895:WARNING:capsicum_rights.cc(426)] beryllium-sandbox: socket pair made at mojo::PlatformChannel on thread 'Compositor' (fd 17, fd 18): limited",
+            "[1:2:1110/065457.967933:WARNING:capsicum_rights.cc(430)] beryllium-sandbox: the first socket pair made at mojo::PlatformChannel on thread 'Compositor' came from:",
+            "#0 0x000000000001 base::debug::CollectStackTrace()",
+            "#1 0x000000000002 mojo::PlatformChannel::PlatformChannel()",
+            "#2 0x000000000003 viz::Something()",
+            "[1:3:1110/065458.000000:INFO:other.cc(1)] unrelated",
+            "#0 not part of a trace",
+        ]
+        blocks = browser.context_lines(lines, "came from:", after=16)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].count("\n"), 3)
+        self.assertIn("mojo::PlatformChannel::PlatformChannel()", blocks[0])
+        self.assertNotIn("unrelated", blocks[0])
+
+    def test_after_limits_the_block(self):
+        from berytest import browser
+        lines = ["[x] beryllium-sandbox: came from:"] + [f"#{i} frame" for i in range(30)]
+        blocks = browser.context_lines(lines, "came from:", after=5)
+        self.assertEqual(blocks[0].count("\n"), 5)
+
+    def test_no_match_no_block(self):
+        from berytest import browser
+        self.assertEqual(browser.context_lines(["[x] nothing here"], "came from:"), [])

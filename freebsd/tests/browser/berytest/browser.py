@@ -39,6 +39,25 @@ def has_display():
     return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
 
 
+def context_lines(lines, needle, after=16):
+    """For each line containing needle, that line and the lines after it
+    that continue the same log message: Chromium prefixes each message with
+    "[pid:tid:date:LEVEL:file(line)]" and prints a multi-line message (a
+    stack trace) with the extra lines unprefixed. Each result is one block
+    (a string with newlines), at most after lines long."""
+    blocks = []
+    for i, line in enumerate(lines):
+        if needle not in line:
+            continue
+        block = [line]
+        for extra in lines[i + 1:i + 1 + after]:
+            if extra.startswith("["):
+                break
+            block.append(extra)
+        blocks.append("\n".join(block))
+    return blocks
+
+
 def _high_fd(fd):
     new = fcntl.fcntl(fd, fcntl.F_DUPFD, 10)
     os.close(fd)
@@ -199,12 +218,19 @@ class Browser:
     def log_lines(self, needle, limit=200):
         """Lines of the browser's log (its stderr, shared by its children)
         containing needle; the last limit of them."""
+        return [l for l in self._log() if needle in l][-limit:]
+
+    def log_context(self, needle, after=16, limit=20):
+        """Each log line containing needle with the lines that belong to the
+        same message after it (a stack trace, for one): see context_lines."""
+        return context_lines(self._log(), needle, after)[:limit]
+
+    def _log(self):
         try:
             with open(self.log_path, "rb") as f:
-                data = f.read().decode(errors="replace").splitlines()
+                return f.read().decode(errors="replace").splitlines()
         except OSError:
             return []
-        return [l for l in data if needle in l][-limit:]
 
     def log_tail(self, lines=40):
         try:

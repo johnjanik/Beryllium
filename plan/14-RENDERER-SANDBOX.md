@@ -467,8 +467,27 @@ FreeBSD test bed, so an increment must be worth a build.
    same runs: with `noto-sans-sc` installed every script is drawn with a
    font that has its glyphs (Chinese and Japanese in Noto Sans SC, Korean
    in Noto Sans Mono CJK SC), with and without the lockdown.
-   **Then attestation** (next, build 0.20.3.15; 0.20.3.14 carries the
-   three corrections above): the browser checks
+   **Results, 0.20.3.14 (10 November 2026, three runs each with
+   `unprivileged_proc_debug=0` and 1):** the rendering group is exact on
+   every sweep with the canvas noise off, on both canvases, by fill and by
+   copy, the first time since 0.20.3.8; the canvas noise tests pass
+   (24 per cent of a flat fill's pixels moved by one level in one channel,
+   the same on a second read, none with the feature off), except that in
+   one of four runs the second origin's first load moved exactly the first
+   origin's pixels, as if it had used the first's token (the test now
+   reloads once and notes it; a Helium matter if it recurs). The survey's
+   after-lockdown list is down to `cpuset_getaffinity`, 20 in 20
+   renderers: the 242 refusals were the receive path's own calls, as
+   diagnosed. The policy held on every renderer read, the browser cut 1 to
+   93 descriptors per renderer, and both socket pairs are logged with
+   stack traces, which the report did not carry (the note printed only
+   lines with the marker; it now prints the trace blocks and the thread
+   count's error lines). **The thread count is still -1 in every
+   renderer**, by the second method as well, so `kern.proc.pid` itself
+   fails for a renderer before `cap_enter()`; the reason is in the
+   browser's stderr log of these runs (`kern.proc.pid` lines) and in the
+   next report. **Then attestation** (next, build 0.20.3.15): the browser
+   checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
