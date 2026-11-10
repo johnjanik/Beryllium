@@ -9,6 +9,7 @@ browser's stderr to the results directory.
 import fcntl
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -58,6 +59,99 @@ def context_lines(lines, needle, after=16):
     return blocks
 
 
+def describe_exit(status):
+    """A wait status as Popen reports it, in words; None for a process
+    that still runs."""
+    if status is None:
+        return None
+    if status < 0:
+        try:
+            name = signal.Signals(-status).name
+        except ValueError:
+            name = "unknown"
+        return f"was killed by signal {-status} ({name})"
+    return f"exited with status {status}"
+
+
+# What a browser log says about why the process ended, as opposed to the
+# stack frames and register dump that follow a crash and fill its last lines.
+TELLING = re.compile(r":FATAL:|:ERROR:|Received signal|[Ee]rror|Goodbye|[Ff]ailed|"
+                     r"[Ww]ayland|wl_|terminat|[Ll]ost|crash", re.ASCII)
+FRAME = re.compile(r"^\s*(#\d+ 0x|\[end of stack trace\]|[a-z0-9]{2,3}: [0-9a-f]{16}\b)")
+# Lines a healthy browser writes over and over. The FreeBSD port's patch to
+# wayland_frame_manager.cc logs this warning for every frame shown, with any
+# GPU and whichever way the buffer is synchronised (6469 times in one suite
+# run of 0.20.3.16); it says nothing about a failure and would fill every
+# excerpt.
+NOISE = re.compile(r"SyncMethod::kSyncobj is not supported")
+# "[pid:tid:MMDD/HHMMSS.micro:" in front of a log line: differs on every
+# line, so it is left out when two lines are compared.
+STAMP = re.compile(r"^\[\d+:\d+:\d+/[\d.]+:")
+
+
+# Log lines whose cause is known, with what they mean. Each was met in a
+# report and traced: add to this only what has been.
+EXPLANATIONS = (
+    (re.compile(r"importing the supplied dmabufs failed"),
+     "the Wayland compositor could not import a buffer the browser drew, and Chromium "
+     "stops on any Wayland error (signal 5); with --render-node-override this means the "
+     "named GPU is not one the compositor can take buffers from (0.20.3.16 with the Intel "
+     "node on a desktop drawn by the NVIDIA GPU, 10 November 2026)"),
+)
+
+
+def explain(lines):
+    """What is known about the failure these log lines show, or ""."""
+    for pattern, meaning in EXPLANATIONS:
+        if any(pattern.search(l) for l in lines):
+            return meaning
+    return ""
+
+
+def quiet(lines):
+    """Log lines without the per-frame noise and the blank ones."""
+    return [l for l in lines if l.strip() and not NOISE.search(l)]
+
+
+def collapse(lines):
+    """Runs of lines that differ only in their stamp, as one line each with
+    the count."""
+    out, last, count = [], None, 0
+    for line in lines:
+        key = STAMP.sub("[", line)
+        if key == last:
+            count += 1
+            continue
+        if count > 1:
+            out[-1] += f" ({count} times)"
+        out.append(line)
+        last, count = key, 1
+    if count > 1:
+        out[-1] += f" ({count} times)"
+    return out
+
+
+def telling_lines(lines, limit=8, window=200):
+    """The last limit lines, of the last window that are neither noise nor
+    stack frames, that say something about a failure; without any, the last
+    limit of that window."""
+    recent = [l.strip() for l in quiet(lines) if not FRAME.match(l)][-window:]
+    recent = collapse(recent)
+    telling = [l for l in recent if TELLING.search(l)]
+    return [l[:300] for l in (telling or recent)[-limit:]]
+
+
+def kernel_lines(pid, path="/var/log/messages", limit=3):
+    """What the kernel logged about a process: FreeBSD writes "pid N
+    (name), jid J, uid U: exited on signal S (core dumped)" for a crash."""
+    needle = f"pid {pid} ("
+    try:
+        with open(path, errors="replace") as f:
+            return [l.strip() for l in f if needle in l][-limit:]
+    except OSError:
+        return []
+
+
 def _high_fd(fd):
     new = fcntl.fcntl(fd, fcntl.F_DUPFD, 10)
     os.close(fd)
@@ -89,6 +183,8 @@ class Browser:
         self.proc = None
         self.conn = None
         self.version = {}
+        self._stopping = False
+        self._death_told = False
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -153,16 +249,66 @@ class Browser:
         os.close(child_r)
         os.close(child_w)
         self.conn = Connection(from_browser_r, to_browser_w)
+        self.conn.why_closed = self.death
         try:
             self.version = self.conn.send("Browser.getVersion", timeout=timeout)
             self.conn.send("Target.setDiscoverTargets", {"discover": True})
         except CDPError as e:
             self.stop()
-            raise CDPError(f"{self.binary} did not start: {e}; log: {self.log_path}\n"
-                           + self.log_tail())
+            # An error about a closed connection already ends with the log.
+            tail = "" if "last lines of its log" in str(e) else "\n" + self.log_tail()
+            raise CDPError(f"{self.binary} did not start: {e}; log: {self.log_path}{tail}")
         return self
 
+    def ended(self):
+        """None while the browser process runs; otherwise how it ended:
+        "exited with status 1" or "was killed by signal 11 (SIGSEGV)"."""
+        if not self.proc:
+            return None
+        return describe_exit(self.proc.poll())
+
+    def death(self):
+        """For an error about a closed connection: how the browser process
+        ended, and the first time also the last lines of its log and the
+        kernel's line about it. The pipe closes a moment before the process
+        is gone, so this waits for it briefly."""
+        if not self.proc or self._stopping:
+            return ""
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return ("the browser process is still running; it closed the "
+                    "debugging pipe")
+        how = f"the browser process (pid {self.proc.pid}) {self.ended()}"
+        if self._death_told:
+            return how + ", as reported for an earlier test"
+        self._death_told = True
+        parts = [how]
+        kernel = kernel_lines(self.proc.pid)
+        if kernel:
+            parts.append("kernel: " + " | ".join(kernel))
+        log = self._log()
+        known = explain(log[-400:])
+        if known:
+            parts.append("known cause: " + known)
+        tail = telling_lines(log)
+        parts.append("last lines of its log (" + os.path.basename(self.log_path) + "):\n  "
+                     + "\n  ".join(tail) if tail else "its log is empty")
+        return "; ".join(parts)
+
+    def death_note(self):
+        """For a test's notes: how the process ended, the kernel's line and
+        more of the log than an error message carries."""
+        log = self._log()
+        known = explain(log[-400:])
+        return (f"the browser process (pid {self.proc.pid}) {self.ended()}\n"
+                f"kernel: {' | '.join(kernel_lines(self.proc.pid)) or 'no line about it'}\n"
+                + (f"known cause: {known}\n" if known else "")
+                + f"log ({os.path.basename(self.log_path)}):\n  "
+                + ("\n  ".join(telling_lines(log, limit=20)) or "empty"))
+
     def stop(self):
+        self._stopping = True
         if self.conn and not self.conn.closed:
             try:
                 self.conn.send("Browser.close", timeout=10)
@@ -233,12 +379,8 @@ class Browser:
             return []
 
     def log_tail(self, lines=40):
-        try:
-            with open(self.log_path, "rb") as f:
-                data = f.read().decode(errors="replace").splitlines()
-        except OSError:
-            return ""
-        return "\n".join(data[-lines:])
+        """The end of the log, without the per-frame noise (see NOISE)."""
+        return "\n".join(collapse(quiet(self._log()))[-lines:])
 
     def record_version(self):
         """The first browser started in a run names the browser in the report."""

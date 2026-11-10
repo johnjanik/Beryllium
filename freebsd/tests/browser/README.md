@@ -39,7 +39,8 @@ it they are skipped. Useful options:
   (start-up) from what happens after (must work in capability mode).
   Nothing is confined while it runs. Descriptors and environment need
   `security.bsd.unprivileged_proc_debug=1` (the default) during the run.
-- `run --browser-arg=--enable-features=BerylliumCapsicumRenderer`: the whole
+- `run --lockdown` (short for
+  `--browser-arg=--enable-features=BerylliumCapsicumRenderer`): the whole
   suite with renderers in Capsicum capability mode (opt-in while the
   sandbox is being built, plan/14); `sandbox` shows each renderer's mode,
   the other groups show what still breaks. With that switch the `sandbox`
@@ -78,10 +79,10 @@ files named below.
 | `videodiag` | with `--diagnose`: video playback under ten switch sets, as a table (the last forces the GPU memory buffer path Beryllium turns off with NVIDIA) | `video-diagnosis.txt` |
 | `media` | codec support (VP9, AV1, Opus, H.264, AAC); H.264, VP9 and AV1 clips play; AV1, VP9 and Opus through Media Source Extensions, the way YouTube streams | `media-codecs.json` |
 | `capsicum` | with `--diagnose`: what capability mode would refuse, per process type, and each process's descriptors with their Capsicum rights (the input to the renderer sandbox) | `capsicum-survey.txt`, `.json`, `capsicum-kdump.txt.gz` |
-| `rendering` | with Helium's canvas noise switched off (`--disable-features=HeliumNoiseCanvas`), every grey and a set of colours read back from a canvas as drawn, on a CPU canvas and the default one, by fill and by putImageData (what moves, in which channel, how far apart; when something moves, the same probe runs again with the display profile forced to sRGB, with the GPU off and with Skia's baseline CPU code); WebGL in a window; WebGPU; the GPU process's report and the GPU page's display colour information | `gpu-info.json` |
+| `rendering` | with Helium's canvas noise switched off (`--disable-features=HeliumNoiseCanvas`), every grey and a set of colours read back from a canvas as drawn, on a CPU canvas and the default one, by fill and by putImageData (what moves, in which channel, how far apart; when something moves, the same probe runs again with the display profile forced to sRGB, with the GPU off and with Skia's baseline CPU code); WebGL in a window; WebGPU; the GPU process's report, and from the GPU page the DRM render node in use and whether the run named it or the browser chose it, every GPU (the one in use marked `*ACTIVE*`) and the displays' colour information | `gpu-info.json` |
 | `fonts` | text in eleven scripts (Latin, Greek, Cyrillic, Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari, Thai, emoji) is drawn with a font that has its glyphs, by fontconfig's own account (`fc-list` by charset), so a script that would show as boxes or blanks fails and the test names the package that brings a font for it; and each script is set in the same platform fonts by a renderer in capability mode as by one that is not: two browsers, the lockdown switched on and off explicitly | |
 | `sandbox` | every process and whether the kernel has it in Capsicum capability mode (`procstat -s`; a renderer the browser has just launched gets five seconds to reach its lockdown point); the GPU page's "Sandboxed" equals the kernel's answer (RT-17); renderers hold no directory or writable file, their shared memory is anonymous with limited rights, and with the lockdown on every renderer descriptor has an allowed type and no more rights than the policy gives it (`procstat -f`, `procstat -C`; a socket outside the policy is named by the process holding its other end, from `fstat`), and the browser log shows no received descriptor the policy refused, a single thread at each lockdown, and the browser cutting what it sent each renderer | |
-| `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host, as seen by a local proxy that records and refuses every connection: HTTP(S) the browser sends through the proxy it was given, not DNS, UDP (QUIC) or anything that bypasses a proxy; Helium's canvas noise is there by default (a flat fill reads back with about one pixel in four one level off in one channel, the same twice, differently on another origin) and gone with the feature off | `privacy-*.txt` |
+| `privacy` | a fresh browser left idle for 30 s, then showing a local page, contacts no outside host, as seen by a local proxy that records and refuses every connection: HTTP(S) the browser sends through the proxy it was given, not DNS, UDP (QUIC) or anything that bypasses a proxy; Helium's canvas noise is there by default (a flat fill reads back with about one pixel in four one level off in one channel, the same twice, differently on another origin), the moved pixels are none of the four sets that the noise hash before 0.20.3.17 chose from by two bits of the site's token, and the noise is gone with the feature off | `privacy-*.txt` |
 | `ui` | Settings > "Show home button" gives a Home button that is visible, drawn, enabled, has an icon and is not covered, in each of Helium's layouts (classic, centered address bar, minimal URL, narrow window, compact, vertical tabs, dynamic, zen mode); `--my-settings` adds a row with a copy of your own settings | `ui-home-button.txt`, `ui-toolbar-<layout>.txt`, `.json` |
 | `youtube` | with `--network`: a video plays for 60 s without a crash or player error; records the codecs YouTube chose | `youtube-samples.json` |
 | `stability` | eight animated tabs at once; quick navigation through internal pages; a renderer showing a static page uses almost no CPU over five seconds | |
@@ -96,6 +97,30 @@ can also read yourself:
 
 ```sh
 grep 'exited on signal' /var/log/messages | tail
+```
+
+When the browser process itself ends under a test (a crash, a fatal error, or
+an exit), every command to it fails with "browser connection closed". The
+error then says how the process ended (its exit status, or the signal that
+killed it), gives the kernel's line about it and the lines of its log that
+say something about a failure, and names the log file in the results
+directory. The next test of the class gets a new browser with a log of its
+own (`<Class>-2.stderr.log`, and so on), and a test that would have passed
+over a dead browser, such as the idle privacy test, fails instead.
+
+Where the cause of a death is known from an earlier report, the error names
+it. So far that is one: `importing the supplied dmabufs failed`, the Wayland
+compositor refusing a buffer from a GPU it cannot take buffers from, which is
+what `--render-node-override` naming the wrong GPU produces (signal 5).
+
+One line fills these logs on Wayland and means nothing: `WaylandBufferHandle::
+SyncMethod::kSyncobj is not supported!`. The FreeBSD port's patch to
+Chromium's `wayland_frame_manager.cc` writes it as a warning for every frame
+shown, with any GPU (6469 times in one run of 0.20.3.16). The suite leaves it
+out of its excerpts; when reading a log yourself, filter it:
+
+```sh
+grep -v kSyncobj ~/beryllium-test-results/<run>/Startup.stderr.log | tail -30
 ```
 
 ## Getting a backtrace

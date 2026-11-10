@@ -127,6 +127,65 @@ def sweep_summary(entries):
 NO_NOISE = "--disable-features=HeliumNoiseCanvas"
 
 
+# The GPU page keeps its tables inside a custom element's shadow tree, so
+# document.body.innerText is empty there (the 0.20.3.16 report said "nothing
+# shown"). This walks the shadow trees and returns each table row's cells.
+GPU_ROWS = """(() => {
+  const rows = [];
+  const walk = root => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+      if (el.tagName === 'TR') {
+        const cells = [...el.children].map(c => c.textContent.replace(/\\s+/g, ' ').trim());
+        if (cells.some(Boolean)) rows.push(cells);
+      }
+    }
+  };
+  walk(document);
+  return rows;
+})()"""
+
+GPU_ROWS_WANTED = re.compile(r"^GPU\d|ACTIVE|Optimus|switchable|Display\[|[Cc]olor space|"
+                             r"[Cc]olor volume|Bits per|white level|HDR|Buffer format")
+
+
+def gpu_page_lines(rows):
+    """The GPU page's rows about the GPUs (one row each, the one in use
+    marked *ACTIVE*) and the displays, as "name: value" lines."""
+    lines = []
+    for cells in rows:
+        cells = [c.strip() for c in cells if c and c.strip()]
+        if not cells:
+            continue
+        line = ": ".join([cells[0].rstrip(": ")] + cells[1:])
+        if GPU_ROWS_WANTED.search(line):
+            lines.append(line[:400])
+    return lines
+
+
+RENDER_NODE = re.compile(r"--render-node-override=(\S+)")
+
+
+def render_node(rows, given_args=()):
+    """The DRM render node the browser renders with on Wayland, from the
+    command line the GPU page shows, and who chose it. Without the switch
+    on its command line the browser adds it itself, naming the GPU the
+    compositor announces as its main device (or, when the compositor names
+    none, a node it finds: an Intel or AMD one first). Returns a line for
+    the report, or None when the page shows no such switch (X11, or no
+    usable node)."""
+    for cells in rows:
+        match = RENDER_NODE.search(" ".join(c for c in cells if c))
+        if match:
+            node = match.group(1)
+            given = any(RENDER_NODE.search(arg) for arg in given_args)
+            return (f"render node: {node} ("
+                    + ("named by this run's switch" if given else
+                       "the browser's own choice: the compositor's main device, or the "
+                       "first usable node it found") + ")")
+    return None
+
+
 class Rendering(BrowserTest):
     BROWSER_ARGS = (NO_NOISE,)
 
@@ -209,12 +268,13 @@ class Rendering(BrowserTest):
         try:
             page = self.browser.new_page(self.browser.url("gpu"))
             self.browser.wait(2)
-            text = page.eval("document.body.innerText") or ""
-            wanted = re.compile(r"^GPU\d|ACTIVE|Optimus|switchable|Display\[|[Cc]olor space|"
-                                r"[Cc]olor volume|Bits per|white level|HDR|Buffer format")
-            shown = [l.strip() for l in text.splitlines() if wanted.search(l.strip())]
+            rows = page.eval(GPU_ROWS) or []
+            shown = gpu_page_lines(rows)
+            node = render_node(rows, self.ctx.options.browser_args)
+            if node:
+                lines.append(node)
             lines.append("GPUs and displays (beryllium://gpu): "
-                         + ("\n  ".join([""] + shown[:24]) if shown else "nothing shown"))
+                         + ("\n  ".join([""] + shown[:32]) if shown else "nothing shown"))
         except Exception as e:  # a note, not the test
             lines.append(f"GPUs and displays (beryllium://gpu): not read: {e}")
         self.note("\n".join(lines))

@@ -1,0 +1,362 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Tests for what the browser suite says when the browser process ends
+under a test (freebsd/tests/browser/berytest: browser.py, cdp.py, base.py).
+The 0.20.3.16 run on the Intel render node (10 November 2026) had 21
+errors that said only "browser connection closed"."""
+
+import os
+import signal
+import sys
+import tempfile
+import time
+import unittest
+import unittest.mock
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "tests", "browser"))
+from berytest import base, browser, cdp  # noqa: E402
+
+
+class DescribeExit(unittest.TestCase):
+    def test_running(self):
+        self.assertIsNone(browser.describe_exit(None))
+
+    def test_exit_status(self):
+        self.assertEqual(browser.describe_exit(0), "exited with status 0")
+        self.assertEqual(browser.describe_exit(1), "exited with status 1")
+
+    def test_signal(self):
+        self.assertEqual(browser.describe_exit(-signal.SIGSEGV),
+                         f"was killed by signal {int(signal.SIGSEGV)} (SIGSEGV)")
+        self.assertEqual(browser.describe_exit(-signal.SIGABRT),
+                         f"was killed by signal {int(signal.SIGABRT)} (SIGABRT)")
+
+    def test_unknown_signal(self):
+        self.assertEqual(browser.describe_exit(-250), "was killed by signal 250 (unknown)")
+
+
+LOG = """\
+[100:100:1110/163102.1:WARNING:chrome/browser/x.cc:1] something ordinary
+[100:100:1110/163102.2:INFO:y.cc:2] hello
+[101:101:1110/163102.3:ERROR:ui/ozone/platform/wayland/host/z.cc:3] a wl_buffer could not be made
+[100:100:1110/163102.4:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:448] GPU process isn't usable. Goodbye.
+#0 0x000001234567 (/usr/local/share/beryllium/beryllium+0x1234566)
+#1 0x000001234568 (/usr/local/share/beryllium/beryllium+0x1234567)
+  r8: 000000007fffffef  r9: 00000000ffffffed r10: 00000000ffffffec r11: 0000000000000000
+ r12: fffffffc00000000 r13: 000024b4043498a8 r14: 000024b4044dd3c0 r15: 0000000000000000
+  di: 000024b4044dd100  si: 00000000000000cd  bp: 00007fff3856ece0  bx: 000024b4044dd100
+[end of stack trace]
+
+"""
+
+
+class TellingLines(unittest.TestCase):
+    def test_keeps_what_says_why_and_drops_the_stack(self):
+        lines = browser.telling_lines(LOG.splitlines())
+        self.assertEqual(len(lines), 2)
+        self.assertIn("wl_buffer", lines[0])
+        self.assertIn("Goodbye", lines[1])
+
+    def test_falls_back_to_the_last_lines_that_are_not_frames(self):
+        quiet = ["one", "two", "#0 0x01 (bin+0x1)", "  ip: 0000562928adbb7a efl: 0", "three"]
+        self.assertEqual(browser.telling_lines(quiet, limit=2), ["two", "three"])
+
+    def test_limit_and_length(self):
+        many = [f"[1:1:ERROR:a.cc:1] {'x' * 500} {i}" for i in range(30)]
+        lines = browser.telling_lines(many, limit=5)
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(all(len(l) <= 300 for l in lines))
+
+    def test_empty(self):
+        self.assertEqual(browser.telling_lines([]), [])
+
+    def test_the_per_frame_warning_is_not_telling(self):
+        # What the owner's grep of a 0.20.3.16 run found 6469 times.
+        spam = [f"[100:100:1110/1631{i:02d}.5:WARNING:ui/ozone/platform/wayland/host/"
+                "wayland_frame_manager.cc:537] WaylandBufferHandle::SyncMethod::kSyncobj "
+                "is not supported!" for i in range(60)]
+        lines = browser.telling_lines(LOG.splitlines()[:4] + spam * 10)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("Goodbye", lines[-1])
+        self.assertEqual(browser.telling_lines(spam), [])
+
+    def test_repeats_are_collapsed(self):
+        repeated = [f"[1:1:1110/16310{i}.1:ERROR:a.cc:1] the same thing" for i in range(5)]
+        lines = browser.telling_lines(["[1:1:1110/163100.0:ERROR:b.cc:2] first"] + repeated
+                                      + ["[1:1:1110/163109.0:ERROR:c.cc:3] last"])
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[1].endswith("the same thing (5 times)"))
+        self.assertTrue(lines[2].endswith("last"))
+
+
+# The end of Startup.stderr.log from the owner's 0.20.3.16 run with
+# --render-node-override=/dev/dri/renderD129 (10 November 2026), and the
+# kernel's line for one of that run's browsers.
+INTEL_LOG = """\
+[81798:145243:1110/164337.237715:WARNING:ui/ozone/platform/wayland/common/wayland_object.cc:120] Binding to zwp_linux_dmabuf_v1 version 4 but version 5 is available.
+[82702:178567:1110/164337.421100:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:1796] vaInitialize failed: unknown libva error
+[81798:145243:1110/164337.437356:WARNING:ui/ozone/platform/wayland/host/wayland_surface.cc:170] Server doesn't support zcr_alpha_compositing_v1.
+[81798:145243:1110/164337.500000:WARNING:ui/ozone/platform/wayland/host/wayland_frame_manager.cc:537] WaylandBufferHandle::SyncMethod::kSyncobj is not supported!
+[81798:145243:1110/164337.580783:WARNING:components/dbus/xdg/portal.cc:126] Failed to register with org.freedesktop.host.portal.Registry
+Unsupported modifier, resource creation failed.
+Unsupported modifier, resource creation failed.
+Unsupported modifier, resource creation failed.
+[81798:145243:1110/164337.767586:ERROR:ui/events/platform/wayland/wayland_event_watcher.cc:47] libwayland: [destroyed object]: error 7: importing the supplied dmabufs failed
+
+[86171:181894:1110/164337.768799:ERROR:gpu/ipc/client/command_buffer_proxy_impl.cc:476] GPU state invalid after WaitForGetOffsetInRange.
+"""
+INTEL_KERNEL = ("Nov 10 16:44:28 zen kernel: pid 36024 (beryllium), jid 0, uid 1001: "
+                "exited on signal 5 (no core dump - coredumpsize limit is 0)\n")
+
+
+class TheIntelNodeRun(unittest.TestCase):
+    """What the suite would have said about that run."""
+
+    def test_the_excerpt_shows_the_cause(self):
+        lines = browser.telling_lines(INTEL_LOG.splitlines())
+        self.assertIn("Unsupported modifier, resource creation failed. (3 times)", lines)
+        self.assertTrue(any("importing the supplied dmabufs failed" in l for l in lines))
+        self.assertFalse(any("kSyncobj" in l for l in lines))
+
+    def test_the_cause_is_named(self):
+        meaning = browser.explain(INTEL_LOG.splitlines())
+        self.assertIn("could not import a buffer", meaning)
+        self.assertIn("--render-node-override", meaning)
+        self.assertEqual(browser.explain(LOG.splitlines()), "")
+        self.assertEqual(browser.explain([]), "")
+
+    def test_the_error_message_carries_signal_cause_and_kernel_line(self):
+        b = fake_browser(-signal.SIGTRAP, INTEL_LOG)
+        b.proc.pid = 36024
+        self.addCleanup(os.unlink, b.log_path)
+        with tempfile.NamedTemporaryFile("w", suffix=".messages", delete=False) as f:
+            f.write(INTEL_KERNEL)
+        self.addCleanup(os.unlink, f.name)
+        real = browser.kernel_lines
+        with unittest.mock.patch.object(browser, "kernel_lines",
+                                        lambda pid, path=f.name, limit=3: real(pid, path, limit)):
+            text = b.death()
+            note = b.death_note()
+        for message in (text, note):
+            self.assertIn("was killed by signal 5 (SIGTRAP)", message)
+            self.assertIn("exited on signal 5", message)
+            self.assertIn("known cause: the Wayland compositor could not import", message)
+            self.assertIn("importing the supplied dmabufs failed", message)
+
+
+class QuietAndCollapse(unittest.TestCase):
+    def test_quiet_drops_noise_and_blank_lines(self):
+        self.assertEqual(browser.quiet(["a", "", "  ", "x SyncMethod::kSyncobj is not "
+                                        "supported! y", "b"]), ["a", "b"])
+
+    def test_collapse_ignores_the_stamp_only(self):
+        self.assertEqual(browser.collapse(["[1:2:1110/163100.1:INFO:a.cc:1] x",
+                                           "[1:3:1110/163100.2:INFO:a.cc:1] x",
+                                           "[1:3:1110/163100.3:INFO:a.cc:2] x"]),
+                         ["[1:2:1110/163100.1:INFO:a.cc:1] x (2 times)",
+                          "[1:3:1110/163100.3:INFO:a.cc:2] x"])
+
+    def test_collapse_of_nothing_and_of_distinct_lines(self):
+        self.assertEqual(browser.collapse([]), [])
+        self.assertEqual(browser.collapse(["a", "b", "a"]), ["a", "b", "a"])
+
+    def test_log_tail_is_quiet(self):
+        b = fake_browser(1, "one\n" + "w SyncMethod::kSyncobj is not supported!\n" * 50
+                         + "two\n")
+        self.addCleanup(os.unlink, b.log_path)
+        self.assertEqual(b.log_tail(5), "one\ntwo")
+
+
+class KernelLines(unittest.TestCase):
+    def test_finds_the_process(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
+            f.write("Nov 10 16:31:02 zen kernel: pid 78526 (beryllium), jid 0, uid 1001: "
+                    "exited on signal 6 (core dumped)\n"
+                    "Nov 10 16:31:03 zen kernel: pid 7852 (other), jid 0, uid 1001: "
+                    "exited on signal 11\n")
+            path = f.name
+        try:
+            self.assertEqual(len(browser.kernel_lines(78526, path)), 1)
+            self.assertIn("signal 6", browser.kernel_lines(78526, path)[0])
+            # pid 7852 is not a prefix match of 78526
+            self.assertIn("signal 11", browser.kernel_lines(7852, path)[0])
+            self.assertEqual(browser.kernel_lines(1, path), [])
+        finally:
+            os.unlink(path)
+
+    def test_unreadable_log(self):
+        self.assertEqual(browser.kernel_lines(1, "/nonexistent/messages"), [])
+
+
+def closed_connection(why=None):
+    """A Connection whose browser end is already closed."""
+    r, w = os.pipe()
+    r2, w2 = os.pipe()
+    os.close(w)       # the reader sees end of file at once
+    os.close(r2)      # writing to the browser fails with EPIPE
+    conn = cdp.Connection(r, w2)
+    conn.why_closed = why
+    for _ in range(100):  # the reader thread notices within a moment
+        if conn.closed:
+            break
+        time.sleep(0.02)
+    return conn
+
+
+class ClosedConnection(unittest.TestCase):
+    def test_send_says_how_the_browser_ended(self):
+        conn = closed_connection(lambda: "the browser process (pid 5) exited with status 1")
+        try:
+            with self.assertRaises(cdp.CDPError) as caught:
+                conn.send("Target.createTarget", {"url": "about:blank"})
+        finally:
+            conn.close()
+        text = str(caught.exception)
+        self.assertIn("Target.createTarget: browser connection closed", text)
+        self.assertIn("exited with status 1", text)
+
+    def test_wait_event_says_how_the_browser_ended(self):
+        conn = closed_connection(lambda: "the browser process (pid 5) was killed by signal 11")
+        try:
+            with self.assertRaises(cdp.CDPError) as caught:
+                conn.wait_event("Page.loadEventFired", timeout=5)
+        finally:
+            conn.close()
+        self.assertIn("waiting for Page.loadEventFired: browser connection closed; "
+                      "the browser process (pid 5) was killed by signal 11", str(caught.exception))
+
+    def test_without_an_owner_the_message_is_as_before(self):
+        conn = closed_connection()
+        try:
+            with self.assertRaises(cdp.CDPError) as caught:
+                conn.wait_event("Page.loadEventFired", timeout=5)
+        finally:
+            conn.close()
+        self.assertEqual(str(caught.exception),
+                         "waiting for Page.loadEventFired: browser connection closed")
+
+    def test_a_failing_description_does_not_hide_the_error(self):
+        def broken():
+            raise OSError("no log")
+        conn = closed_connection(broken)
+        try:
+            with self.assertRaises(cdp.CDPError) as caught:
+                conn.wait_event("Page.loadEventFired", timeout=5)
+        finally:
+            conn.close()
+        self.assertIn("browser connection closed", str(caught.exception))
+        self.assertIn("could not be read", str(caught.exception))
+
+
+class FakeProc:
+    def __init__(self, status, pid=4242):
+        self.status, self.pid = status, pid
+
+    def poll(self):
+        return self.status
+
+    def wait(self, timeout=None):
+        return self.status
+
+
+def fake_browser(status, log_text):
+    b = browser.Browser.__new__(browser.Browser)
+    b.proc = FakeProc(status)
+    b._stopping = False
+    b._death_told = False
+    f = tempfile.NamedTemporaryFile("w", suffix=".stderr.log", delete=False)
+    f.write(log_text)
+    f.close()
+    b.log_path = f.name
+    return b
+
+
+class Death(unittest.TestCase):
+    def setUp(self):
+        self.browser = fake_browser(-signal.SIGABRT, LOG)
+        self.addCleanup(os.unlink, self.browser.log_path)
+
+    def test_ended(self):
+        self.assertIn("SIGABRT", self.browser.ended())
+        self.assertIsNone(fake_browser_running().ended())
+
+    def test_first_report_carries_the_log_and_later_ones_do_not(self):
+        with unittest.mock.patch.object(browser, "kernel_lines", return_value=[]):
+            first = self.browser.death()
+            second = self.browser.death()
+        self.assertIn("pid 4242", first)
+        self.assertIn("SIGABRT", first)
+        self.assertIn("Goodbye", first)
+        self.assertIn(os.path.basename(self.browser.log_path), first)
+        self.assertIn("SIGABRT", second)
+        self.assertNotIn("Goodbye", second)
+        self.assertIn("earlier test", second)
+
+    def test_kernel_line_is_included(self):
+        with unittest.mock.patch.object(browser, "kernel_lines",
+                                        return_value=["pid 4242 (beryllium): exited on signal 6"]):
+            self.assertIn("kernel: pid 4242 (beryllium): exited on signal 6",
+                          self.browser.death())
+
+    def test_nothing_to_say_while_the_suite_stops_the_browser(self):
+        self.browser._stopping = True
+        self.assertEqual(self.browser.death(), "")
+
+    def test_death_note(self):
+        with unittest.mock.patch.object(browser, "kernel_lines", return_value=[]):
+            note = self.browser.death_note()
+        self.assertIn("was killed by signal", note)
+        self.assertIn("no line about it", note)
+        self.assertIn("Goodbye", note)
+
+
+def fake_browser_running():
+    b = browser.Browser.__new__(browser.Browser)
+    b.proc = FakeProc(None)
+    return b
+
+
+class AlreadyReported(unittest.TestCase):
+    """base.BrowserTest.already_reported reads the result's own lists."""
+
+    def run_case(self, body):
+        seen = {}
+
+        class Case(base.BrowserTest):
+            browser = None
+
+            @classmethod
+            def setUpClass(cls):
+                pass
+
+            @classmethod
+            def tearDownClass(cls):
+                pass
+
+            def tearDown(self):
+                seen["reported"] = self.already_reported()
+
+            def test_it(self):
+                body(self)
+
+        result = unittest.TestResult()
+        unittest.TestLoader().loadTestsFromTestCase(Case).run(result)
+        return seen["reported"]
+
+    def test_passing(self):
+        self.assertFalse(self.run_case(lambda case: None))
+
+    def test_error(self):
+        def body(case):
+            raise RuntimeError("x")
+        self.assertTrue(self.run_case(body))
+
+    def test_failure(self):
+        self.assertTrue(self.run_case(lambda case: case.fail("x")))
+
+    def test_skip(self):
+        self.assertTrue(self.run_case(lambda case: case.skipTest("x")))
+
+
+if __name__ == "__main__":
+    unittest.main()

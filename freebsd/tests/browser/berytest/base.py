@@ -32,10 +32,15 @@ class BrowserTest(unittest.TestCase):
         headless = opts.headless if cls.HEADLESS is None else cls.HEADLESS
         if cls.NEEDS_DISPLAY and (headless or not has_display()):
             raise unittest.SkipTest("needs a desktop session (not --headless)")
-        cls.browser = Browser(cls.ctx, cls.__name__, args=cls.extra_args(),
-                              headless=headless, user_data_dir=cls.USER_DATA_DIR,
-                              prefs=cls.PREFS).start()
+        cls._headless = headless
+        cls._restarts = 0
+        cls.browser = cls.new_browser(cls.__name__)
         cls.browser.record_version()
+
+    @classmethod
+    def new_browser(cls, name):
+        return Browser(cls.ctx, name, args=cls.extra_args(), headless=cls._headless,
+                       user_data_dir=cls.USER_DATA_DIR, prefs=cls.PREFS).start()
 
     @classmethod
     def extra_args(cls):
@@ -47,11 +52,29 @@ class BrowserTest(unittest.TestCase):
             cls.browser.stop()
 
     def setUp(self):
+        cls = type(self)
+        dead = bool(self.browser) and bool(self.browser.ended() or self.browser.conn.closed)
+        if dead or (self.browser is None and getattr(cls, "_restarts", 0)):
+            # The class's browser died in an earlier test (noted there). One
+            # death is one finding; the tests after it get a new browser, with
+            # its own log, so each shows what it does to a fresh process. If
+            # the new one does not start, this test fails saying so and the
+            # next one tries again.
+            if dead:
+                cls._last_end = (self.browser.ended()
+                                 or "closed its debugging pipe and kept running")
+                self.browser.stop()
+            cls._restarts += 1
+            cls.browser = None
+            cls.browser = cls.new_browser(f"{cls.__name__}-{cls._restarts + 1}")
+            self.note(f"the browser of the test before {cls._last_end}; this test runs in "
+                      f"a new one ({os.path.basename(cls.browser.log_path)})")
         self._crash_mark = self.browser.conn.mark() if self.browser else 0
 
     def tearDown(self):
         if not self.browser:
             return
+        self.check_browser_alive()
         crashes = self.browser.crashes(self._crash_mark)
         if crashes:
             details = ", ".join(f"status={c.get('status')} error code={c.get('errorCode')}"
@@ -59,6 +82,28 @@ class BrowserTest(unittest.TestCase):
             self.ctx.note(self.id(), f"renderer crash during the test: {details}\n"
                           f"browser log tail:\n{self.browser.log_tail(25)}")
             self.collect_cores()
+
+    def check_browser_alive(self):
+        """A browser process that ended during the test is noted with how it
+        ended, and fails a test that would otherwise pass (one that only
+        waits and counts connections passes over a dead browser too)."""
+        how = self.browser.ended()
+        if not how:
+            return
+        self.note(self.browser.death_note() + "\nduring this test")
+        self.collect_cores()
+        if not self.already_reported():
+            self.fail(f"the browser process {how} during the test")
+
+    def already_reported(self):
+        """Whether this test already has an error, failure or skip recorded.
+        (unittest resets its own success flag for tearDown, so the result's
+        lists are the place to look.)"""
+        result = getattr(getattr(self, "_outcome", None), "result", None)
+        if result is None:
+            return False
+        recorded = list(result.errors) + list(result.failures) + list(result.skipped)
+        return any(test is self for test, _ in recorded)
 
     def collect_cores(self):
         """With --cores: backtraces of new core dumps, saved and noted."""

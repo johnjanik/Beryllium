@@ -524,6 +524,110 @@ FreeBSD test bed, so an increment must be worth a build.
    cannot open or receive descriptors, the sweep's claim stands with that
    qualification; if not, the lockdown has to move earlier or stop that
    thread first. The gate keeps requiring one thread until then.
+   **Results, 0.20.3.16 (10 November 2026, two runs, neither with the
+   lockdown):** the thread names are still to come; these two runs each
+   named a render node, the first since the Intel driver was loaded
+   beside NVIDIA's. *On the NVIDIA node* (`renderD128`) everything passes
+   but the per-site canvas noise test: both origins moved the same 982
+   pixels, after the reload as well, so the first-load explanation of the
+   0.20.3.14 result was wrong. The cause is in Helium's noise hash. It
+   takes an FNV-1a step per value (xor, multiply) and hands out its bits
+   from the low end, and the low two bits of a product depend only on the
+   low two bits of its factors; in a smooth area a pixel moves when a draw
+   below 4 gives 0, so two bits of the 64-bit per-site token chose the
+   pixels. A flat fill moved one of four sets (1031, 998, 1085 or 982
+   pixels of the probe's 4096, the only counts any report has shown), the
+   same four in every browser with this code, and two sites shared a set
+   in one session of four: two of the seven runs that compared two
+   origins. A model of the hash (`berytest/noise.py`) reproduces the 982
+   pixels the report lists, and Helium's file compiled alone gives the
+   same four sets. `patches/privacy/beryllium-noise-hash-whole-token.patch`
+   (build 0.20.3.17) finalizes the hash before each draw; the suite gains
+   a test that the moved pixels are none of the four sets. *On the Intel
+   node* (`renderD129`) the GPU process reports ANGLE on Mesa 26.2.2,
+   "Intel(R) Graphics (ARL)", and then the browser process ends, about a
+   second after every start: 21 errors and 2 failures of 38 tests, each a
+   closed DevTools connection, and the report could not say why, because
+   the suite never asked how the process ended. Tests that finished within
+   that second passed, and so did the 30-second idle test, over a dead
+   browser. The suite now puts the exit status or signal, the kernel's
+   line and the telling lines of the log into every such error, starts a
+   new browser for the next test, and fails a test whose browser died
+   under it. The GPU page's device list, empty in both reports because the
+   page keeps its tables in a shadow tree, is read through the shadow
+   trees, so a report lists both GPUs and marks the active one. The cause
+   on the Intel node is open until a run with this suite, or the browser
+   started by hand with the switch, shows the log.
+   **Two more runs the same afternoon** (sent as lockdown runs; the header
+   of each says "not requested", the only switch was the render node, and
+   `unprivileged_proc_debug` was 1). On the NVIDIA node both origins moved
+   the same pixels again, 1031 this time: the fourth set, which the model
+   had given before any report showed that count, and pixel for pixel the
+   model's set for token low bits 0. That is three of eight comparisons
+   with a shared set, against an expected two. On the Intel node the same
+   death, and one detail: in both Intel runs the capability-mode test read
+   the browser and its four renderers and found the GPU, network and
+   storage processes already gone. What Chromium 156 does, read from its
+   source: (a) *which GPU.* The browser renders on the GPU the compositor
+   announces as its main device (`zwp_linux_dmabuf_feedback_v1`
+   `main_device`), by adding `--render-node-override` to its own command
+   line when the switch is absent and a GBM device can be made there
+   (`WaylandConnection::SetRenderNodePath`); only when the compositor
+   names none does `DrmRenderNodePathFinder` choose, preferring a node
+   whose driver is `i915`, `amdgpu` or `virtio_gpu` and otherwise the
+   first that works. So the `renderD128` on the GPU page of 1 November was
+   the compositor's device, not a guess, and the switch on the command
+   line replaces the compositor's answer: naming the other GPU asks the
+   compositor to show buffers from a GPU that is not its own. (b) *What
+   ends the browser.* A Wayland error is fatal by design
+   (`WaylandEventWatcher::WlDisplayCheckForErrors`): a protocol error
+   stops on a `CHECK` after logging `libwayland:` and "Fatal Wayland
+   protocol error" lines, and a dropped connection runs
+   `chrome::SessionEnding()`. A compositor that cannot import a buffer
+   from the other GPU answers with such an error, at about the first
+   frame, which is when these browsers ended. That is a candidate, not a
+   finding: the log lines of the Intel runs decide, and a start without
+   the switch shows which GPU the compositor names on this machine. If it
+   is the NVIDIA one, the Intel node was never a supported choice on this
+   desktop and the documentation should say so; if it is the Intel one, a
+   plain start fails too and this is a fault to fix. The suite's run
+   script gains `--lockdown` and says before its first test whether the
+   lockdown is requested; the rendering note names the render node and who
+   chose it. The owner's search of the newest run's logs for `libwayland`,
+   `Wayland` and `FATAL` found one line, 6469 times, and nothing else:
+   "WaylandBufferHandle::SyncMethod::kSyncobj is not supported!", a
+   warning the FreeBSD port's patch to `wayland_frame_manager.cc` writes
+   for every frame shown, in the explicit-sync branch and, with the same
+   words, in the implicit one. It is noise on any GPU, and it matched the
+   suite's own pattern for telling lines, so the suite now leaves it out
+   and collapses repeated lines. If that newest run was an Intel one, no
+   Wayland error and no fatal message was logged, which rules out the
+   candidate above and the GPU process being given up on, since both
+   always log one; the search took the newest directory, so that is not
+   yet certain. The next look picks the run by its report and reads the
+   end of one browser's log without that line, with the kernel's record.
+   **The Intel node, answered (the same evening):** that look read the
+   Intel run itself (the search before it had read a later directory). The
+   end of `Startup.stderr.log`: "Unsupported modifier, resource creation
+   failed." three times, which is Mesa's Intel driver declining every
+   buffer layout in the list it was given, a list that comes from the
+   compositor; then `libwayland: [destroyed object]: error 7: importing
+   the supplied dmabufs failed`, the compositor refusing the buffer the
+   browser sent after falling back to the driver's own layout; and the
+   kernel logged each browser of that run as "exited on signal 5", the
+   `CHECK` in `WlDisplayCheckForErrors`. So the candidate was the cause:
+   the desktop takes buffers from the NVIDIA GPU and not from the Intel
+   one, the switch made the browser draw on the Intel one, and Chromium
+   stops on the compositor's error. Nothing in Beryllium is at fault and
+   nothing in it can make that pairing work; the switch was the wrong
+   tool, and the README and beryllium(1), which offered it for "the second
+   GPU", now say what it requires. For the browser to draw on the Intel
+   GPU the desktop itself would have to (KWin's choice of device), and the
+   browser would then follow without a switch. The suite names this
+   failure when it meets it (`berytest/browser.py` `EXPLANATIONS`, with
+   the excerpt above as its unit-test fixture). Still to see: a start
+   without the switch on this machine, which by the source reading uses
+   the compositor's device, the NVIDIA one.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

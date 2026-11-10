@@ -15,4 +15,5 @@ security/beryllium-descriptor-rights.patch
 security/beryllium-capsicum-renderer.patch
 security/beryllium-sender-side-rights.patch
 privacy/beryllium-services-off-by-default.patch
+privacy/beryllium-noise-hash-whole-token.patch
 ui/beryllium-toolbar-buttons-zero-height.patch

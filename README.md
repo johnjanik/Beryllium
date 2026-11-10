@@ -146,8 +146,8 @@ adversarial review of the lockdown, its tests and the release tools
 (7 November 2026), and what changed because of it, is recorded in
 [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md). Reports of anything
 that breaks with it on are welcome; the test suite runs with it on through
-`--browser-arg=--enable-features=BerylliumCapsicumRenderer`, which also
-turns its sandbox tests into a gate that fails on any unconfined renderer.
+`freebsd/tests/browser/run --lockdown`, which also turns its sandbox tests
+into a gate that fails on any unconfined renderer.
 
 #### Still to finish
 
@@ -254,6 +254,17 @@ set it, and the launcher will not start the browser without it.
   suite's `fonts` group now fails on any script drawn without its glyphs
   and names the package.
 - **WebGPU** finds no adapter.
+- **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
+  compositor announces as its own. `--render-node-override` names another,
+  and that works only if the compositor can import that GPU's buffers. On
+  a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland, both
+  drivers loaded) it could not: with the switch naming the Intel GPU,
+  Intel's driver supported none of the buffer layouts the desktop offered,
+  the desktop refused the buffer the browser sent instead (`importing the
+  supplied dmabufs failed` in the browser's log), and the browser stopped
+  at its first frame, as Chromium does on any Wayland error. Naming the
+  NVIDIA GPU works there. If the window closes right after it opens,
+  start the browser without the switch.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
@@ -345,7 +356,10 @@ From Helium's open-source patch set, Beryllium keeps:
   flat area by one level on every readback, the same within a session
   and different per site; `beryllium://flags/#helium-noise-canvas`
   turns it off. (The test suite mistook it for a rendering fault
-  until 9 November 2026.)
+  until 9 November 2026.) Up to 0.20.3.16, which pixels of a flat area
+  move follows only two bits of the site's 64-bit noise token, so two
+  sites move the same pixels in one session of four; from 0.20.3.17 a
+  Beryllium patch makes every draw depend on the whole token.
 
 What differs:
 
