@@ -1,0 +1,90 @@
+Beryllium: fingerprint noise draws depend on the whole per-site token
+
+Purpose: Helium's noise (helium/core/noise/core.patch) gives every site a
+  64-bit token per session and derives the noise from a running hash of
+  the token, the pixel's coordinates and its content. The hash step is
+  FNV-1a's (xor a value in, multiply by the FNV prime), and
+  HeliumNoiseHash::GetValueBelow() hands out the hash's bits from the low
+  end. In a multiplication the low k bits of the product depend only on
+  the low k bits of the factors, so the first draws after an Update() saw
+  only the lowest bits of the token:
+  - canvas, smooth areas: whether a pixel moves is GetValueBelow(4) on
+    the coordinate hash, which is its low two bits. Which pixels of a
+    flat fill move was therefore one of four sets, chosen by two bits of
+    the token, and the four sets are the same in every browser that
+    carries this code;
+  - the direction of the change is GetValueBelow(2) after a two-bit draw,
+    which is bit 2: three bits of the token.
+  Only draws whose bound is not a power of two (the channel, below 3)
+  depended on more. A flat fill had 24 possible readbacks in all, and two
+  sites in one session moved exactly the same pixels with probability one
+  in four.
+  Found by the owner's suite runs: the per-site test compares which pixels
+  two origins move, and in two of the seven runs that made the comparison
+  (one of four on 0.20.3.14, the one on 0.20.3.16; none of two on
+  0.20.3.15) both origins moved the same pixels. Every one of the fourteen
+  pixel counts in those reports is 982, 998 or 1085. A model of the hash in
+  Python gives 1031, 998, 1085 and 982 pixels for token low bits 0 to 3,
+  and the 982 pixels listed in the 0.20.3.16 report are exactly the model's
+  set for low bits 3. Helium's file compiled outside the tree against stub
+  headers gives the same four sets.
+  This patch takes the bits from a finalized copy of the running hash (the
+  SplitMix64 finalizer, already used by Helium's canvas code for the
+  coordinates): every bit handed out depends on every bit of the hash and
+  so of the token. The hash state, Update(), the number of bits a draw
+  consumes and the range of every draw are unchanged, so the amount and
+  size of the noise are as Helium tuned them; only which values come out
+  changes. The same class serves the audio and hardware-concurrency noise,
+  whose draws improve in the same way.
+  The noise still does not stop a script that averages or filters it; that
+  is a property of low-amplitude noise, not of this change.
+Stage: 4 (Beryllium series). Depends on helium/core/noise/core.patch, which
+  creates the file.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The patched
+  file compiled alone with stub headers (g++ and clang++, C++20) and run
+  against a flat fill: nine tokens gave nine different pixel sets of 981 to
+  1083 pixels (about one in four of 4096). Not yet compiled in the tree.
+Test: freebsd/tests/browser/tests/test_60_privacy.py CanvasNoise:
+  test_moved_pixels_depend_on_the_whole_token (the moved pixels are none
+  of the four sets of the old hash) and test_noise_differs_per_site. The
+  model of the old hash is freebsd/tests/browser/berytest/noise.py, with
+  unit tests in freebsd/tools/tests/test_noise_model.py. Feature matrix
+  row P-FPR-04.
+security-review: not required (a pure function of the hash state; no new
+  input, no new state)
+
+--- a/third_party/blink/renderer/core/helium_noise/helium_noise_hash.cc
++++ b/third_party/blink/renderer/core/helium_noise/helium_noise_hash.cc
+@@ -21,6 +21,22 @@
+ // FNV constants
+ // https://datatracker.ietf.org/doc/html/draft-eastlake-fnv#name-fnv-constants
+ constexpr uint64_t kFnvPrime = 0x00000100000001b3;
++
++// Beryllium: GetValueBelow() takes its bits from this, not from the running
++// hash. One FNV step is a xor and a multiplication, so the low k bits of the
++// running hash depend only on the low k bits of the token and of the values
++// hashed in, and GetValueBelow() starts at the low end: a draw below 4 saw
++// two bits of the 64-bit per-site token. This is the SplitMix64 finalizer;
++// every bit of its result depends on every bit of the hash, and so of the
++// token.
++constexpr uint64_t Finalize(uint64_t value) {
++  value ^= value >> 30;
++  value *= 0xbf58476d1ce4e5b9ULL;
++  value ^= value >> 27;
++  value *= 0x94d049bb133111ebULL;
++  value ^= value >> 31;
++  return value;
++}
+ }  // namespace
+ 
+ HeliumNoiseHash::HeliumNoiseHash(HeliumNoiseToken token)
+@@ -39,7 +55,7 @@
+   int required_bits = std::bit_width(base::checked_cast<uint64_t>(max_value));
+   CHECK(remaining_bits_ >= required_bits);
+ 
+-  int value = (token_hash_ >> (64 - remaining_bits_)) % max_value;
++  int value = (Finalize(token_hash_) >> (64 - remaining_bits_)) % max_value;
+   remaining_bits_ -= required_bits;
+   return value;
+ }

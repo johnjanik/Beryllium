@@ -254,6 +254,11 @@ set it, and the launcher will not start the browser without it.
   suite's `fonts` group now fails on any script drawn without its glyphs
   and names the package.
 - **WebGPU** finds no adapter.
+- **Two GPUs.** On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on
+  Wayland, both drivers loaded), 0.20.3.16 works when it renders on the
+  NVIDIA GPU and ends about a second after starting when
+  `--render-node-override` names the Intel one (Mesa 26.2.2). The cause is
+  not yet known. Leave the switch off, or name the NVIDIA node.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:
@@ -345,7 +350,10 @@ From Helium's open-source patch set, Beryllium keeps:
   flat area by one level on every readback, the same within a session
   and different per site; `beryllium://flags/#helium-noise-canvas`
   turns it off. (The test suite mistook it for a rendering fault
-  until 9 November 2026.)
+  until 9 November 2026.) Up to 0.20.3.16, which pixels of a flat area
+  move follows only two bits of the site's 64-bit noise token, so two
+  sites move the same pixels in one session of four; from 0.20.3.17 a
+  Beryllium patch makes every draw depend on the whole token.
 
 What differs:
 

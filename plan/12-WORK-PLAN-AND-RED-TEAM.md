@@ -682,7 +682,11 @@ not.
   OpenGL ES 3.2 driver 595.99.02 through EGL, ozone Wayland,
   `--render-node-override=/dev/dri/renderD128`, Vulkan off, WebGL and
   WebGPU hardware-accelerated (Dawn on ANGLE GLES). The laptop also has an
-  Intel Arrow Lake GPU (`i915kms`), but Chromium does not use it here. So
+  Intel Arrow Lake GPU (`i915kms`), but Chromium does not use it here
+  (from 10 November 2026 the Intel driver runs beside NVIDIA's, Intel on
+  the laptop panel and NVIDIA on the external display; Beryllium 0.20.3.16
+  works on `renderD128`, NVIDIA, and ends within a second of starting on
+  `renderD129`, Intel with Mesa 26.2.2: plan/14 increment 5 results). So
   the first GPU policy is the NVIDIA one after all (charter D6 stands),
   with the closed driver's ioctl surface (R23) as its main residual risk.
   WebGPU on this path is extra attack surface reachable from every page; a

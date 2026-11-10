@@ -5,13 +5,16 @@ until the user sets a server (feature matrix P-SVC-01). All traffic goes
 through a local recording proxy that refuses every connection, so nothing
 leaves the machine; the proxy's list of requested hosts is the result.
 Also Helium's canvas fingerprinting noise (P-FPR-04): present by default,
-stable within a session, different per site, absent with the feature off."""
+stable within a session, different per site, chosen by the whole per-site
+token, absent with the feature off."""
 
 import json
 import time
 
+from berytest import noise
 from berytest.base import BrowserTest
 from berytest.browser import Browser
+from berytest.cdp import CDPError
 from berytest.servers import RecordingProxy
 
 GET_PREF = """new Promise((ok, bad) => {
@@ -149,8 +152,8 @@ def noise_problems(out):
 class CanvasNoise(BrowserTest):
     """Helium's canvas fingerprinting noise (feature matrix P-FPR-04): a
     canvas readback carries sparse one-level noise by default, the same on
-    every read in a session and different per site, and none with the
-    feature off."""
+    every read in a session, different per site and chosen by the whole
+    per-site token, and none with the feature off."""
 
     def read(self, browser, url):
         page = browser.new_page(url)
@@ -171,13 +174,35 @@ class CanvasNoise(BrowserTest):
         self.assertEqual(noise_problems(out), [], "noise outside one level in one channel")
         self.assertTrue(out["same_twice"], "two reads of the same canvas differed")
 
+    FILL = (64, 64, (100, 100, 100, 255))  # what NOISE_PROBE draws and reads
+
+    def old_hash_set(self, out):
+        """Which of the four pixel sets of the hash before 0.20.3.17 this
+        readback moved (0 to 3), or None for any other set."""
+        return noise.old_set_of(noise.parse_key(out["key"]), *self.FILL)
+
+    def test_moved_pixels_depend_on_the_whole_token(self):
+        """Which pixels move is decided by the whole per-site token. Before
+        0.20.3.17 two bits of it decided: a flat fill moved one of four
+        pixel sets, the same four in every browser with Helium's noise
+        (berytest/noise.py). The readback must be none of them."""
+        out = self.read(self.browser, self.ctx.fixtures().url("blank.html"))
+        which = self.old_hash_set(out)
+        self.note(f"{out['changed']} pixels moved; "
+                  + ("none of the four sets of the old hash" if which is None else
+                     f"exactly set {which} of the four sets of the old hash"))
+        self.assertGreater(out["changed"], 0, "the readback was exact: no canvas noise")
+        self.assertIsNone(
+            which, f"the moved pixels are set {which} of the four that the noise hash "
+            "before 0.20.3.17 can produce: two bits of the site's token choose them "
+            "(patches/privacy/beryllium-noise-hash-whole-token.patch changes this)")
+
     def test_noise_differs_per_site(self):
         """The same fill on another origin (localhost instead of 127.0.0.1,
         the same server) moves other pixels: the noise token is per site.
-        In one of four 0.20.3.14 runs the second origin's first load moved
-        exactly the pixels of the first origin, as if it had used the
-        first's token; so a page that matches is reloaded once and read
-        again, and the first result is noted."""
+        Builds before 0.20.3.17 fail this in one session of four, whatever
+        is reloaded, because two bits of the token choose the pixels; the
+        failure says so when the pixels are one of those four sets."""
         base = self.ctx.fixtures().url("blank.html")
         first = self.read(self.browser, base)
         other = base.replace("127.0.0.1", "localhost")
@@ -185,20 +210,23 @@ class CanvasNoise(BrowserTest):
         try:
             try:
                 page.navigate(other)
-            except Exception as e:
+            except CDPError as e:
+                if "browser connection closed" in str(e):
+                    raise  # the browser died; that is not a missing localhost
                 self.skipTest(f"localhost did not load: {e}")
             second = page.eval(NOISE_PROBE)
-            first_load = "the same pixels" if second["key"] == first["key"] else "other pixels"
-            if second["key"] == first["key"]:
-                page.navigate(other)
-                second = page.eval(NOISE_PROBE)
         finally:
             self.browser.close_page(page)
+        same = second["key"] == first["key"]
         self.note(f"127.0.0.1: {first['changed']} pixels; localhost: {second['changed']} pixels, "
-                  f"{first_load} on its first load")
+                  + ("the same pixels" if same else "other pixels"))
         self.assertGreater(second["changed"], 0, "no noise on the second origin")
-        self.assertNotEqual(first["key"], second["key"],
-                            "both origins moved the same pixels, after a reload as well")
+        which = self.old_hash_set(first) if same else None
+        self.assertFalse(
+            same, "both origins moved the same pixels"
+            + ("" if which is None else
+               f": set {which} of the four sets of the noise hash before 0.20.3.17, "
+               "which two origins share in one session of four"))
 
     def test_readback_is_exact_with_the_feature_off(self):
         """With --disable-features=HeliumNoiseCanvas the same fill reads back

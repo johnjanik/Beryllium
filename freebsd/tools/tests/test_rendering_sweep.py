@@ -47,5 +47,53 @@ class SweepSummary(unittest.TestCase):
         self.assertEqual(rendering.sweep_summary(["garbage"]), "none")
 
 
+
+class GpuPageLines(unittest.TestCase):
+    """Rows of the GPU page (read through its shadow trees) to report lines.
+    The rows are those of a real chrome://gpu page, shortened, with a second
+    GPU as a machine with two shows them."""
+
+    ROWS = [
+        ["Canvas", "Hardware accelerated"],
+        ["GPU0 :", "VENDOR= 0x10de [Google Inc. (NVIDIA Corporation)], DEVICE=0x2c58 *ACTIVE*"],
+        ["GPU1 :", "VENDOR= 0x8086 [Intel], DEVICE=0x7d67"],
+        ["Optimus :", "false"],
+        ["AMD switchable :", "false"],
+        ["Driver vendor", "NVIDIA"],
+        ["Info", "Display[2300000000] bounds=[0,0 800x600], scale=1"],
+        ["Color space (all)", "{primaries:BT709, transfer:SRGB, matrix:RGB, range:FULL}"],
+        ["Buffer format (all)", "RGBA_8888"],
+        ["SDR white level in nits", "203"],
+        ["Bits per color component", "8"],
+        ["", ""],
+        [],
+    ]
+
+    def test_gpus_and_displays_are_kept(self):
+        lines = rendering.gpu_page_lines(self.ROWS)
+        self.assertEqual(lines[0], "GPU0: VENDOR= 0x10de [Google Inc. (NVIDIA Corporation)], "
+                                   "DEVICE=0x2c58 *ACTIVE*")
+        self.assertEqual(lines[1], "GPU1: VENDOR= 0x8086 [Intel], DEVICE=0x7d67")
+        self.assertIn("Optimus: false", lines)
+        self.assertIn("AMD switchable: false", lines)
+        self.assertTrue(any(l.startswith("Info: Display[") for l in lines))
+        self.assertIn("Bits per color component: 8", lines)
+
+    def test_other_rows_are_dropped(self):
+        lines = rendering.gpu_page_lines(self.ROWS)
+        self.assertFalse(any(l.startswith(("Canvas", "Driver vendor")) for l in lines))
+
+    def test_nothing_from_nothing(self):
+        self.assertEqual(rendering.gpu_page_lines([]), [])
+        self.assertEqual(rendering.gpu_page_lines([["", ""], []]), [])
+
+    def test_long_values_are_cut(self):
+        lines = rendering.gpu_page_lines([["GPU0", "x" * 2000]])
+        self.assertEqual(len(lines[0]), 400)
+
+    def test_the_page_script_walks_shadow_trees(self):
+        self.assertIn("shadowRoot", rendering.GPU_ROWS)
+        self.assertIn("'TR'", rendering.GPU_ROWS)
+
 if __name__ == "__main__":
     unittest.main()

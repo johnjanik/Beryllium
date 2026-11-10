@@ -9,6 +9,7 @@ browser's stderr to the results directory.
 import fcntl
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -58,6 +59,46 @@ def context_lines(lines, needle, after=16):
     return blocks
 
 
+def describe_exit(status):
+    """A wait status as Popen reports it, in words; None for a process
+    that still runs."""
+    if status is None:
+        return None
+    if status < 0:
+        try:
+            name = signal.Signals(-status).name
+        except ValueError:
+            name = "unknown"
+        return f"was killed by signal {-status} ({name})"
+    return f"exited with status {status}"
+
+
+# What a browser log says about why the process ended, as opposed to the
+# stack frames and register dump that follow a crash and fill its last lines.
+TELLING = re.compile(r":FATAL:|:ERROR:|Received signal|[Ee]rror|Goodbye|[Ff]ailed|"
+                     r"[Ww]ayland|wl_|terminat|[Ll]ost|crash", re.ASCII)
+FRAME = re.compile(r"^\s*(#\d+ 0x|\[end of stack trace\]|[a-z0-9]{2,3}: [0-9a-f]{16}\b)")
+
+
+def telling_lines(lines, limit=8, window=200):
+    """The last limit lines, of the last window, that say something about a
+    failure; without any, the last limit lines that are not stack frames."""
+    recent = [l.strip() for l in lines[-window:] if l.strip() and not FRAME.match(l)]
+    telling = [l for l in recent if TELLING.search(l)]
+    return [l[:300] for l in (telling or recent)[-limit:]]
+
+
+def kernel_lines(pid, path="/var/log/messages", limit=3):
+    """What the kernel logged about a process: FreeBSD writes "pid N
+    (name), jid J, uid U: exited on signal S (core dumped)" for a crash."""
+    needle = f"pid {pid} ("
+    try:
+        with open(path, errors="replace") as f:
+            return [l.strip() for l in f if needle in l][-limit:]
+    except OSError:
+        return []
+
+
 def _high_fd(fd):
     new = fcntl.fcntl(fd, fcntl.F_DUPFD, 10)
     os.close(fd)
@@ -89,6 +130,8 @@ class Browser:
         self.proc = None
         self.conn = None
         self.version = {}
+        self._stopping = False
+        self._death_told = False
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -153,16 +196,59 @@ class Browser:
         os.close(child_r)
         os.close(child_w)
         self.conn = Connection(from_browser_r, to_browser_w)
+        self.conn.why_closed = self.death
         try:
             self.version = self.conn.send("Browser.getVersion", timeout=timeout)
             self.conn.send("Target.setDiscoverTargets", {"discover": True})
         except CDPError as e:
             self.stop()
-            raise CDPError(f"{self.binary} did not start: {e}; log: {self.log_path}\n"
-                           + self.log_tail())
+            # An error about a closed connection already ends with the log.
+            tail = "" if "last lines of its log" in str(e) else "\n" + self.log_tail()
+            raise CDPError(f"{self.binary} did not start: {e}; log: {self.log_path}{tail}")
         return self
 
+    def ended(self):
+        """None while the browser process runs; otherwise how it ended:
+        "exited with status 1" or "was killed by signal 11 (SIGSEGV)"."""
+        if not self.proc:
+            return None
+        return describe_exit(self.proc.poll())
+
+    def death(self):
+        """For an error about a closed connection: how the browser process
+        ended, and the first time also the last lines of its log and the
+        kernel's line about it. The pipe closes a moment before the process
+        is gone, so this waits for it briefly."""
+        if not self.proc or self._stopping:
+            return ""
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return ("the browser process is still running; it closed the "
+                    "debugging pipe")
+        how = f"the browser process (pid {self.proc.pid}) {self.ended()}"
+        if self._death_told:
+            return how + ", as reported for an earlier test"
+        self._death_told = True
+        parts = [how]
+        kernel = kernel_lines(self.proc.pid)
+        if kernel:
+            parts.append("kernel: " + " | ".join(kernel))
+        tail = telling_lines(self._log())
+        parts.append("last lines of its log (" + os.path.basename(self.log_path) + "):\n  "
+                     + "\n  ".join(tail) if tail else "its log is empty")
+        return "; ".join(parts)
+
+    def death_note(self):
+        """For a test's notes: how the process ended, the kernel's line and
+        more of the log than an error message carries."""
+        return (f"the browser process (pid {self.proc.pid}) {self.ended()}\n"
+                f"kernel: {' | '.join(kernel_lines(self.proc.pid)) or 'no line about it'}\n"
+                f"log ({os.path.basename(self.log_path)}):\n  "
+                + ("\n  ".join(telling_lines(self._log(), limit=20)) or "empty"))
+
     def stop(self):
+        self._stopping = True
         if self.conn and not self.conn.closed:
             try:
                 self.conn.send("Browser.close", timeout=10)

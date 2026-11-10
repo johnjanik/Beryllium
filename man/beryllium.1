@@ -349,6 +349,12 @@ can confirm.
 .Sh BUGS
 WebGPU finds no adapter.
 .Pp
+On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland),
+version 0.20.3.16 ended about a second after starting when
+.Fl -render-node-override
+named the Intel GPU, and worked on the NVIDIA one.
+The cause is not yet known.
+.Pp
 Report problems at
 .Lk https://github.com/johnjanik/Beryllium/issues ,
 and vulnerabilities privately at

@@ -41,7 +41,24 @@ class Connection:
         self._cond = threading.Condition()
         self._wlock = threading.Lock()
         self.closed = False
+        # Set by the owner of the browser process: a function that says how
+        # the process ended, for the errors below.
+        self.why_closed = None
         threading.Thread(target=self._reader, daemon=True).start()
+
+    def _closed(self, what, error=None):
+        """The error for a command or wait that met a closed connection,
+        with how the browser process ended when the owner can tell."""
+        text = f"{what}: browser connection closed"
+        if error:
+            text += f" ({error})"
+        why = ""
+        if self.why_closed:
+            try:
+                why = self.why_closed()
+            except Exception as e:  # never hide the first error behind this one
+                why = f"(how the browser ended could not be read: {e})"
+        return CDPError(f"{text}; {why}" if why else text)
 
     def _reader(self):
         buf = b""
@@ -97,7 +114,7 @@ class Connection:
             try:
                 self._w.write(json.dumps(msg).encode() + b"\0")
             except OSError as e:
-                raise CDPError(f"{method}: browser connection closed ({e})")
+                raise self._closed(method, e)
         deadline = time.monotonic() + timeout
         with self._cond:
             while mid not in self._replies:
@@ -106,12 +123,16 @@ class Connection:
                     if crash:
                         raise crash
                 if self.closed:
-                    raise CDPError(f"{method}: browser connection closed")
+                    break
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise CDPError(f"{method}: no reply within {timeout} s")
                 self._cond.wait(left)
-            reply = self._replies.pop(mid)
+            reply = self._replies.pop(mid, None)
+        if reply is None:
+            # Outside the lock: finding out how the browser ended can wait
+            # for the process and read its log.
+            raise self._closed(method)
         if "error" in reply:
             raise CDPError(f"{method}: {reply['error'].get('message')}")
         return reply.get("result", {})
@@ -135,11 +156,12 @@ class Connection:
                         p = e["params"]
                         raise TargetCrashed(target_id, p.get("status"), p.get("errorCode"))
                 if self.closed:
-                    raise CDPError(f"waiting for {method}: browser connection closed")
+                    break
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise TimeoutError(f"no {method} within {timeout} s")
                 self._cond.wait(left)
+        raise self._closed(f"waiting for {method}")
 
     def close(self):
         for f in (self._w, self._r):

@@ -524,6 +524,40 @@ FreeBSD test bed, so an increment must be worth a build.
    cannot open or receive descriptors, the sweep's claim stands with that
    qualification; if not, the lockdown has to move earlier or stop that
    thread first. The gate keeps requiring one thread until then.
+   **Results, 0.20.3.16 (10 November 2026, two runs, neither with the
+   lockdown):** the thread names are still to come; these two runs each
+   named a render node, the first since the Intel driver was loaded
+   beside NVIDIA's. *On the NVIDIA node* (`renderD128`) everything passes
+   but the per-site canvas noise test: both origins moved the same 982
+   pixels, after the reload as well, so the first-load explanation of the
+   0.20.3.14 result was wrong. The cause is in Helium's noise hash. It
+   takes an FNV-1a step per value (xor, multiply) and hands out its bits
+   from the low end, and the low two bits of a product depend only on the
+   low two bits of its factors; in a smooth area a pixel moves when a draw
+   below 4 gives 0, so two bits of the 64-bit per-site token chose the
+   pixels. A flat fill moved one of four sets (1031, 998, 1085 or 982
+   pixels of the probe's 4096, the only counts any report has shown), the
+   same four in every browser with this code, and two sites shared a set
+   in one session of four: two of the seven runs that compared two
+   origins. A model of the hash (`berytest/noise.py`) reproduces the 982
+   pixels the report lists, and Helium's file compiled alone gives the
+   same four sets. `patches/privacy/beryllium-noise-hash-whole-token.patch`
+   (build 0.20.3.17) finalizes the hash before each draw; the suite gains
+   a test that the moved pixels are none of the four sets. *On the Intel
+   node* (`renderD129`) the GPU process reports ANGLE on Mesa 26.2.2,
+   "Intel(R) Graphics (ARL)", and then the browser process ends, about a
+   second after every start: 21 errors and 2 failures of 38 tests, each a
+   closed DevTools connection, and the report could not say why, because
+   the suite never asked how the process ended. Tests that finished within
+   that second passed, and so did the 30-second idle test, over a dead
+   browser. The suite now puts the exit status or signal, the kernel's
+   line and the telling lines of the log into every such error, starts a
+   new browser for the next test, and fails a test whose browser died
+   under it. The GPU page's device list, empty in both reports because the
+   page keeps its tables in a shadow tree, is read through the shadow
+   trees, so a report lists both GPUs and marks the active one. The cause
+   on the Intel node is open until a run with this suite, or the browser
+   started by hand with the switch, shows the log.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
