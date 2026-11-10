@@ -14,8 +14,11 @@ import collections
 import glob
 import json
 import os
+import pty
 import re
+import select
 import shutil
+import signal
 import subprocess
 import time
 
@@ -493,6 +496,203 @@ def thread_names_at_lockdown(log_lines):
         if m:
             out.append([] if m.group(1) == "-" else m.group(1).split(","))
     return out
+
+
+# -- every thread of a renderer at its lockdown point, by debugger -------------
+#
+# The lockdown's own count says how many threads there are, not which: this
+# port's PlatformThread::SetName() records a name inside Chromium only, so the
+# kernel knows every thread by the process's name (0.20.3.16 logged
+# thread_names=beryllium,beryllium). What tells threads apart is their stacks.
+# A renderer started with --renderer-startup-dialog pauses when RendererMain
+# begins; lldb attaches, lists the threads, runs the renderer on to the
+# lockdown's utrace() marker and lists them again.
+
+LLDB_THREAD = re.compile(r"^\*?\s*thread #(\d+)")
+LLDB_FRAME = re.compile(r"^\s*\*?\s*frame #\d+: (0x[0-9a-fA-F]+)(?: (\S+?))?(?:`(.*))?$")
+LLDB_IMAGE = re.compile(r"^\[\s*\d+\]\s+(0x[0-9a-fA-F]+)\s+(/\S+)")
+LLDB_DUMP = "thread backtrace all"
+PAUSED = re.compile(r"Renderer \((\d+)\) paused waiting for debugger")
+
+
+# The lockdown writes its marker with utrace() just before cap_enter(), and
+# also when the lockdown is switched off; either name may be the one a libc
+# exports, so the first of them that is reached stops the renderer.
+LOCKDOWN_BREAKPOINTS = ("utrace", "__sys_utrace", "cap_enter", "__sys_cap_enter")
+
+
+def lldb_commands(breakpoints=LOCKDOWN_BREAKPOINTS):
+    return [LLDB_DUMP, "breakpoint set " + " ".join(f"-n {b}" for b in breakpoints),
+            "process handle SIGUSR1 --stop false --pass true --notify false",
+            "continue", LLDB_DUMP, "image list -o -f", "detach"]
+
+
+def parse_lldb(text):
+    """(dumps, images) from lldb's output: dumps is one list of threads per
+    "thread backtrace all", each thread {index, name, stop, frames} with
+    frames [(address, module, symbol)] innermost first; images is {module
+    file name: the address it was loaded at less its link address}."""
+    dumps, images, current, mode = [], {}, None, None
+    for line in text.replace("\r", "").splitlines():
+        if line.startswith("(lldb) "):
+            command = line[len("(lldb) "):].strip()
+            mode = "dump" if command == LLDB_DUMP else (
+                "images" if command.startswith("image list") else None)
+            current = None
+            if mode == "dump":
+                dumps.append([])
+            continue
+        if mode == "images":
+            m = LLDB_IMAGE.match(line)
+            if m:
+                images.setdefault(os.path.basename(m.group(2)), int(m.group(1), 16))
+        elif mode == "dump":
+            m = LLDB_THREAD.match(line)
+            if m:
+                name = re.search(r"name = '([^']*)'", line)
+                stop = re.search(r"stop reason = (.*)$", line)
+                current = {"index": int(m.group(1)), "name": name.group(1) if name else "",
+                           "stop": stop.group(1).strip() if stop else "", "frames": []}
+                dumps[-1].append(current)
+                continue
+            m = LLDB_FRAME.match(line)
+            if m and current is not None:
+                current["frames"].append((int(m.group(1), 16), m.group(2) or "",
+                                          m.group(3) or ""))
+    return dumps, images
+
+
+def _lldb_symbol(symbol):
+    """lldb's own name for a frame, without arguments, offset and source
+    position; "" for the placeholders it gives a stripped function."""
+    name = re.split(r"\(| \+ | at | \[inlined\]", symbol, maxsplit=1)[0].strip()
+    return "" if not name or name.startswith("___lldb_unnamed_symbol") else name
+
+
+def name_frames(thread_list, images, binary, run=None):
+    """Each thread's frames as names, innermost first: frames in the browser
+    binary by llvm-symbolizer (lldb names few of them), others by lldb's own
+    symbol, the rest as module+offset."""
+    module = os.path.basename(binary)
+    slide = images.get(module)
+    offsets = sorted({addr - slide for t in thread_list for addr, mod, _ in t["frames"]
+                      if mod == module and slide is not None})
+    named = dict(zip(offsets, symbolize(offsets, binary, run)))
+    out = []
+    for t in thread_list:
+        names = []
+        for addr, mod, symbol in t["frames"]:
+            name = ""
+            if mod == module and slide is not None:
+                name = named.get(addr - slide, "")
+                if name == "??":
+                    name = ""
+            name = name or _lldb_symbol(symbol)
+            if not name:
+                base = images.get(mod)
+                name = f"{mod}+0x{addr - base:x}" if mod and base is not None else f"0x{addr:x}"
+            names.append(name)
+        out.append(names)
+    return out
+
+
+def short_stack(names, inner=5, outer=9):
+    """A stack that fits a line: what the thread is doing (innermost frames)
+    and what it is (outermost: where it was started)."""
+    if len(names) <= inner + outer:
+        return " < ".join(names)
+    return " < ".join(names[:inner]) + f" < ...{len(names) - inner - outer} more... < " \
+        + " < ".join(names[-outer:])
+
+
+def describe_dump(thread_list, images, binary, run=None):
+    """One line per thread of a dump."""
+    lines = []
+    for t, names in zip(thread_list, name_frames(thread_list, images, binary, run)):
+        stop = f", stopped by {t['stop']}" if t["stop"] and "SIGSTOP" not in t["stop"] else ""
+        lines.append(f"thread #{t['index']}{stop}: {short_stack(names) or '(no frames)'}")
+    return lines
+
+
+def resumed(text):
+    """Whether lldb's output so far shows that it has let the process run."""
+    return "resuming" in text.split("(lldb) continue")[-1] if "(lldb) continue" in text else False
+
+
+def run_to_lockdown(pid, breakpoints=LOCKDOWN_BREAKPOINTS, timeout=240, popen=subprocess.Popen,
+                    kill=os.kill, clock=time.monotonic, state_of=None):
+    """lldb's output for a renderer paused by --renderer-startup-dialog: its
+    threads there, then at the lockdown point (the first breakpoint
+    reached). The renderer is detached and left running.
+
+    The renderer waits in pause() for SIGUSR1, and the signal has to arrive
+    after lldb has let it run again; one sent while lldb holds it stopped is
+    lost. lldb says "resuming" then, and writes that at once only to a
+    terminal, so it runs on a pseudo-terminal; the process's state (stopped,
+    T, while lldb holds it, then not) is the second sign. Reading as it goes
+    also keeps what lldb said if it has to be stopped."""
+    state_of = state_of or _ps_state
+    cmd = ["lldb", "--batch", "--no-use-colors", "-p", str(pid)]
+    for command in lldb_commands(breakpoints):
+        cmd += ["-o", command]
+    master, slave = pty.openpty()
+    try:
+        try:
+            proc = popen(cmd, stdout=slave, stderr=slave, stdin=subprocess.DEVNULL)
+        except OSError as e:
+            return f"(lldb could not be started: {e})"
+        finally:
+            os.close(slave)
+        chunks, deadline, seen_stop, signals = [], clock() + timeout, False, []
+
+        def read(wait):
+            got = False
+            while select.select([master], [], [], wait)[0]:
+                try:
+                    data = os.read(master, 65536)
+                except OSError:  # the terminal closes when lldb exits
+                    return got
+                if not data:
+                    return got
+                chunks.append(data)
+                got, wait = True, 0
+            return got
+
+        while proc.poll() is None and clock() < deadline:
+            read(0.2)
+            text = b"".join(chunks).decode(errors="replace")
+            stopped = (state_of(pid) or "")[:1].upper() == "T"
+            seen_stop = seen_stop or stopped
+            running = resumed(text) or (seen_stop and not stopped)
+            due = (not signals and running) or (
+                len(signals) == 1 and clock() - signals[0] > 2 and not stopped)
+            if due and len(lldb_dumps(text)) < 2:
+                signals.append(clock())  # twice at most: the first may come a moment early
+                try:
+                    kill(pid, signal.SIGUSR1)
+                except OSError:
+                    pass
+        timed_out = proc.poll() is None
+        if timed_out:
+            proc.kill()
+            proc.wait()
+        read(0)
+        text = b"".join(chunks).decode(errors="replace").replace("\r\n", "\n")
+        return text + (f"\n(lldb did not finish within {timeout} s and was stopped)\n"
+                       if timed_out else "")
+    finally:
+        os.close(master)
+
+
+def lldb_dumps(text):
+    """The thread dumps lldb has begun so far."""
+    return [l for l in text.replace("\r", "").splitlines() if l.strip() == f"(lldb) {LLDB_DUMP}"]
+
+
+def thread_name_sets(thread_names):
+    """The kernel's thread names per lockdown report, counted:
+    {"beryllium,beryllium": 3}."""
+    return dict(collections.Counter(",".join(names) for names in thread_names))
 
 
 def threads(pid, text=None):

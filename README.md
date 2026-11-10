@@ -162,12 +162,16 @@ has the detail and the results of each build):
 2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-3. **One other thread at the lockdown point.** Chromium's ordering should
-   leave the renderer single-threaded when the descriptor sweep runs, but
-   the 0.20.3.15 test build counts two threads in every renderer at that
-   point. 0.20.3.16 logs their names; then either that thread is shown
-   harmless to the sweep or the lockdown moves. The gate requires one
-   thread until then.
+3. **One other thread at the lockdown point.** The renderer should be
+   single-threaded when the descriptor sweep runs, and builds up to
+   0.20.3.16 count two threads there. The other is Chromium's tracing
+   thread: the FreeBSD port put its deferral in a code path FreeBSD never
+   runs. 0.20.3.17 starts it after the lockdown, as Linux does, and gives
+   threads their names in the kernel so that `procstat -t` and the
+   lockdown's own log can say which thread is which. That reading comes
+   from the source; the suite now lists the threads at the lockdown point
+   from their stacks, and the gate requires one thread until a build
+   passes it.
 4. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
 5. **The other processes.** GPU, network, audio and utility processes get
@@ -263,8 +267,9 @@ set it, and the launcher will not start the browser without it.
   the desktop refused the buffer the browser sent instead (`importing the
   supplied dmabufs failed` in the browser's log), and the browser stopped
   at its first frame, as Chromium does on any Wayland error. Naming the
-  NVIDIA GPU works there. If the window closes right after it opens,
-  start the browser without the switch.
+  NVIDIA GPU works there, and so does a start without the switch, which
+  uses it. If the window closes right after it opens, start the browser
+  without the switch.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:

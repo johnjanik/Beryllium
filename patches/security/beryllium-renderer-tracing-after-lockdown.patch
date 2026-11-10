@@ -1,0 +1,80 @@
+Beryllium: a renderer starts the tracing thread after its lockdown
+
+Purpose: the renderer lockdown (beryllium-capsicum-renderer.patch) sweeps
+  every descriptor of the process and then enters capability mode. The
+  sweep is complete only if no other thread can make or receive a
+  descriptor meanwhile, and the lockdown has counted two threads in every
+  renderer since it could count (threads=2, 0.20.3.15 and 0.20.3.16; the
+  suite's gate fails on it).
+  The other thread is Chromium's tracing thread. Initialising tracing
+  (tracing::InitTracingPostFeatureList) constructs PerfettoTracedProcess,
+  whose constructor starts a base::Thread named PerfettoTrace with an I/O
+  message pump, whether or not anything is traced. Chromium knows this is
+  wrong before a sandbox that needs a single thread: on Linux and ChromeOS
+  ContentMainRunnerImpl::Run() only registers tracks early in a child
+  process and sets needs_startup_tracing_after_sandbox_init, and
+  RendererMain initialises tracing right after its sandbox call ("Startup
+  tracing creates a tracing thread, which is incompatible on platforms
+  that require single-threaded sandbox initialization"). The FreeBSD port
+  added FreeBSD to that condition in RunZygote(), which FreeBSD never runs
+  (it has no zygote), and not in ContentMainRunnerImpl::Run(), which it
+  does: there the #else branch initialised tracing at once in every child
+  process.
+  An earlier reading of the ordering (0.20.3.15, in plan/14) took the
+  RunZygote() block for the one FreeBSD runs and concluded that startup
+  tracing waited for the sandbox. It did not. The kernel could not name
+  the thread either: this port's PlatformThread::SetName() told only
+  Chromium, so 0.20.3.16's thread_names read beryllium,beryllium
+  (beryllium-bsd-kernel-thread-names.patch).
+  This patch gives FreeBSD its own branch in Run(): a renderer defers
+  tracing exactly as on Linux; every other process type starts it as
+  before, having no lockdown yet. RendererMain's existing call after
+  EnableSandbox() does the rest; it is not conditional on the platform.
+  Starting the thread after cap_enter() needs a thread, a kqueue and an
+  eventfd, as the I/O and compositor threads already do after the
+  lockdown.
+  What the thread could have done during the sweep: nothing was found. It
+  has no Mojo connection before ChildThreadImpl exists, and its only
+  self-started work, connecting to a system tracing socket, is off unless
+  EnablePerfettoSystemTracing is switched on. The change is made to hold
+  the invariant, not because a descriptor is known to have escaped.
+Stage: 4 (Beryllium series). Applies after the FreeBSD port's
+  patch-content_app_content__main__runner__impl.cc (stage 2), which
+  changes other hunks of the same file.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled. The new branch calls only functions that trace_startup.h
+  declares for every platform, and switches::kRendererProcess, which
+  this file already uses outside any platform condition.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py: test_lockdown_log
+  requires threads=1 at every lockdown when the lockdown is requested, and
+  ThreadsAtLockdown lists the threads at that point with their stacks
+  (lldb). Feature matrix row S-REN-01.
+security-review: required (sandbox setup, process confinement)
+
+--- a/content/app/content_main_runner_impl.cc
++++ b/content/app/content_main_runner_impl.cc
+@@ -1218,6 +1218,23 @@
+           needs_startup_tracing_after_sandbox_init = true;
+           tracing::EnableEarlyTrackRegistration();
+         }
++#elif BUILDFLAG(IS_FREEBSD)
++        // Beryllium (plan/14-RENDERER-SANDBOX.md): initialising tracing
++        // starts the PerfettoTrace thread, and a renderer must be the only
++        // thread in its process when it locks down, so that the descriptor
++        // sweep there is complete. As on Linux, a renderer initialises
++        // tracing right after its sandbox call instead (RendererMain). The
++        // FreeBSD port made this change in RunZygote(), which FreeBSD never
++        // runs, and every renderer reached the lockdown with two threads.
++        // Other process types have no lockdown yet and start tracing here.
++        if (process_type == switches::kRendererProcess) {
++          needs_startup_tracing_after_sandbox_init = true;
++          tracing::EnableEarlyTrackRegistration();
++        } else {
++          tracing::InitTracingPostFeatureList(
++              /*enable_consumer=*/false,
++              /*will_trace_thread_restart=*/false);
++        }
+ #else
+         tracing::InitTracingPostFeatureList(
+             /*enable_consumer=*/false,

@@ -155,8 +155,14 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   created but not started before RendererMain, the hang watcher and
   startup tracing wait for the sandbox, PreSandboxInit starts nothing
   visible). From 0.20.3.16 the lockdown line also carries
-  thread_names=a,b (ki_tdname of each kinfo_proc record, the names
-  Chromium sets), so the other thread is named by the next report.
+  thread_names=a,b (ki_tdname of each kinfo_proc record). That read
+  beryllium,beryllium: this port's PlatformThread::SetName() never told
+  the kernel, so every thread carried the process's name
+  (beryllium-bsd-kernel-thread-names.patch, 0.20.3.17, changes that).
+  The reading of the ordering was wrong about tracing: the port deferred
+  it in RunZygote(), which FreeBSD never runs, and the path FreeBSD takes
+  started the PerfettoTrace thread before RendererMain
+  (beryllium-renderer-tracing-after-lockdown.patch, 0.20.3.17).
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc

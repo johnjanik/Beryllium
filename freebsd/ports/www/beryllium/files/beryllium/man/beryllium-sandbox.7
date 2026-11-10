@@ -262,7 +262,10 @@ sends to standard error.
 A renderer locked down.
 The line counts the directories it closed and the descriptors it limited,
 and gives the number and the names of the threads the process had at that
-point.
+point; there should be one,
+.Li CrRendererMain .
+Before version 0.20.3.17 there were two, and every name was the process's
+own, because the kernel was not told the threads' names.
 .It "beryllium-sandbox: renderer pid=N could not enter capability mode: ..."
 The lockdown failed and the renderer ended.
 The text after the colon names the descriptor that broke the policy, or

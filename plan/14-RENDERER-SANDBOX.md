@@ -628,6 +628,63 @@ FreeBSD test bed, so an increment must be worth a build.
    the excerpt above as its unit-test fixture). Still to see: a start
    without the switch on this machine, which by the source reading uses
    the compositor's device, the NVIDIA one.
+   **Results, 0.20.3.16 with the lockdown (10 November 2026, two runs,
+   `unprivileged_proc_debug=1`, no render-node switch):** everything
+   passes but the thread count and, in the second run, the two noise
+   tests that 0.20.3.16 cannot pass. Every listed renderer was in
+   capability mode, every descriptor read was within the policy (20 to 36
+   per renderer), shared memory anonymous and limited, no directory or
+   writable file, the browser cut 1 to 90 descriptors per renderer, the
+   socket pairs are the two Mojo ones named in 0.20.3.15, media, pages,
+   fonts and the toolbar as without the lockdown. The browser chose
+   `/dev/dri/renderD128` by itself and rendered on the NVIDIA GPU, which
+   settles what a start without the switch does on this machine. Canvas
+   noise: 982 and 1085 pixels in the first run, 998 and 998 in the second
+   (set 1; four of nine comparisons now share a set), and the new test
+   named the set, as it will on every build before 0.20.3.17.
+   **The thread count is 2 again, and `thread_names=` could never have
+   said why.** It read `beryllium,beryllium`: the FreeBSD port's
+   `platform_thread_bsd.cc` is a set of stubs whose `SetName()` records a
+   name inside Chromium and never tells the kernel, so every thread of
+   every Beryllium process carries the process's name in `procstat -t`,
+   `top -H` and a debugger. The plan for 0.20.3.16 assumed the kernel had
+   the names. (The report hid even that, by dropping every
+   "CrRendererMain" from the list and printing the rest as a set; it now
+   prints each renderer's names as logged.) **Which thread it is, from the
+   source:** Chromium's tracing thread. `InitTracingPostFeatureList()`
+   constructs `PerfettoTracedProcess`, whose constructor starts a
+   `base::Thread` named `PerfettoTrace` with an I/O message pump whether
+   or not anything is traced. On Linux `ContentMainRunnerImpl::Run()`
+   defers that in child processes
+   (`needs_startup_tracing_after_sandbox_init`) and `RendererMain` does it
+   after the sandbox call, with the comment that a tracing thread "is
+   incompatible on platforms that require single-threaded sandbox
+   initialization". The port added FreeBSD to that condition in
+   `RunZygote()`, which is compiled only with a zygote and which FreeBSD
+   never runs, and left `Run()` alone, where the `#else` branch starts
+   tracing at once. The reading recorded above under 0.20.3.15 ("the hang
+   watcher and startup tracing wait for the sandbox on Linux and BSD")
+   was right about the hang watcher, whose condition the port did change
+   in the path FreeBSD takes, and wrong about tracing: it looked at the
+   `RunZygote()` block. Nothing was found that this thread does during
+   the sweep (it has no Mojo connection before `ChildThreadImpl` exists,
+   and its one self-started task, a system tracing socket, is off by
+   default), so no descriptor is known to have escaped; the invariant was
+   simply not true. **For 0.20.3.17:**
+   `beryllium-renderer-tracing-after-lockdown.patch` gives FreeBSD its own
+   branch in `Run()`, so a renderer starts tracing after the lockdown as
+   on Linux and other process types as before, and
+   `beryllium-bsd-kernel-thread-names.patch` calls `pthread_set_name_np()`
+   in `SetName()`, so the lockdown line should read `threads=1
+   thread_names=CrRendererMain`. Neither is compiled yet. **To see it
+   before the build:** the suite's `ThreadsAtLockdown` test starts a
+   renderer with `--renderer-startup-dialog`, which pauses it when
+   `RendererMain` begins, attaches `lldb`, lists the threads, runs the
+   renderer on to the lockdown's `utrace` marker and lists them again,
+   naming the frames with `llvm-symbolizer`. Tried end to end against a
+   Chromium on Linux (with a breakpoint that exists there, where it found
+   the hang watcher and tracing threads of an unsandboxed renderer); the
+   FreeBSD run is the owner's next `run sandbox --lockdown`.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
