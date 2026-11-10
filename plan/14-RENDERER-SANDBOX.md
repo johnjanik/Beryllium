@@ -685,8 +685,29 @@ FreeBSD test bed, so an increment must be worth a build.
    Chromium on Linux (with a breakpoint that exists there, where it found
    the hang watcher and tracing threads of an unsandboxed renderer); the
    FreeBSD run is the owner's next `run sandbox --lockdown`.
-   **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
-   thread names): the browser checks
+   **Results, 0.20.3.17 (10 November 2026, released that day as
+   v0.20.3.17 from commit 41e1ca7; one run of the sandbox group with the
+   lockdown on):** all eight tests pass, the gate among them for the first
+   time since it began counting threads. Four lockdown reports, each
+   `threads=1`, and the kernel names the thread `CrRendererMain`: the
+   three patches new in this build compiled, and the two about threads do
+   what they were written for. The thread probe had its first FreeBSD run
+   and worked: one thread when `RendererMain` begins, waiting in
+   `content::WaitForDebugger`, and one at the lockdown, stopped at
+   `__sys_utrace` inside `sandbox::policy::SandboxLinux::InitializeSandbox`
+   under `RendererMainPlatformDelegate::EnableSandbox()` (the FreeBSD
+   sandbox code is compiled under that class's name). So the second thread
+   of 0.20.3.15 and 0.20.3.16 was the tracing thread, as read from the
+   source. No build ever showed it by name: the first build that names
+   threads is the first that no longer starts it early. The policy held on
+   every renderer read (20 to 36 descriptors, none outside), the browser
+   cut 1 to 71 descriptors per renderer, shared memory and files as
+   before. Not yet reported on 0.20.3.17: the rest of the suite, in
+   particular the two canvas noise tests the hash patch is for, and the
+   manual pages read from the installed package. The whole suite last ran
+   on 0.20.3.16, from which this build differs by those three patches and
+   the manual pages.
+   **Then attestation** (next, build 0.20.3.18): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

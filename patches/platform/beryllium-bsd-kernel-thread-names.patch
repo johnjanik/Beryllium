@@ -24,10 +24,11 @@ Stage: 4 (Beryllium series). Depends on the FreeBSD port's
   patch-base_threading_platform__thread__bsd.cc (stage 2), which creates
   the file.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled. pthread_set_name_np() is declared in <pthread_np.h>, which the
-  port already includes in platform_thread_posix.cc for
-  pthread_getthreadid_np().
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Compiled
+  and released in 0.20.3.17 (10 November 2026): the lockdown line of four
+  renderers read thread_names=CrRendererMain. pthread_set_name_np() is
+  declared in <pthread_np.h>, which the port already includes in
+  platform_thread_posix.cc for pthread_getthreadid_np().
 Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
   prints the kernel's names for the threads at each lockdown
   (thread_names= on the lockdown line) and says when they are only the
