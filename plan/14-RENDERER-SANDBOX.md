@@ -558,6 +558,42 @@ FreeBSD test bed, so an increment must be worth a build.
    trees, so a report lists both GPUs and marks the active one. The cause
    on the Intel node is open until a run with this suite, or the browser
    started by hand with the switch, shows the log.
+   **Two more runs the same afternoon** (sent as lockdown runs; the header
+   of each says "not requested", the only switch was the render node, and
+   `unprivileged_proc_debug` was 1). On the NVIDIA node both origins moved
+   the same pixels again, 1031 this time: the fourth set, which the model
+   had given before any report showed that count, and pixel for pixel the
+   model's set for token low bits 0. That is three of eight comparisons
+   with a shared set, against an expected two. On the Intel node the same
+   death, and one detail: in both Intel runs the capability-mode test read
+   the browser and its four renderers and found the GPU, network and
+   storage processes already gone. What Chromium 156 does, read from its
+   source: (a) *which GPU.* The browser renders on the GPU the compositor
+   announces as its main device (`zwp_linux_dmabuf_feedback_v1`
+   `main_device`), by adding `--render-node-override` to its own command
+   line when the switch is absent and a GBM device can be made there
+   (`WaylandConnection::SetRenderNodePath`); only when the compositor
+   names none does `DrmRenderNodePathFinder` choose, preferring a node
+   whose driver is `i915`, `amdgpu` or `virtio_gpu` and otherwise the
+   first that works. So the `renderD128` on the GPU page of 1 November was
+   the compositor's device, not a guess, and the switch on the command
+   line replaces the compositor's answer: naming the other GPU asks the
+   compositor to show buffers from a GPU that is not its own. (b) *What
+   ends the browser.* A Wayland error is fatal by design
+   (`WaylandEventWatcher::WlDisplayCheckForErrors`): a protocol error
+   stops on a `CHECK` after logging `libwayland:` and "Fatal Wayland
+   protocol error" lines, and a dropped connection runs
+   `chrome::SessionEnding()`. A compositor that cannot import a buffer
+   from the other GPU answers with such an error, at about the first
+   frame, which is when these browsers ended. That is a candidate, not a
+   finding: the log lines of the Intel runs decide, and a start without
+   the switch shows which GPU the compositor names on this machine. If it
+   is the NVIDIA one, the Intel node was never a supported choice on this
+   desktop and the documentation should say so; if it is the Intel one, a
+   plain start fails too and this is a fault to fix. The suite's run
+   script gains `--lockdown` and says before its first test whether the
+   lockdown is requested; the rendering note names the render node and who
+   chose it.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

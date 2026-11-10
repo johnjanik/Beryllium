@@ -245,15 +245,13 @@ They then act as a gate: they fail if any renderer is not in capability
 mode by the kernel's answer, if its descriptors cannot be read, or if any
 descriptor is outside the policy.
 .Bd -literal -offset indent
-freebsd/tests/browser/run sandbox \e
-    --browser-arg=--enable-features=BerylliumCapsicumRenderer
+freebsd/tests/browser/run sandbox --lockdown
 .Ed
 .Pp
 Record what capability mode refuses in each process, with
 .Xr ktrace 1 :
 .Bd -literal -offset indent
-freebsd/tests/browser/run capsicum --diagnose \e
-    --browser-arg=--enable-features=BerylliumCapsicumRenderer
+freebsd/tests/browser/run capsicum --diagnose --lockdown
 .Ed
 .Sh DIAGNOSTICS
 The lockdown writes to the browser's log, which

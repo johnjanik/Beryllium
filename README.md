@@ -146,8 +146,8 @@ adversarial review of the lockdown, its tests and the release tools
 (7 November 2026), and what changed because of it, is recorded in
 [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md). Reports of anything
 that breaks with it on are welcome; the test suite runs with it on through
-`--browser-arg=--enable-features=BerylliumCapsicumRenderer`, which also
-turns its sandbox tests into a gate that fails on any unconfined renderer.
+`freebsd/tests/browser/run --lockdown`, which also turns its sandbox tests
+into a gate that fails on any unconfined renderer.
 
 #### Still to finish
 
@@ -254,11 +254,15 @@ set it, and the launcher will not start the browser without it.
   suite's `fonts` group now fails on any script drawn without its glyphs
   and names the package.
 - **WebGPU** finds no adapter.
-- **Two GPUs.** On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on
-  Wayland, both drivers loaded), 0.20.3.16 works when it renders on the
-  NVIDIA GPU and ends about a second after starting when
-  `--render-node-override` names the Intel one (Mesa 26.2.2). The cause is
-  not yet known. Leave the switch off, or name the NVIDIA node.
+- **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
+  compositor announces as its own; `--render-node-override` names another.
+  On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland, both
+  drivers loaded), 0.20.3.16 works when the switch names the NVIDIA GPU
+  (`/dev/dri/renderD128` there) and ends about a second after starting
+  when it names the Intel one (Mesa 26.2.2). Why, and which of the two a
+  start without the switch uses on that machine, is not yet known. If the
+  window closes right after it opens on a machine with two GPUs, try the
+  switch with each node in turn.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:

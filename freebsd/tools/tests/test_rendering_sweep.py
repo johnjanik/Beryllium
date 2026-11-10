@@ -95,5 +95,26 @@ class GpuPageLines(unittest.TestCase):
         self.assertIn("shadowRoot", rendering.GPU_ROWS)
         self.assertIn("'TR'", rendering.GPU_ROWS)
 
+
+class RenderNode(unittest.TestCase):
+    """The render node and who chose it, from the GPU page's command line."""
+
+    ROW = ["Command Line :", "/usr/local/share/beryllium/beryllium --no-first-run "
+           "--render-node-override=/dev/dri/renderD128 --flag-switches-begin"]
+
+    def test_the_browsers_own_choice(self):
+        line = rendering.render_node([["Canvas", "x"], self.ROW])
+        self.assertTrue(line.startswith("render node: /dev/dri/renderD128 (the browser's own"))
+
+    def test_named_by_the_run(self):
+        line = rendering.render_node(
+            [self.ROW], ["--foo", "--render-node-override=/dev/dri/renderD128"])
+        self.assertEqual(line, "render node: /dev/dri/renderD128 (named by this run's switch)")
+
+    def test_no_switch_on_the_page(self):
+        self.assertIsNone(rendering.render_node([["Command Line", "beryllium --no-first-run"]]))
+        self.assertIsNone(rendering.render_node([]))
+
+
 if __name__ == "__main__":
     unittest.main()

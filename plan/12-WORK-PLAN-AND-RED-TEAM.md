@@ -686,7 +686,9 @@ not.
   (from 10 November 2026 the Intel driver runs beside NVIDIA's, Intel on
   the laptop panel and NVIDIA on the external display; Beryllium 0.20.3.16
   works on `renderD128`, NVIDIA, and ends within a second of starting on
-  `renderD129`, Intel with Mesa 26.2.2: plan/14 increment 5 results). So
+  `renderD129`, Intel with Mesa 26.2.2: plan/14 increment 5 results; the
+  `--render-node-override` above was the browser's own addition, naming
+  the compositor's main device, which is how Chromium chooses on Wayland). So
   the first GPU policy is the NVIDIA one after all (charter D6 stands),
   with the closed driver's ioctl surface (R23) as its main residual risk.
   WebGPU on this path is extra attack surface reachable from every page; a

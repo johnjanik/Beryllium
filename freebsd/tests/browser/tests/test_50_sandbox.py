@@ -140,8 +140,8 @@ class SandboxHonesty(BrowserTest):
                              "the browser listed them, or unreadable, although the lockdown "
                              "was requested")
         elif not confined:
-            self.skipTest("no renderer in capability mode; run with "
-                          "--browser-arg=--enable-features=BerylliumCapsicumRenderer")
+            self.skipTest("no renderer in capability mode; this run did not switch the "
+                          "lockdown on (run --lockdown)")
         # Every socket of every Beryllium process, so a socket a renderer holds
         # can be traced to the process holding its other end.
         types = {p["id"]: p["type"] for p in procs}

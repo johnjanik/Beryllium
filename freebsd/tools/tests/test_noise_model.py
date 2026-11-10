@@ -18,6 +18,9 @@ FILL = (64, 64, (100, 100, 100, 255))  # the suite's probe
 # 2026), where 127.0.0.1 and localhost both moved 982 pixels.
 REPORTED_ROW_0 = [9, 19, 22, 26, 33, 39, 44, 45, 46, 49, 52, 55, 61, 62]
 REPORTED_ROW_1 = [0, 10, 13, 20, 21, 23, 24, 31, 35, 36, 39, 48, 49, 51, 52, 53, 55, 63]
+# And of the next run the same day, where both moved 1031: the fourth set,
+# which the model had given before any report showed that count.
+REPORTED_1031_ROW_0 = [0, 3, 4, 5, 6, 7, 8, 12, 24, 25, 27, 34, 37, 47, 48, 50, 53, 54, 56, 58]
 
 
 class OldSets(unittest.TestCase):
@@ -26,8 +29,8 @@ class OldSets(unittest.TestCase):
         cls.sets = noise.old_sets(*FILL)
 
     def test_sizes_are_the_counts_every_report_showed(self):
-        # Reports of 0.20.3.14 to 0.20.3.16 showed 982, 998 and 1085 changed
-        # pixels and no other number; 1031 is the fourth.
+        # Reports of 0.20.3.14 to 0.20.3.16 showed 982, 998, 1085 and, last,
+        # 1031 changed pixels, and no other number.
         self.assertEqual([len(s) for s in self.sets], [1031, 998, 1085, 982])
 
     def test_the_four_sets_split_the_canvas(self):
@@ -37,6 +40,9 @@ class OldSets(unittest.TestCase):
     def test_set_three_is_what_the_report_listed(self):
         for y, row in ((0, REPORTED_ROW_0), (1, REPORTED_ROW_1)):
             self.assertEqual(sorted(x for x, yy in self.sets[3] if yy == y), row)
+
+    def test_set_zero_is_what_the_next_report_listed(self):
+        self.assertEqual(sorted(x for x, y in self.sets[0] if y == 0), REPORTED_1031_ROW_0)
 
     def test_only_two_bits_of_the_token_matter(self):
         rng = random.Random(7)

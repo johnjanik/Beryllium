@@ -7,6 +7,7 @@ throwaway profiles (your own profile is never used), and writes a report.
 
   freebsd/tests/browser/run                 all offline tests
   freebsd/tests/browser/run --network       also the live-site tests (YouTube)
+  freebsd/tests/browser/run --lockdown      with the renderer lockdown on
   freebsd/tests/browser/run media pages     only some groups (test file names)
   freebsd/tests/browser/run --list          list the tests
 
@@ -16,6 +17,7 @@ the browser's own toolbar need a window and are skipped headless).
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 import unittest
@@ -23,7 +25,49 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from berytest import context, runner  # noqa: E402
+from berytest import capsicum, context, runner  # noqa: E402
+
+LOCKDOWN_SWITCH = "--enable-features=BerylliumCapsicumRenderer"
+
+
+def add_lockdown(browser_args):
+    """Switch the lockdown feature on in a list of browser switches. The
+    browser reads one --enable-features switch, the last, so the feature
+    joins one that is already there."""
+    feature = LOCKDOWN_SWITCH.split("=", 1)[1]
+    for i, arg in enumerate(browser_args):
+        if arg.startswith("--enable-features="):
+            browser_args[i] = f"{arg},{feature}"
+            return
+    browser_args.append(LOCKDOWN_SWITCH)
+
+
+def start_lines(o, proc_debug=None):
+    """What a run says before its first test, so a run made without the
+    switch it was meant to have is seen at once and not in the report.
+    proc_debug: the value of security.bsd.unprivileged_proc_debug, or None
+    where there is no such sysctl."""
+    lines = [f"Results: {o.results}"]
+    if capsicum.lockdown_requested(o):
+        lines.append("Renderer lockdown: requested (the sandbox tests are a gate)")
+        if proc_debug == "0":
+            lines.append("  security.bsd.unprivileged_proc_debug is 0: the gate cannot read the "
+                         "renderers and will fail; set it to 1 for this run "
+                         "(sudo sysctl security.bsd.unprivileged_proc_debug=1)")
+    else:
+        lines.append("Renderer lockdown: not requested (add --lockdown for a lockdown run)")
+    if o.browser_args:
+        lines.append("Browser switches: " + " ".join(o.browser_args))
+    return lines
+
+
+def proc_debug_setting():
+    try:
+        out = subprocess.run(["sysctl", "-n", "security.bsd.unprivileged_proc_debug"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
 
 
 def options(argv):
@@ -36,6 +80,10 @@ def options(argv):
     ap.add_argument("--browser", help="browser binary (default: /usr/local/bin/beryllium)")
     ap.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
                     help="extra browser switch, may repeat")
+    ap.add_argument("--lockdown", action="store_true",
+                    help="run with the renderer lockdown switched on: the same as "
+                         "--browser-arg=--enable-features=BerylliumCapsicumRenderer; the "
+                         "sandbox tests are then a gate and fail instead of skipping")
     ap.add_argument("--scheme", default="chrome",
                     help="scheme for opening internal pages over DevTools (default chrome: "
                          "Beryllium shows beryllium:// but maps it to chrome:// only in "
@@ -68,6 +116,8 @@ def options(argv):
                          "is not opened)")
     ap.add_argument("--list", action="store_true", help="list the tests and exit")
     o = ap.parse_args(argv)
+    if o.lockdown and not capsicum.lockdown_requested(o):
+        add_lockdown(o.browser_args)
     if not o.results:
         o.results = os.path.join(os.path.expanduser("~"), "beryllium-test-results",
                                  time.strftime("%Y%m%d-%H%M%S"))
@@ -115,7 +165,7 @@ def main(argv=None):
             print(f"{t.id()}" + (f"\n    {doc}" if doc else ""))
         return 0
     context.CTX = ctx = context.Context(o)
-    print(f"Results: {o.results}")
+    print("\n".join(start_lines(o, proc_debug_setting())))
     try:
         return runner.run(ctx, suite)
     finally:

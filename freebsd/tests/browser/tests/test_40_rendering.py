@@ -163,6 +163,29 @@ def gpu_page_lines(rows):
     return lines
 
 
+RENDER_NODE = re.compile(r"--render-node-override=(\S+)")
+
+
+def render_node(rows, given_args=()):
+    """The DRM render node the browser renders with on Wayland, from the
+    command line the GPU page shows, and who chose it. Without the switch
+    on its command line the browser adds it itself, naming the GPU the
+    compositor announces as its main device (or, when the compositor names
+    none, a node it finds: an Intel or AMD one first). Returns a line for
+    the report, or None when the page shows no such switch (X11, or no
+    usable node)."""
+    for cells in rows:
+        match = RENDER_NODE.search(" ".join(c for c in cells if c))
+        if match:
+            node = match.group(1)
+            given = any(RENDER_NODE.search(arg) for arg in given_args)
+            return (f"render node: {node} ("
+                    + ("named by this run's switch" if given else
+                       "the browser's own choice: the compositor's main device, or the "
+                       "first usable node it found") + ")")
+    return None
+
+
 class Rendering(BrowserTest):
     BROWSER_ARGS = (NO_NOISE,)
 
@@ -245,7 +268,11 @@ class Rendering(BrowserTest):
         try:
             page = self.browser.new_page(self.browser.url("gpu"))
             self.browser.wait(2)
-            shown = gpu_page_lines(page.eval(GPU_ROWS) or [])
+            rows = page.eval(GPU_ROWS) or []
+            shown = gpu_page_lines(rows)
+            node = render_node(rows, self.ctx.options.browser_args)
+            if node:
+                lines.append(node)
             lines.append("GPUs and displays (beryllium://gpu): "
                          + ("\n  ".join([""] + shown[:32]) if shown else "nothing shown"))
         except Exception as e:  # a note, not the test

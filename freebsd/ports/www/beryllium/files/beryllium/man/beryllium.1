@@ -133,9 +133,13 @@ input from other windows and inject input into them.
 On Wayland, render with the GPU behind the DRM render node
 .Ar path ,
 such as
-.Pa /dev/dri/renderD129 ,
-instead of the first one found.
-For machines with more than one GPU.
+.Pa /dev/dri/renderD129 .
+Without the option the browser uses the GPU that the Wayland compositor
+announces as its own.
+When the compositor names none, it takes an Intel or AMD node if there is
+one, and otherwise the first that works.
+For machines with more than one GPU; see
+.Sx BUGS .
 .It Fl -disable-gpu
 Do not use the GPU; draw in software.
 .It Fl -enable-gpu-memory-buffer-video-frames
