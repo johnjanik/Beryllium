@@ -30,18 +30,61 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.12**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.17**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland.
-- **Works:** browsing; video playback, including YouTube; WebGL; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The sandbox tests were run on 0.20.3.17 itself, with the lockdown on. The whole suite was last run on the 0.20.3.16 test build, from which 0.20.3.17 differs by three patches and the manual pages.
+- **Works:** browsing; video playback, including YouTube; WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
 
+### New in 0.20.3.17 (since 0.20.3.12)
+
+For everyday browsing:
+
+- **Fonts for Chinese, Japanese, Korean and emoji** come with the package.
+  A FreeBSD desktop installs none by itself, and 0.20.3.12 drew those
+  scripts as blanks or boxes. (When building the port, the `FONTS` options
+  choose which fonts it depends on.)
+- **Manual pages.** `man beryllium` covers the command, its options, the
+  environment and the files; `man beryllium-sandbox` states what is
+  confined, by what means, and how to check it yourself. Earlier releases
+  shipped Chromium's generic page.
+- **Canvas noise that follows the whole site token.** Helium's
+  fingerprinting noise picks the pixels of a canvas readback to change
+  from a per-site token. Its hash let only two bits of that token pick
+  them: a flat area moved one of four sets of pixels, the same four in
+  every browser with this code, and two sites moved the same pixels in
+  one session of four. Every draw now depends on the whole token.
+- **Thread names where FreeBSD's tools look.** `procstat -t`, `top -H` and
+  a debugger show Chromium's names for its threads, such as
+  `CrRendererMain`, instead of `beryllium` for every one of them.
+
+For the renderer lockdown, which stays opt-in:
+
+- **The browser cuts what it sends.** Every descriptor the browser passes
+  to a confined renderer is limited to the rights its kind needs before
+  it is sent, so the renderer never holds it with more. 0.20.3.12 cut on
+  arrival only.
+- **One thread at the lockdown point.** The descriptor sweep at the
+  lockdown is complete only if no other thread exists yet, and one did:
+  Chromium's tracing thread, whose deferral the FreeBSD port had put in a
+  code path FreeBSD never runs. It now starts after the lockdown, as on
+  Linux, and the lockdown logs how many threads it found and their names.
+- **The gate checks more, and passes.** With the lockdown on, the suite
+  also fails on a renderer that has a second thread at its lockdown point,
+  and it lists the threads there from their stacks. On 0.20.3.17 the
+  sandbox tests passed with the lockdown on (one run so far).
+
+For anyone running the test suite: `run --lockdown` switches the lockdown
+on; a browser that dies under a test is reported with its exit status or
+signal, the kernel's line and the lines of its log that say why; and the
+report names the GPU and the render node in use.
+
 ### New in 0.20.3.12 (since 0.20.3.7)
 
-Everything in this release is about the renderer lockdown and about being
+Everything in that release is about the renderer lockdown and about being
 able to check it. Nothing changes for everyday browsing unless you switch
 the lockdown on.
 
@@ -139,9 +182,11 @@ procstat -s $(pgrep -f -- --type=renderer)
 
 It is off by default because it is not yet a complete sandbox. What it
 does today: every descriptor a confined renderer holds is cut to the
-rights its kind needs, a renderer that cannot be confined ends, and the
-suite checks all of it from outside with `procstat`. What is still
-missing is listed under [Still to finish](#still-to-finish). An external
+rights its kind needs, the browser cuts what it sends such a renderer
+before sending it, the renderer is the only thread in its process when it
+locks down, a renderer that cannot be confined ends, and the suite checks
+all of it from outside with `procstat`. What is still missing is listed
+under [Still to finish](#still-to-finish). An external
 adversarial review of the lockdown, its tests and the release tools
 (7 November 2026), and what changed because of it, is recorded in
 [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md). Reports of anything
@@ -156,32 +201,23 @@ has the detail and the results of each build):
 
 1. **What the GPU process sends a renderer** is cut by the receiver
    only. The browser cuts every descriptor it sends a confined renderer
-   before sending it (done since the 0.20.3.13 test build), but the
-   transports between a renderer and the GPU process carry no sender-side
-   cut yet.
+   before sending it, but the transports between a renderer and the GPU
+   process carry no sender-side cut yet.
 2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-3. **One other thread at the lockdown point.** The renderer should be
-   single-threaded when the descriptor sweep runs, and builds up to
-   0.20.3.16 count two threads there. The other is Chromium's tracing
-   thread: the FreeBSD port put its deferral in a code path FreeBSD never
-   runs. 0.20.3.17 starts it after the lockdown, as Linux does, and gives
-   threads their names in the kernel so that `procstat -t` and the
-   lockdown's own log can say which thread is which. That reading comes
-   from the source; the suite now lists the threads at the lockdown point
-   from their stacks, and the gate requires one thread until a build
-   passes it.
-4. **On by default, fail closed.** When the suite passes the gate on every
-   run, the production package turns the lockdown on.
-5. **The other processes.** GPU, network, audio and utility processes get
+3. **On by default, fail closed.** When the suite passes the gate on every
+   run, the production package turns the lockdown on. 0.20.3.17 is the
+   first build to pass it since the gate began counting threads, in one
+   run so far.
+4. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
-6. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
+5. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
    verified by `install.sh`; the proposal is in plan/16.
-7. **Assurance.** A FreeBSD test machine for CI, review records for the
+6. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
-8. **WebGPU** finds no adapter.
+7. **WebGPU** finds no adapter.
 
 ## Install
 
@@ -202,9 +238,9 @@ sh install.sh
 The installer downloads the package for your FreeBSD version from this
 repository's [releases](https://github.com/johnjanik/Beryllium/releases),
 checks it against the release's `SHA256SUMS`, installs its dependencies
-from the official FreeBSD package repository, and installs it. From
-0.20.3.13 the dependencies include the Noto fonts for Chinese, Japanese,
-Korean and emoji (about 215 MB, shared with the rest of the desktop).
+from the official FreeBSD package repository, and installs it. The
+dependencies include the Noto fonts for Chinese, Japanese, Korean and
+emoji (about 215 MB, shared with the rest of the desktop).
 
 | Command | What it does |
 |---|---|
@@ -222,7 +258,8 @@ set it, and the launcher will not start the browser without it.
 
 ## Using Beryllium
 
-- Start it from your desktop menu, or run `beryllium`.
+- Start it from your desktop menu, or run `beryllium`. `man beryllium`
+  describes the command, its options and its files.
 - Internal pages use the `beryllium://` scheme: `beryllium://settings`,
   `beryllium://version`, `beryllium://gpu`.
 - Your profile is in `~/.config/beryllium` (set `BERYLLIUM_CONFIG_HOME` to
@@ -245,18 +282,16 @@ set it, and the launcher will not start the browser without it.
 
 ### Known issues
 
-- **Chinese, Japanese and Korean text shows as blanks or boxes** on a
-  machine with no font for those scripts, which a FreeBSD desktop does not
-  install by itself; 0.20.3.12 depends on none (`noto-basic` covers Latin,
-  Greek and Cyrillic only), and Firefox on the same machine shows the same
-  blanks. Install a font and restart the browser:
-  `pkg install noto-sans-sc`. From 0.20.3.13 the package depends on Noto
-  Sans CJK SC and Noto Color Emoji. Other scripts (Arabic, Hebrew,
-  Devanagari, Thai and the rest) are drawn with whatever fonts are
-  installed; `pkg install noto-extra` brings the Noto fonts FreeBSD packages
-  for 24 of them, or install one, such as `noto-sans-arabic`. The test
-  suite's `fonts` group now fails on any script drawn without its glyphs
-  and names the package.
+- **Text in a script with no installed font shows as blanks or boxes.**
+  The package brings fonts for Latin, Greek, Cyrillic, Chinese, Japanese,
+  Korean and emoji. Other scripts (Arabic, Hebrew, Devanagari, Thai and
+  the rest) are drawn with whatever fonts are installed, and a FreeBSD
+  desktop installs few by itself; `pkg install noto-extra` brings the Noto
+  fonts FreeBSD packages for 24 of them, or install one, such as
+  `noto-sans-arabic`, and restart the browser. The test suite's `fonts`
+  group fails on any script drawn without its glyphs and names the
+  package. (Releases up to 0.20.3.12 brought no font for Chinese,
+  Japanese, Korean or emoji: `pkg install noto-sans-sc noto-emoji` there.)
 - **WebGPU** finds no adapter.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
   compositor announces as its own. `--render-node-override` names another,
@@ -289,9 +324,9 @@ set it, and the launcher will not start the browser without it.
   the command, its options, the features Beryllium and Helium define,
   the environment and the files; `beryllium-sandbox(7)` states what is
   confined, by what means, and how to check it with `procstat`. They are
-  installed from the build after 0.20.3.16 (releases up to 0.20.3.12
-  shipped Chromium's generic page). From a checkout on FreeBSD:
-  `man man/beryllium.1`.
+  installed with the package since 0.20.3.17 (`man beryllium`,
+  `man beryllium-sandbox`); earlier releases shipped Chromium's generic
+  page. From a checkout on FreeBSD: `man man/beryllium.1`.
 - **This README** for status, install and known issues, and
   [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 - **The plan documents** in [plan/](plan/00-INDEX.md), with the
@@ -360,10 +395,9 @@ From Helium's open-source patch set, Beryllium keeps:
   The canvas noise changes one channel of about one pixel in four of a
   flat area by one level on every readback, the same within a session
   and different per site; `beryllium://flags/#helium-noise-canvas`
-  turns it off. (The test suite mistook it for a rendering fault
-  until 9 November 2026.) Up to 0.20.3.16, which pixels of a flat area
+  turns it off. In releases up to 0.20.3.12, which pixels of a flat area
   move follows only two bits of the site's 64-bit noise token, so two
-  sites move the same pixels in one session of four; from 0.20.3.17 a
+  sites move the same pixels in one session of four; since 0.20.3.17 a
   Beryllium patch makes every draw depend on the whole token.
 
 What differs:
@@ -379,7 +413,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.7 has the first steps, with the lockdown itself still opt-in. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.17 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -393,7 +427,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.12, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, and a test suite that is a gate; still to come, the browser cutting what it sends, the kernel check, the lockdown before the renderer's threads start and then on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.17, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |

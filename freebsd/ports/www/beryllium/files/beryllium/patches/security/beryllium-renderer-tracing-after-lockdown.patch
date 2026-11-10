@@ -42,10 +42,10 @@ Stage: 4 (Beryllium series). Applies after the FreeBSD port's
   patch-content_app_content__main__runner__impl.cc (stage 2), which
   changes other hunks of the same file.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled. The new branch calls only functions that trace_startup.h
-  declares for every platform, and switches::kRendererProcess, which
-  this file already uses outside any platform condition.
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Compiled
+  and released in 0.20.3.17 (10 November 2026): the owner's run of the
+  sandbox tests with the lockdown on had threads=1 in four renderers, and
+  lldb found one thread when RendererMain begins and one at the lockdown.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py: test_lockdown_log
   requires threads=1 at every lockdown when the lockdown is requested, and
   ThreadsAtLockdown lists the threads at that point with their stacks
