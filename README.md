@@ -154,37 +154,30 @@ turns its sandbox tests into a gate that fails on any unconfined renderer.
 In the order they are planned ([plan/14](plan/14-RENDERER-SANDBOX.md)
 has the detail and the results of each build):
 
-1. **Two sockets per renderer: `mojo::PlatformChannel`.** The 0.20.3.13
-   test build names the maker of both pairs each confined renderer makes:
-   `mojo::PlatformChannel`, one on the main thread and one on the
-   compositor thread, all cut at creation. 0.20.3.14 tried to log a stack
-   trace for the first pair at each site and got nothing (the release
-   build has no unwind tables); 0.20.3.15 logs the return addresses from
-   the frame pointers instead, and the suite names them.
-2. **The browser cuts before it sends.** Done in the 0.20.3.13 test build
-   (S-IPC-01): the browser cut between 1 and 88 descriptors per renderer
-   before sending them, none was refused, and every renderer the suite
-   read stayed within the policy. Still receiver-limited only: what the
-   GPU process sends a renderer directly.
-3. **The kernel's word on each renderer.** The browser checks each
+1. **What the GPU process sends a renderer** is cut by the receiver
+   only. The browser cuts every descriptor it sends a confined renderer
+   before sending it (done since the 0.20.3.13 test build), but the
+   transports between a renderer and the GPU process carry no sender-side
+   cut yet.
+2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-4. **Single-threaded lockdown, verified.** Chromium orders the renderer's
-   sandbox before its other threads exist, so the descriptor sweep should
-   see every descriptor. 0.20.3.13 and 0.20.3.14 reported the thread
-   count at that point as unavailable, which turned out to be the
-   lockdown code discarding the value it had read, not the kernel;
-   0.20.3.15 keeps it. The gate requires one thread.
-5. **On by default, fail closed.** When the suite passes the gate on every
+3. **One other thread at the lockdown point.** Chromium's ordering should
+   leave the renderer single-threaded when the descriptor sweep runs, but
+   the 0.20.3.15 test build counts two threads in every renderer at that
+   point. 0.20.3.16 logs their names; then either that thread is shown
+   harmless to the sweep or the lockdown moves. The gate requires one
+   thread until then.
+4. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
-6. **The other processes.** GPU, network, audio and utility processes get
+5. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
-7. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
+6. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
    verified by `install.sh`; the proposal is in plan/16.
-8. **Assurance.** A FreeBSD test machine for CI, review records for the
+7. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
-9. **WebGPU** finds no adapter.
+8. **WebGPU** finds no adapter.
 
 ## Install
 

@@ -87,6 +87,16 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   (-fno-omit-frame-pointer) and logs each return address as module+offset
   (dladdr, no right needed); the test suite names them with
   llvm-symbolizer on the installed binary, which keeps function names.
+  0.20.3.15 (10 November 2026) named both: the pair on CrRendererMain is
+  mojo::core::ipcz_driver::BaseSharedMemoryService::CreateClient(), made
+  while Invitation::Accept() takes the browser's invitation in
+  ChildThreadImpl::Init(), one end for the browser (the blocking one the
+  survey saw); the pair on Compositor is
+  mojo::core::ipcz_driver::Transport::CreatePair() for
+  mojo::internal::ThreadLocalNode, made when
+  blink::WidgetInputHandlerImpl binds on the compositor thread, both ends
+  staying in the renderer (fd 19 and 23 in the survey). Both are Mojo's
+  own, both cut at creation; nothing to change.
   The sender's side (9 November 2026, build 0.20.3.13; plan/14 increment 5,
   S-IPC-01): the feature kBerylliumCapsicumRenderer moves here from
   sandbox_freebsd.cc so the browser can read it too; ExpectConfinedPeer(),
@@ -114,9 +124,8 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   unconnected, which the sender checked with the rights it had.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
-  0.20.3.14 state compiled and ran (10 November 2026: the 242 refusals
-  gone, the traces empty); the frame-pointer walk is for build 0.20.3.15,
-  not yet compiled.
+  0.20.3.15 state compiled and ran (10 November 2026: the 242 refusals
+  gone, the return addresses named both socket-pair callers).
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the

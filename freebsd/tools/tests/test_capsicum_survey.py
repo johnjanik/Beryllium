@@ -491,3 +491,19 @@ class LoggedFrames(unittest.TestCase):
             lines = capsicum.describe_frames(frames, "/usr/local/share/beryllium/beryllium")
         self.assertEqual(lines, ["mojo::PlatformChannel on CrRendererMain: beryllium+0x5a1b2c0 "
                                  "< beryllium+0x3f00120 < libthr.so.3+0x1a2b0 < ?+0x7fffdeadbeef"])
+
+
+class ThreadNames(unittest.TestCase):
+    LINE = ("[1:2:1110/124732.754052:WARNING:sandbox/policy/freebsd/sandbox_freebsd.cc:448] "
+            "beryllium-sandbox: renderer pid=34900 capability_mode=1 closed_directories=0 limited=9 "
+            "threads=2 thread_names=CrRendererMain,ThreadPoolServi")
+
+    def test_names_are_listed_per_report(self):
+        self.assertEqual(capsicum.thread_names_at_lockdown([self.LINE]),
+                         [["CrRendererMain", "ThreadPoolServi"]])
+        self.assertEqual(capsicum.threads_at_lockdown([self.LINE]), [2])
+
+    def test_a_build_without_names_gives_an_empty_list(self):
+        line = self.LINE.replace(" thread_names=CrRendererMain,ThreadPoolServi", " thread_names=-")
+        self.assertEqual(capsicum.thread_names_at_lockdown([line]), [[]])
+        self.assertEqual(capsicum.thread_names_at_lockdown([self.LINE.split(" thread_names")[0]]), [])

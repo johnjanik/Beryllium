@@ -382,6 +382,7 @@ def describe_socket(sock, holders, pid):
 
 MAKER_RE = re.compile(r"socket pair made (?:at (\S+) )?on thread '([^']*)'")
 THREADS_RE = re.compile(r"capability_mode=1 .*\bthreads=(-?\d+)")
+THREAD_NAMES_RE = re.compile(r"capability_mode=1 .*\bthread_names=(\S+)")
 
 
 def socket_pair_makers(log_lines):
@@ -479,6 +480,18 @@ def threads_at_lockdown(log_lines):
         m = THREADS_RE.search(line)
         if m:
             out.append(int(m.group(1)))
+    return out
+
+
+def thread_names_at_lockdown(log_lines):
+    """The names of the threads each lockdown report lists (thread_names=
+    a,b from 0.20.3.16; "-" when the build could not read them), one list
+    per renderer that locked down."""
+    out = []
+    for line in log_lines:
+        m = THREAD_NAMES_RE.search(line)
+        if m:
+            out.append([] if m.group(1) == "-" else m.group(1).split(","))
     return out
 
 
