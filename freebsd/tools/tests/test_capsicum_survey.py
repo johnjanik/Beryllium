@@ -451,3 +451,43 @@ class Parse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoggedFrames(unittest.TestCase):
+    """The return addresses the lockdown logs for the first socket pair at
+    each site and thread (0.20.3.15), parsed and named."""
+
+    LINE = ("[69151:403674:1110/065457.579140:WARNING:base/posix/capsicum_rights.cc:430] "
+            "beryllium-sandbox: the first socket pair made at mojo::PlatformChannel on thread "
+            "'CrRendererMain' came from frames: beryllium+0x5a1b2c0 beryllium+0x3f00120 "
+            "libthr.so.3+0x1a2b0 0x7fffdeadbeef ")
+
+    def test_frames_are_parsed_per_site_and_thread_once(self):
+        frames = capsicum.frames_logged([self.LINE, self.LINE])
+        self.assertEqual(list(frames), ["mojo::PlatformChannel on CrRendererMain"])
+        self.assertEqual(frames["mojo::PlatformChannel on CrRendererMain"],
+                         [("beryllium", 0x5a1b2c0), ("beryllium", 0x3f00120),
+                          ("libthr.so.3", 0x1a2b0), (None, 0x7fffdeadbeef)])
+
+    def test_frames_in_the_binary_are_named_and_others_kept_as_offsets(self):
+        calls = []
+        def fake_run(cmd, inp):
+            calls.append((cmd, inp))
+            return ("mojo::PlatformChannel::PlatformChannel()\n??:0:0\n\n"
+                    "content::RenderThreadImpl::Init()\n??:0:0\n")
+        frames = capsicum.frames_logged([self.LINE])
+        with unittest.mock.patch.object(capsicum.shutil, "which", return_value="/usr/bin/llvm-symbolizer"):
+            lines = capsicum.describe_frames(frames, "/usr/local/share/beryllium/beryllium", run=fake_run)
+        self.assertEqual(lines, ["mojo::PlatformChannel on CrRendererMain: "
+                                 "mojo::PlatformChannel::PlatformChannel() < content::RenderThreadImpl::Init() "
+                                 "< libthr.so.3+0x1a2b0 < ?+0x7fffdeadbeef"])
+        self.assertEqual(calls[0][1], "0x5a1b2c0\n0x3f00120\n")
+        self.assertIn("--obj=/usr/local/share/beryllium/beryllium", calls[0][0])
+
+    def test_without_a_symbolizer_the_offsets_stand(self):
+        frames = capsicum.frames_logged([self.LINE])
+        with unittest.mock.patch.object(capsicum.shutil, "which", return_value=None), \
+             unittest.mock.patch.object(capsicum.os.path, "exists", return_value=False):
+            lines = capsicum.describe_frames(frames, "/usr/local/share/beryllium/beryllium")
+        self.assertEqual(lines, ["mojo::PlatformChannel on CrRendererMain: beryllium+0x5a1b2c0 "
+                                 "< beryllium+0x3f00120 < libthr.so.3+0x1a2b0 < ?+0x7fffdeadbeef"])

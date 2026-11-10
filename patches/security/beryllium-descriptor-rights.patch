@@ -80,8 +80,13 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   (9 November 2026) named it: mojo::PlatformChannel on both CrRendererMain
   and Compositor, one pair each per renderer, all cut at creation. Which
   caller opens them is still to be named: from 0.20.3.14 the first pair
-  made at each site on each thread is logged with a stack trace (the
-  package keeps function names), once per process.
+  made at each site on each thread is logged once per process with where
+  it came from. 0.20.3.14 used base::debug::StackTrace and logged nothing:
+  the official build strips unwind tables, which backtrace() needs. From
+  0.20.3.15 ReturnAddresses() walks the frame pointers the build keeps
+  (-fno-omit-frame-pointer) and logs each return address as module+offset
+  (dladdr, no right needed); the test suite names them with
+  llvm-symbolizer on the installed binary, which keeps function names.
   The sender's side (9 November 2026, build 0.20.3.13; plan/14 increment 5,
   S-IPC-01): the feature kBerylliumCapsicumRenderer moves here from
   sandbox_freebsd.cc so the browser can read it too; ExpectConfinedPeer(),
@@ -109,9 +114,9 @@ Stage: 4 (Beryllium series). beryllium-capsicum-renderer.patch depends on
   unconnected, which the sender checked with the rights it had.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. The
-  0.20.3.13 state compiled and ran (9 November 2026); the rights check
-  before getsockname and the stack trace are for build 0.20.3.14, not yet
-  compiled.
+  0.20.3.14 state compiled and ran (10 November 2026: the 242 refusals
+  gone, the traces empty); the frame-pointer walk is for build 0.20.3.15,
+  not yet compiled.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_confined_renderer_descriptors_follow_the_policy (every descriptor
   of a confined renderer, including those created and received after the
@@ -164,12 +169,13 @@ security-review: required (descriptor rights in confined processes)
    int rv = epoll_ctl(epoll_.get(), EPOLL_CTL_ADD, wake_event_.get(), &wake);
 --- a/base/posix/capsicum_rights.cc
 +++ b/base/posix/capsicum_rights.cc
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,501 @@
 +// Copyright 2026 Beryllium Browser contributors
 +// SPDX-License-Identifier: GPL-3.0-only
 +
 +#include "base/posix/capsicum_rights.h"
 +
++#include <dlfcn.h>
 +#include <errno.h>
 +#include <fcntl.h>
 +#include <sys/capsicum.h>
@@ -184,13 +190,15 @@ security-review: required (descriptor rights in confined processes)
 +#include <unistd.h>
 +
 +#include <atomic>
++#include <cinttypes>
 +#include <cstddef>
++#include <cstring>
 +#include <set>
 +
-+#include "base/debug/stack_trace.h"
 +#include "base/logging.h"
 +#include "base/no_destructor.h"
 +#include "base/strings/string_number_conversions.h"
++#include "base/strings/stringprintf.h"
 +#include "base/synchronization/lock.h"
 +#include "base/threading/platform_thread.h"
 +
@@ -566,10 +574,50 @@ security-review: required (descriptor rights in confined processes)
 +  RemoveAllRights(fd);
 +}
 +
++// The return addresses up the stack, each as module+offset, read from the
++// frame pointers this build keeps (-fno-omit-frame-pointer). Its unwind
++// tables are stripped, so base::debug::StackTrace, which unwinds with them,
++// logged nothing in 0.20.3.14. dladdr() needs no right. The offsets are
++// named outside the browser, with llvm-symbolizer on the installed binary,
++// which keeps its function names; the test suite does that.
++std::string ReturnAddresses(int skip, int max_frames) {
++  std::string out;
++  uintptr_t frame = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
++  const uintptr_t limit = frame + (8u << 20);  // frames grow upwards; stop within 8 MB
++  for (int i = 0; i < skip + max_frames; ++i) {
++    if (frame == 0 || frame % sizeof(uintptr_t) != 0 || frame >= limit) {
++      break;
++    }
++    const uintptr_t* words = reinterpret_cast<const uintptr_t*>(frame);
++    const uintptr_t next = words[0];
++    const uintptr_t ret = words[1];
++    if (ret == 0) {
++      break;
++    }
++    if (i >= skip) {
++      Dl_info info;
++      if (dladdr(reinterpret_cast<void*>(ret), &info) != 0 &&
++          info.dli_fbase != nullptr && info.dli_fname != nullptr) {
++        const char* slash = strrchr(info.dli_fname, '/');
++        out += StringPrintf(
++            "%s+0x%" PRIxPTR " ", slash ? slash + 1 : info.dli_fname,
++            ret - reinterpret_cast<uintptr_t>(info.dli_fbase));
++      } else {
++        out += StringPrintf("0x%" PRIxPTR " ", ret);
++      }
++    }
++    if (next <= frame) {
++      break;
++    }
++    frame = next;
++  }
++  return out;
++}
++
 +// True the first time |key| is seen in this process. The code behind each
 +// socket pair a confined process makes is named once per site and thread
-+// with a stack trace: the 0.20.3.13 log named mojo::PlatformChannel on
-+// CrRendererMain and on Compositor, and could not say which caller.
++// by its return addresses: the 0.20.3.13 log named mojo::PlatformChannel
++// on CrRendererMain and on Compositor, and could not say which caller.
 +bool FirstTime(const std::string& key) {
 +  static NoDestructor<Lock> lock;
 +  static NoDestructor<std::set<std::string>> seen;
@@ -595,8 +643,8 @@ security-review: required (descriptor rights in confined processes)
 +               << b << "): limited";
 +  if (FirstTime(std::string(site) + " on " + thread_name)) {
 +    LOG(WARNING) << "beryllium-sandbox: the first socket pair made at " << site
-+                 << " on thread '" << thread_name << "' came from:\n"
-+                 << debug::StackTrace().ToString();
++                 << " on thread '" << thread_name
++                 << "' came from frames: " << ReturnAddresses(1, 16);
 +  }
 +}
 +

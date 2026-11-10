@@ -82,8 +82,8 @@ Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
   patch-base_system_sys__info__posix.cc (stage 2).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Built and
-  run since 0.20.3.3; the thread count's rewrite is for 0.20.3.14, not yet
-  compiled.
+  run since 0.20.3.3; the thread count's assignment fix is for 0.20.3.15,
+  not yet compiled.
 Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   the marker); with --browser-arg=--enable-features=BerylliumCapsicumRenderer,
   test_50_sandbox shows renderers in capability mode and the rest of the
@@ -145,7 +145,11 @@ Test: freebsd/tests/browser/run capsicum --diagnose (the survey splits at
   count asks with KERN_PROC_INC_THREAD and counts the records by their own
   ki_structsize, so a kernel whose kinfo_proc is not the size of the
   build's headers still counts, and it logs errno or the sizes when it
-  fails.
+  fails. 0.20.3.14 (10 November 2026): threads=-1 again and no error
+  logged, because the count was never lost in the kernel: LockDownRenderer
+  stored it in the Confinement that `*confinement = ConfineDescriptors()`
+  then replaced. From 0.20.3.15 the count is read before the sweep and
+  assigned after it.
 security-review: required (sandbox setup, process confinement)
 
 --- a/base/system/sys_info_freebsd.cc
@@ -355,7 +359,7 @@ security-review: required (sandbox setup, process confinement)
  #include "base/posix/eintr_wrapper.h"
  #include "base/strings/string_number_conversions.h"
  #include "base/system/sys_info.h"
-@@ -63,6 +80,249 @@
+@@ -63,6 +80,254 @@
  namespace sandbox {
  namespace policy {
  
@@ -566,7 +570,11 @@ security-review: required (sandbox setup, process confinement)
 +    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +    return true;
 +  }
-+  confinement->threads = ThreadCount();
++  // Read before the sweep, assigned after it: ConfineDescriptors() returns
++  // a whole Confinement, and 0.20.3.13 and 0.20.3.14 stored the count in
++  // the one that assignment replaced, which is how every lockdown line
++  // said threads=-1 while the kernel had answered.
++  const int threads = ThreadCount();
 +  base::freebsd::ExpectConfinement();
 +  if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
 +    int trap = PROC_TRAPCAP_CTL_ENABLE;
@@ -575,6 +583,7 @@ security-review: required (sandbox setup, process confinement)
 +    }
 +  }
 +  *confinement = ConfineDescriptors();
++  confinement->threads = threads;
 +  if (!confinement->violation.empty()) {
 +    return false;
 +  }
@@ -605,7 +614,7 @@ security-review: required (sandbox setup, process confinement)
  SandboxLinux::SandboxLinux()
      : sandbox_status_flags_(kInvalid),
        pre_initialized_(false),
-@@ -174,6 +434,25 @@
+@@ -174,6 +439,25 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
