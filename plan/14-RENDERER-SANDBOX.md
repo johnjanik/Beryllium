@@ -486,8 +486,19 @@ FreeBSD test bed, so an increment must be worth a build.
    renderer**, by the second method as well, so `kern.proc.pid` itself
    fails for a renderer before `cap_enter()`; the reason is in the
    browser's stderr log of these runs (`kern.proc.pid` lines) and in the
-   next report. **Then attestation** (next, build 0.20.3.15): the browser
-   checks
+   next report. **Both answered from the stderr log the same morning:**
+   no `kern.proc.pid` error was logged, because the kernel had answered
+   every time; `LockDownRenderer` stored the count in the `Confinement`
+   that `*confinement = ConfineDescriptors()` then replaced, in 0.20.3.13
+   and 0.20.3.14 alike (0.20.3.15 reads it before the sweep and assigns
+   it after). And the stack traces were empty lines: the official build
+   strips unwind tables and `base::debug::StackTrace` unwinds with them.
+   0.20.3.15 walks the frame pointers the build keeps and logs each
+   return address as module+offset on the same line; the suite names the
+   offsets in the browser binary with `llvm-symbolizer` (the package keeps
+   function names) and prints the chain in the lockdown-log note.
+   **Then attestation** (next, build 0.20.3.16; 0.20.3.15 carries these
+   two corrections): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

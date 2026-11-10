@@ -5,6 +5,7 @@ capability mode (procstat -s shows C in FLAGS)."""
 
 from berytest import capsicum
 from berytest.base import BrowserTest
+from berytest.browser import DIRECT_BINARY
 
 
 capability_mode = capsicum.capability_mode
@@ -195,12 +196,17 @@ class SandboxHonesty(BrowserTest):
         # error), and the stack trace behind the first socket pair at each
         # site and thread (one per renderer process; the first of each kind).
         thread_errors = [l for l in lines if "kern.proc.pid" in l]
-        traces, seen_sites = [], set()
-        for block in self.browser.log_context("came from:", after=18, limit=40):
-            site = block.split("came from:")[0].split("made at", 1)[-1]
-            if site not in seen_sites:
-                seen_sites.add(site)
-                traces.append(block)
+        # 0.20.3.15 logs return addresses as module+offset, named here with
+        # llvm-symbolizer on the installed binary; 0.20.3.14 logged a stack
+        # trace that was empty (no unwind tables in the official build).
+        traces = capsicum.describe_frames(capsicum.frames_logged(lines), DIRECT_BINARY)
+        if not traces:
+            seen_sites = set()
+            for block in self.browser.log_context("came from:", after=18, limit=40):
+                site = block.split("came from:")[0].split("made at", 1)[-1]
+                if site not in seen_sites:
+                    seen_sites.add(site)
+                    traces.append(block)
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")

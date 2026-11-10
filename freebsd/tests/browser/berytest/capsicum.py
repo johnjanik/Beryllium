@@ -15,6 +15,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 
@@ -408,6 +409,66 @@ def sent_cuts(log_lines):
         if m:
             out[int(m.group(2))] += 1
     return dict(sorted(out.items()))
+
+
+FRAMES_RE = re.compile(r"socket pair made at (\S+) on thread '([^']*)' came from frames: (.*)$")
+FRAME_RE = re.compile(r"^(\S+?)\+0x([0-9a-fA-F]+)$")
+SYMBOLIZERS = ("llvm-symbolizer", "/usr/local/llvm19/bin/llvm-symbolizer",
+               "/usr/local/llvm20/bin/llvm-symbolizer", "/usr/bin/llvm-symbolizer")
+
+
+def frames_logged(log_lines):
+    """{"site on thread": [(module, offset)]} from the lockdown's "came from
+    frames:" lines (0.20.3.15: return addresses as module+offset, from the
+    frame pointers), the first line per site and thread."""
+    out = {}
+    for line in log_lines:
+        m = FRAMES_RE.search(line)
+        if not m:
+            continue
+        key = f"{m.group(1)} on {m.group(2)}"
+        if key in out:
+            continue
+        frames = []
+        for token in m.group(3).split():
+            fm = FRAME_RE.match(token)
+            frames.append((fm.group(1), int(fm.group(2), 16)) if fm else (None, int(token, 16)))
+        out[key] = frames
+    return out
+
+
+def symbolize(offsets, binary, run=None):
+    """Function names for offsets into binary (a position-independent
+    executable's offsets are its link-time addresses), by llvm-symbolizer
+    where one is installed; [] when none is. The package keeps the
+    binary's function names, not its line numbers."""
+    run = run or (lambda cmd, inp: subprocess.run(cmd, input=inp, capture_output=True,
+                                                  text=True, timeout=60).stdout)
+    tool = next((t for t in SYMBOLIZERS if shutil.which(t) or os.path.exists(t)), None)
+    if tool is None or not offsets:
+        return []
+    text = run([tool, f"--obj={binary}", "--functions=linkage", "--inlining=false",
+                "--demangle"], "\n".join(f"0x{o:x}" for o in offsets) + "\n")
+    names = []
+    for block in text.strip().split("\n\n"):
+        lines = block.strip().splitlines()
+        names.append(lines[0].strip() if lines else "??")
+    return names
+
+
+def describe_frames(frames_by_key, binary, run=None):
+    """One line per site and thread: the frames in the browser binary named,
+    the rest as module+offset."""
+    lines = []
+    for key, frames in frames_by_key.items():
+        offsets = [o for m, o in frames if m == os.path.basename(binary)]
+        names = dict(zip(offsets, symbolize(offsets, binary, run)))
+        shown = []
+        for module, offset in frames:
+            name = names.get(offset) if module == os.path.basename(binary) else None
+            shown.append(name if name and name != "??" else f"{module or '?'}+0x{offset:x}")
+        lines.append(f"{key}: " + " < ".join(shown))
+    return lines
 
 
 def threads_at_lockdown(log_lines):
