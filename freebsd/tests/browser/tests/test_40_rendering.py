@@ -193,7 +193,15 @@ class Rendering(BrowserTest):
                    f"{d.get('driverVendor')} {d.get('driverVersion')}"
                    for d in gpu.get("devices", [])]
         status = gpu.get("featureStatus", {})
+        # Which GPU the GPU process renders with (the GL vendor and renderer
+        # of its context; the owner's machine has an Intel and an NVIDIA GPU
+        # from 10 November 2026, each driving one display), and the GPU
+        # page's own device lines, which mark the active one.
+        aux = gpu.get("auxAttributes", {}) or {}
+        chosen = {k: v for k, v in aux.items()
+                  if re.search(r"gl.?vendor|gl.?renderer|optimus|switchable|active", k, re.I)}
         lines = ["devices: " + "; ".join(devices),
+                 f"GPU in use: {chosen}" if chosen else "GPU in use: not reported",
                  "feature status: " + ", ".join(f"{k}={v}" for k, v in sorted(status.items()))]
         # The GPU page's display section: colour space, bits per component,
         # SDR white level, HDR. A canvas colour that reads back one level
@@ -202,10 +210,12 @@ class Rendering(BrowserTest):
             page = self.browser.new_page(self.browser.url("gpu"))
             self.browser.wait(2)
             text = page.eval("document.body.innerText") or ""
-            wanted = re.compile(r"Display\[|[Cc]olor space|[Cc]olor volume|Bits per|white level|HDR|Buffer format")
-            shown = [l.strip() for l in text.splitlines() if wanted.search(l)]
-            lines.append("displays (beryllium://gpu): " + ("\n  ".join([""] + shown[:24]) if shown else "nothing shown"))
+            wanted = re.compile(r"^GPU\d|ACTIVE|Optimus|switchable|Display\[|[Cc]olor space|"
+                                r"[Cc]olor volume|Bits per|white level|HDR|Buffer format")
+            shown = [l.strip() for l in text.splitlines() if wanted.search(l.strip())]
+            lines.append("GPUs and displays (beryllium://gpu): "
+                         + ("\n  ".join([""] + shown[:24]) if shown else "nothing shown"))
         except Exception as e:  # a note, not the test
-            lines.append(f"displays (beryllium://gpu): not read: {e}")
+            lines.append(f"GPUs and displays (beryllium://gpu): not read: {e}")
         self.note("\n".join(lines))
         self.assertTrue(gpu.get("devices"), "no GPU information")
