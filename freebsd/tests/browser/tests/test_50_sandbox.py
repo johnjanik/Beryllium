@@ -191,6 +191,16 @@ class SandboxHonesty(BrowserTest):
         threads_at_lockdown = capsicum.threads_at_lockdown(locked)
         cuts = capsicum.sent_cuts(lines)
         refused = [l for l in lines if "bound for confined renderer" in l and "every right removed" in l]
+        # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
+        # error), and the stack trace behind the first socket pair at each
+        # site and thread (one per renderer process; the first of each kind).
+        thread_errors = [l for l in lines if "kern.proc.pid" in l]
+        traces, seen_sites = [], set()
+        for block in self.browser.log_context("came from:", after=18, limit=40):
+            site = block.split("came from:")[0].split("made at", 1)[-1]
+            if site not in seen_sites:
+                seen_sites.add(site)
+                traces.append(block)
         self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")
@@ -198,7 +208,9 @@ class SandboxHonesty(BrowserTest):
                      if threads_at_lockdown else "")
                   + f"\ndescriptors the browser cut before sending, per renderer: {cuts or 'none'}"
                   + (f"; refused outright: {len(refused)}" if refused else "") + "\n"
-                  + "\n".join((received + failed + refused + made[:10])[:60]))
+                  + "\n".join((received + failed + refused + made[:10])[:60])
+                  + (("\nthread count errors:\n" + "\n".join(thread_errors[:6])) if thread_errors else "")
+                  + (("\nwhere the socket pairs are made:\n" + "\n".join(traces)) if traces else ""))
         if self.strict():
             self.assertTrue(locked, "no renderer reported its lockdown in the browser log")
             self.assertEqual(received + failed, [],
@@ -209,7 +221,8 @@ class SandboxHonesty(BrowserTest):
             # lockdown records the thread count, and this checks the claim.
             if threads_at_lockdown:
                 self.assertEqual(set(threads_at_lockdown), {1},
-                                 "a renderer had other threads at its lockdown point")
+                                 "a renderer had other threads at its lockdown point, or the "
+                                 "count could not be read (-1):\n" + "\n".join(thread_errors[:6]))
                 # The same builds carry the sender's side (S-IPC-01): the
                 # browser must have cut something before sending to its
                 # confined renderers.

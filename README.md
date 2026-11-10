@@ -157,9 +157,9 @@ has the detail and the results of each build):
 1. **Two sockets per renderer: `mojo::PlatformChannel`.** The 0.20.3.13
    test build names the maker of both pairs each confined renderer makes:
    `mojo::PlatformChannel`, one on the main thread and one on the
-   compositor thread, all cut at creation. Which Chromium code opens them
-   is still to be named; 0.20.3.14 logs a stack trace for the first pair
-   at each site.
+   compositor thread, all cut at creation. 0.20.3.14 logs a stack trace
+   for the first pair at each site; the next report carries them and
+   names the caller.
 2. **The browser cuts before it sends.** Done in the 0.20.3.13 test build
    (S-IPC-01): the browser cut between 1 and 88 descriptors per renderer
    before sending them, none was refused, and every renderer the suite
@@ -170,10 +170,10 @@ has the detail and the results of each build):
    a `beryllium://sandbox` page shows the answer per process.
 4. **Single-threaded lockdown, verified.** Chromium orders the renderer's
    sandbox before its other threads exist, so the descriptor sweep should
-   see every descriptor. 0.20.3.13 tried to record the thread count at
-   that point and the kernel query failed in every renderer without
-   saying why; 0.20.3.14 reads it another way and logs the failure, and
-   the gate requires one thread.
+   see every descriptor. 0.20.3.13 and 0.20.3.14 both failed to read the
+   thread count at that point, by two different kernel queries; the
+   reason is now logged and the next report carries it. The gate requires
+   one thread and fails until the count reads.
 5. **On by default, fail closed.** When the suite passes the gate on every
    run, the production package turns the lockdown on.
 6. **The other processes.** GPU, network, audio and utility processes get
