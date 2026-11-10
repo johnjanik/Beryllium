@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Check Beryllium's manual pages (man/*.[1-9], written in mdoc(7)).
+
+  freebsd/tools/check-man [--require-mandoc] [FILE...]
+
+Two layers. The first needs only Python and runs everywhere (a cloud
+session, CI, the unit tests): the structure mdoc expects and the house rules
+of plan/17-DOCUMENTATION.md. The second is mandoc(1) itself,
+`mandoc -T lint -W warning`, which the FreeBSD base system has; it runs when
+mandoc is installed, and --require-mandoc makes its absence an error (CI
+installs it).
+
+House rules checked here: plain ASCII; no trailing blanks and no empty
+lines; lines of at most 80 columns (a quoted .It message may be longer);
+the .Dd, .Dt, .Os prologue, with the name and section of the file; the
+standard sections in the standard order, NAME first; only mdoc macros;
+blocks closed; one sentence per line; cross-references to Beryllium's own
+pages that exist, and SEE ALSO sorted by section and name; the package
+version only as the @@VERSION@@ placeholder on the .Os line, which the
+port fills in.
+"""
+
+import argparse
+import datetime
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+MAN = os.path.join(REPO, "man")
+
+# mdoc(7): the conventional sections, in their conventional order.
+SECTIONS = ["NAME", "LIBRARY", "SYNOPSIS", "DESCRIPTION", "CONTEXT",
+            "IMPLEMENTATION NOTES", "RETURN VALUES", "ENVIRONMENT", "FILES",
+            "EXIT STATUS", "EXAMPLES", "DIAGNOSTICS", "ERRORS", "SEE ALSO",
+            "STANDARDS", "HISTORY", "AUTHORS", "CAVEATS", "BUGS",
+            "SECURITY CONSIDERATIONS"]
+REQUIRED = {"1": ["NAME", "SYNOPSIS", "DESCRIPTION", "SEE ALSO"],
+            "8": ["NAME", "SYNOPSIS", "DESCRIPTION", "SEE ALSO"]}
+REQUIRED_DEFAULT = ["NAME", "DESCRIPTION", "SEE ALSO"]
+
+MACROS = set("""
+Dd Dt Os Sh Ss Sx Xr Tg Pp Bd Ed D1 Dl Ql Bl El It Ta Rs Re Pf Ns Ap Sm Bk Ek
+Fd Fn Fo Fc Ft Fa Ic In Lb Nm Fl Cm Ar Op Pa Va Vt Ev Dv Er Cd Ad Ms Li Em Sy
+No Bf Ef Dq Do Dc Qq Qo Qc Sq So Sc Pq Po Pc Bq Bo Bc Brq Bro Brc Aq Ao Ac Eo
+Ec Ex Rv St At Bx Bsx Nx Fx Ox Dx Nd An Lk Mt Db Ud Ux %A %B %C %D %I %J %N %O
+%P %Q %R %T %U %V Tn Lp br sp
+""".split())
+BLOCKS = {"Bl": "El", "Bd": "Ed", "Bk": "Ek", "Rs": "Re", "Bf": "Ef"}
+SENTENCE_END = re.compile(r"[.!?][)\"']* +[A-Z]")
+MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+          "August", "September", "October", "November", "December"]
+
+
+def structure_problems(name, text, known_pages=()):
+    """[(line number, message)] for one page; name is its file name."""
+    out = []
+    stem, _, section = name.rpartition(".")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    else:
+        out.append((len(lines), "no newline at the end of the file"))
+
+    macros = []          # (line number, macro, rest)
+    literal = False
+    for n, line in enumerate(lines, 1):
+        if not line.isascii():
+            out.append((n, "not plain ASCII"))
+        if line != line.rstrip():
+            out.append((n, "trailing blank"))
+        if line == "" and not literal:
+            out.append((n, "empty line (use .Pp)"))
+        quoted_item = line.startswith('.It "')
+        if len(line) > 80 and not quoted_item and not line.startswith('.\\"'):
+            out.append((n, f"line of {len(line)} columns"))
+        if line.startswith('.\\"') or line == ".":
+            continue
+        if line.startswith("."):
+            m = re.match(r"\.\s*(\S+)\s*(.*)$", line)
+            macro, rest = m.group(1), m.group(2)
+            if macro not in MACROS:
+                out.append((n, f"not an mdoc macro: .{macro}"))
+            macros.append((n, macro, rest))
+            if macro == "Bd":
+                literal = "-literal" in rest or "-unfilled" in rest
+            elif macro == "Ed":
+                literal = False
+            if "@@" in line and not (macro == "Os" and "@@VERSION@@" in rest
+                                     and line.count("@@") == 2):
+                out.append((n, "a placeholder outside the .Os line"))
+        else:
+            if "@@" in line:
+                out.append((n, "a placeholder outside the .Os line"))
+            if not literal and SENTENCE_END.search(line):
+                out.append((n, "new sentence, new line"))
+
+    # Prologue.
+    head = [m for _, m, _ in macros[:3]]
+    if head != ["Dd", "Dt", "Os"]:
+        out.append((1, "the page must begin with .Dd, .Dt and .Os"))
+    for n, macro, rest in macros[:3]:
+        if macro == "Dd":
+            m = re.match(r"^([A-Z][a-z]+) (\d{1,2}), (\d{4})$", rest)
+            ok = bool(m) and m.group(1) in MONTHS
+            if ok:
+                try:
+                    datetime.date(int(m.group(3)), MONTHS.index(m.group(1)) + 1, int(m.group(2)))
+                except ValueError:
+                    ok = False
+            if not ok:
+                out.append((n, "the date must read like: November 10, 2026"))
+        elif macro == "Dt":
+            if rest.split() != [stem.upper(), section]:
+                out.append((n, f".Dt must be: {stem.upper()} {section}"))
+
+    # Sections.
+    seen = [(n, rest) for n, macro, rest in macros if macro == "Sh"]
+    titles = [t for _, t in seen]
+    if not titles or titles[0] != "NAME":
+        out.append((seen[0][0] if seen else 1, "the first section must be NAME"))
+    last = -1
+    for n, title in seen:
+        if title not in SECTIONS:
+            out.append((n, f"not a standard section: {title}"))
+            continue
+        index = SECTIONS.index(title)
+        if index <= last:
+            out.append((n, f"section out of order: {title}"))
+        last = max(last, index)
+    for title in REQUIRED.get(section, REQUIRED_DEFAULT):
+        if title not in titles:
+            out.append((1, f"no {title} section"))
+    in_name = [(m, r) for n, m, r in macros
+               if seen and n > seen[0][0] and (len(seen) < 2 or n < seen[1][0])]
+    if ("Nm", stem) not in in_name:
+        out.append((seen[0][0] if seen else 1, f"NAME must have: .Nm {stem}"))
+    if not any(m == "Nd" and r for m, r in in_name):
+        out.append((seen[0][0] if seen else 1, "NAME must have a .Nd description"))
+
+    # Blocks.
+    stack = []
+    closers = {v: k for k, v in BLOCKS.items()}
+    for n, macro, rest in macros:
+        if macro in BLOCKS:
+            stack.append((n, macro))
+        elif macro in closers:
+            if not stack or stack[-1][1] != closers[macro]:
+                out.append((n, f".{macro} closes nothing"))
+            else:
+                stack.pop()
+        elif macro == "Sh" and stack:
+            out.append((n, f".{stack[-1][1]} of line {stack[-1][0]} is still open"))
+            stack = []
+    for n, macro in stack:
+        out.append((n, f".{macro} is never closed"))
+    sm = [rest.split()[0] for _, macro, rest in macros if macro == "Sm" and rest]
+    if sm.count("off") != sm.count("on"):
+        out.append((1, ".Sm off without .Sm on"))
+
+    # Cross-references.
+    own = {tuple(p.rsplit(".", 1)) for p in known_pages}
+    see_also = []
+    in_see_also = False
+    for n, macro, rest in macros:
+        if macro == "Sh":
+            in_see_also = rest == "SEE ALSO"
+        for m in re.finditer(r"(?:^|\s)Xr (\S+)(?: (\S+))?", f"{macro} {rest}"):
+            page, sec = m.group(1), (m.group(2) or "").rstrip(",.")
+            if not re.fullmatch(r"[1-9]", sec):
+                out.append((n, f".Xr {page} needs a section"))
+                continue
+            if page.startswith("beryllium") and (page, sec) not in own:
+                out.append((n, f"no such Beryllium page: {page}({sec})"))
+            if (page, sec) == (stem, section):
+                out.append((n, "a page does not refer to itself with .Xr (use .Nm)"))
+            if in_see_also and macro == "Xr":
+                see_also.append((n, sec, page))
+    order = [(sec, page) for _, sec, page in see_also]
+    if order != sorted(order):
+        out.append((see_also[0][0], "SEE ALSO is not sorted by section, then name"))
+    return sorted(out)
+
+
+def mandoc_problems(path):
+    """mandoc's own warnings and errors for the page, as text lines."""
+    r = subprocess.run(["mandoc", "-T", "lint", "-W", "warning", path],
+                       capture_output=True, text=True)
+    return [l for l in (r.stdout + r.stderr).splitlines() if l.strip()]
+
+
+def pages(directory=MAN):
+    return sorted(glob.glob(os.path.join(directory, "*.[1-9]")))
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("--require-mandoc", action="store_true",
+                   help="fail when mandoc(1) is not installed")
+    p.add_argument("files", nargs="*")
+    a = p.parse_args(argv)
+    files = a.files or pages()
+    if not files:
+        print("check-man: no manual pages found")
+        return 1
+    known = [os.path.basename(f) for f in pages()] + [os.path.basename(f) for f in files]
+    have_mandoc = shutil.which("mandoc") is not None
+    if a.require_mandoc and not have_mandoc:
+        print("check-man: mandoc(1) is not installed")
+        return 1
+    bad = 0
+    for path in files:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        shown = os.path.relpath(path, REPO) if path.startswith(REPO) else path
+        for n, message in structure_problems(os.path.basename(path), text, known):
+            print(f"{shown}:{n}: {message}")
+            bad += 1
+        if have_mandoc:
+            for line in mandoc_problems(path):
+                print(line)
+                bad += 1
+    if bad:
+        print(f"check-man: {bad} problem(s) in {len(files)} page(s)")
+        return 1
+    print(f"check-man: {len(files)} page(s) pass"
+          + ("" if have_mandoc else " the structure check (mandoc not installed: lint skipped)"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

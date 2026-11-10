@@ -1,0 +1,362 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\"
+.\" beryllium(1): the command, its options, environment and files.
+.\" Source: man/beryllium.1 in the Beryllium repository.
+.\" The port replaces @@VERSION@@ and the /usr/local prefix at install.
+.\" One sentence per line; check with freebsd/tools/check-man.
+.Dd November 10, 2026
+.Dt BERYLLIUM 1
+.Os Beryllium @@VERSION@@
+.Sh NAME
+.Nm beryllium
+.Nd privacy-focused web browser for FreeBSD
+.Sh SYNOPSIS
+.Nm
+.Op Ar option ...
+.Op Ar URL ...
+.Sh DESCRIPTION
+.Nm
+is a web browser built natively for
+.Fx
+from the Chromium code base, with the privacy patch set of the Helium
+browser and a security model of its own based on
+.Xr capsicum 4 .
+It opens each
+.Ar URL
+in a tab, or a window when none is given.
+Beryllium is an independent project.
+It is not affiliated with Helium, Chromium or Google.
+.Pp
+The command is a short launcher script.
+It refuses to start while the
+.Xr sysctl 8
+variable
+.Va kern.ipc.shm_allow_removed
+is 0, sets the core dump size limit to zero so that browser memory, which
+holds page content and cookies, is never written to disk, and then runs
+the browser with the arguments it was given.
+It adds no option of its own.
+.Pp
+Internal pages use the
+.Li beryllium://
+scheme:
+.Li beryllium://settings ,
+.Li beryllium://version ,
+.Li beryllium://gpu
+and
+.Li beryllium://flags
+among others.
+.Pp
+.Nm
+accepts the command-line switches of the Chromium version it is built from.
+There are hundreds of them, most are undocumented, and they change from
+version to version.
+The options below are the ones Beryllium adds, relies on or tests, and a
+few of Chromium's that have been stable for years.
+.Ss General
+.Bl -tag -width Ds
+.It Fl -incognito
+Open a private window.
+Its history, cookies and site data are discarded when it closes.
+.It Fl -new-window
+Open the given
+.Ar URL
+in a new window instead of a new tab.
+.It Fl -user-data-dir Ns = Ns Ar directory
+Keep the profile in
+.Ar directory
+instead of the default; see
+.Sx FILES .
+Every running instance needs a profile directory of its own.
+Starting
+.Nm
+again with the directory of a running instance opens a window in that
+instance.
+.It Fl -version
+Print the version and exit.
+.El
+.Ss Features
+.Bl -tag -width Ds
+.It Fl -enable-features Ns = Ns Ar names
+.It Fl -disable-features Ns = Ns Ar names
+Switch the named features on or off.
+.Ar names
+is a comma-separated list.
+The features Beryllium and Helium define:
+.Bl -tag -width Ds
+.It Cm BerylliumCapsicumRenderer
+Off by default.
+Every renderer, the process that runs a web page, enters Capsicum
+capability mode before it handles page content, and every descriptor it
+holds is cut to the rights its kind needs.
+A renderer that cannot be confined ends.
+See
+.Xr beryllium-sandbox 7 .
+.It Cm BerylliumCapsicumTrap
+Off by default.
+With the lockdown on, the kernel stops a renderer with
+.Dv SIGTRAP
+at the first system call capability mode refuses, instead of letting the
+call fail.
+For finding such calls.
+.It Cm BerylliumRendererSwapFile
+Off by default.
+Give each renderer of a normal profile an unlinked temporary file in
+which to park compressed data of background tabs, as Chromium does.
+Without it that data stays compressed in memory and no page content
+reaches a disk file system.
+.It Cm BerylliumWaylandWaitForGpu
+On by default.
+On Wayland with the NVIDIA driver, finish drawing each frame before
+handing it to the compositor.
+This avoids flicker at the cost of some time on the GPU thread, and has
+no effect with other drivers.
+.It Cm HeliumNoise
+On by default.
+The fingerprinting noise inherited from Helium, as a whole: canvas,
+audio and the reported number of processors.
+.It Cm HeliumNoiseCanvas
+On by default.
+On every canvas readback, one colour channel of about one pixel in four
+of a flat area changes by one level.
+The change is the same within a session and differs from site to site.
+Turn it off for a page that needs exact readback.
+.El
+.El
+.Ss Display and graphics
+.Bl -tag -width Ds
+.It Fl -ozone-platform Ns = Ns Cm wayland | x11
+Use the named display system instead of the one the session offers.
+Wayland is recommended: under X11, any program in the session can read
+input from other windows and inject input into them.
+.It Fl -render-node-override Ns = Ns Ar path
+On Wayland, render with the GPU behind the DRM render node
+.Ar path ,
+such as
+.Pa /dev/dri/renderD129 ,
+instead of the first one found.
+For machines with more than one GPU.
+.It Fl -disable-gpu
+Do not use the GPU; draw in software.
+.It Fl -enable-gpu-memory-buffer-video-frames
+.It Fl -disable-gpu-memory-buffer-video-frames
+Write decoded video frames into GPU memory buffers, or copy them through
+shared memory.
+Beryllium copies by default when the GL driver is NVIDIA's, whose
+.Fx
+driver ended every video tab with a memory fault on the faster path, and
+uses GPU memory buffers with other drivers.
+.El
+.Ss Network
+.Bl -tag -width Ds
+.It Fl -proxy-server Ns = Ns Ar server
+Send requests through the proxy
+.Ar server ,
+written as
+.Sm off
+.Op Ar scheme No ://
+.Ar host
+.Op : Ar port ,
+.Sm on
+where
+.Ar scheme
+is
+.Cm http ,
+.Cm socks4
+or
+.Cm socks5 ,
+and
+.Cm http
+when omitted.
+This overrides the environment and the settings.
+.It Fl -no-proxy-server
+Use no proxy, whatever the environment and the settings say.
+.It Fl -proxy-auto-detect
+Detect the proxy configuration automatically.
+.It Fl -proxy-pac-url Ns = Ns Ar URL
+Take the proxy configuration from the script at
+.Ar URL .
+.El
+.Ss Logging
+.Bl -tag -width Ds
+.It Fl -enable-logging Ns = Ns Cm stderr
+Write the log of the browser and its child processes to standard error.
+.It Fl -v Ns = Ns Ar level
+Set the verbosity of the log; 0 is the default.
+.It Fl -vmodule Ns = Ns Ar module Ns = Ns Ar level
+Set the verbosity for one source file, named without its extension.
+.Cm capsicum_rights=1
+logs every descriptor the browser cuts before sending it to a confined
+renderer.
+.It Fl -headless
+Run without a window, for use through the DevTools protocol.
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width Ds
+.It Ev BERYLLIUM_CONFIG_HOME
+The directory under which the profile directory
+.Pa beryllium
+is kept, instead of
+.Ev XDG_CONFIG_HOME
+or
+.Pa ~/.config .
+.It Ev XDG_CONFIG_HOME , XDG_CACHE_HOME
+The base directories for the profile and the cache when set, as the XDG
+Base Directory Specification describes.
+.It Ev WAYLAND_DISPLAY , DISPLAY
+The Wayland and X11 displays of the session.
+.It Ev http_proxy , https_proxy , all_proxy , no_proxy
+Proxy servers and the hosts that bypass them.
+These are ignored under GNOME and KDE, where the desktop's proxy settings
+are used; the
+.Fl -proxy-server
+option always wins.
+.It Ev auto_proxy
+Proxy autoconfiguration: set and empty to detect it, or the address of a
+configuration script.
+.It Ev SOCKS_SERVER , SOCKS_VERSION
+A SOCKS proxy server and its protocol version, 4 unless
+.Ev SOCKS_VERSION
+is 5.
+.El
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa /usr/local/bin/beryllium
+The launcher script.
+.It Pa /usr/local/share/beryllium/
+The browser binary and its resources.
+.It Pa /usr/local/share/beryllium/BUILD-MANIFEST.json
+What the package was built from: the Beryllium, Chromium and Helium
+versions, the imported
+.Fx
+patch set and a checksum of every Beryllium patch.
+.It Pa ~/.config/beryllium/
+The profile: settings, history, cookies, extensions.
+It is separate from the profiles of Chromium and Helium.
+.It Pa ~/.cache/beryllium/
+The cache.
+.It Pa /usr/local/etc/beryllium/policies/managed/
+Policy files, in JSON, that the administrator imposes on every user.
+.It Pa /usr/local/etc/beryllium/policies/recommended/
+Policy files that set defaults a user may change.
+.It Pa /usr/local/etc/beryllium/native-messaging-hosts/
+Manifests of native messaging hosts for extensions.
+.It Pa /usr/local/share/applications/beryllium.desktop
+The desktop menu entry.
+.El
+.Sh EXIT STATUS
+The launcher exits 1 without starting the browser when
+.Va kern.ipc.shm_allow_removed
+is 0.
+Otherwise the exit status is the browser's: 0 after a normal exit.
+.Sh EXAMPLES
+Start with the experimental renderer lockdown, then check from another
+terminal that every renderer is in capability mode, shown by a
+.Sq C
+in the flags column:
+.Bd -literal -offset indent
+beryllium --enable-features=BerylliumCapsicumRenderer
+procstat -s $(pgrep -f -- --type=renderer)
+.Ed
+.Pp
+A private window through a SOCKS proxy on this machine:
+.Bd -literal -offset indent
+beryllium --incognito --proxy-server=socks5://127.0.0.1:1080
+.Ed
+.Pp
+Render on the second GPU of a machine with two:
+.Bd -literal -offset indent
+beryllium --render-node-override=/dev/dri/renderD129
+.Ed
+.Pp
+A second instance with a profile of its own:
+.Bd -literal -offset indent
+beryllium --user-data-dir=/tmp/beryllium-scratch
+.Ed
+.Pp
+Allow the browser to start, now and after a reboot:
+.Bd -literal -offset indent
+sysctl kern.ipc.shm_allow_removed=1
+sysrc -f /etc/sysctl.conf kern.ipc.shm_allow_removed=1
+.Ed
+.Sh DIAGNOSTICS
+.Bl -diag
+.It "For correct operation, shared memory support has to be enabled"
+The launcher found
+.Va kern.ipc.shm_allow_removed
+set to 0 and did not start the browser.
+Set it to 1 as shown in
+.Sx EXAMPLES .
+.It "Aw, Snap! Error code N"
+The process showing the page died.
+On
+.Fx
+.Ar N
+is the number of the signal that ended it: 11 is
+.Dv SIGSEGV ,
+a memory fault, 6 is
+.Dv SIGABRT
+and 5 is
+.Dv SIGTRAP ,
+a deliberate stop on a failed check.
+.It "beryllium-sandbox: ..."
+A line in the log from the renderer lockdown; see
+.Xr beryllium-sandbox 7 .
+.El
+.Sh SEE ALSO
+.Xr fc-list 1 ,
+.Xr procstat 1 ,
+.Xr capsicum 4 ,
+.Xr beryllium-sandbox 7 ,
+.Xr pkg 8 ,
+.Xr sysctl 8
+.Pp
+.Lk https://github.com/johnjanik/Beryllium "The Beryllium repository" ,
+with the README, the plan documents and the feature matrix that records
+what is implemented, built and tested in each release.
+.Sh HISTORY
+.Nm
+first appeared as release 0.20.3.1 for
+.Fx 16
+in November 2026.
+Its code is derived from the Helium browser, which is based on
+ungoogled-chromium and Chromium.
+.Sh AUTHORS
+.An -nosplit
+Beryllium is written and maintained by
+.An John Janik .
+The
+.Fx
+and
+.Ox
+Chromium port maintainers wrote the BSD patch set it builds on.
+.Sh CAVEATS
+There is no updater in the browser; a newer version arrives as a newer
+package.
+There is no crash reporter, and nothing is uploaded when a process dies.
+.Pp
+The online services of Helium (the extension proxy, the bangs list,
+filter list and component updates, dictionaries) are off in a new profile
+and no server is built in.
+They work only after a server is entered at
+.Li beryllium://settings/privacy/services .
+.Pp
+Text is drawn with whatever installed font has its glyphs.
+The package brings fonts for Latin, Greek, Cyrillic, Chinese, Japanese,
+Korean and emoji; other scripts need a font of their own, which
+.Xr fc-list 1
+can confirm.
+.Sh BUGS
+WebGPU finds no adapter.
+.Pp
+Report problems at
+.Lk https://github.com/johnjanik/Beryllium/issues ,
+and vulnerabilities privately at
+.Lk https://github.com/johnjanik/Beryllium/security/advisories/new .
+.Sh SECURITY CONSIDERATIONS
+By default no Beryllium process is confined: a compromised web page is
+not contained, as with the Chromium port for
+.Fx .
+The renderer lockdown is experimental and off by default.
+.Xr beryllium-sandbox 7
+states what is and is not enforced and how to check it.

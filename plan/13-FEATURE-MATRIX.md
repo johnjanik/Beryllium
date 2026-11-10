@@ -12,7 +12,7 @@ Status as of 2026-11-04, latest release v0.20.3.1-1. Every feature the project m
 | Privacy | 31 | 17 | 10 | 9 |
 | Security | 59 | 45 | 7 | 9 |
 | Build, packaging and install | 22 | 17 | 11 | 10 |
-| Testing, release and maintenance | 16 | 13 | 5 | 5 |
+| Testing, release and maintenance | 17 | 13 | 5 | 5 |
 
 "Implemented" counts done and inherited; "tested" counts passing and manual.
 
@@ -398,3 +398,4 @@ Test infrastructure, CI, releases, keeping up with Helium, Chromium and FreeBSD,
 | `R-DOC-01` | **User documentation.** README covers status, install, the per-process sandbox table, known issues and limitations (crash reporting, updates, Widevine, X11, services). *Known limitations cover WebGPU and NVIDIA only.* | must | 1 | **partial**<br>`README.md`<br>`freebsd/tests/browser/README.md` | no | **none** | plan/09-ROADMAP.md §3 |
 | `R-DOC-02` | **Build guide.** A step-by-step Poudriere guide another person can follow. | must | 6 | **done**<br>`freebsd/ports/README.md` | no | **manual**<br>followed by the owner for the 15.1 and 16.0-CURRENT builds | plan/11-MAINTENANCE-AND-RELEASE.md §5 |
 | `R-DOC-03` | **Upstream bug reports.** Problems that also affect the stock FreeBSD Chromium are reported to its maintainers (first: the NVIDIA video crash). | should | 1 | **todo** | no | **none** | plan/05-PATCH-STRATEGY.md §8<br>plan/12-WORK-PLAN-AND-RED-TEAM.md §11 |
+| `R-DOC-04` | **Manual pages.** The package installs manual pages written for Beryllium in mdoc, for the command and for the security model, that name the release they describe, claim nothing the matrix does not back, and pass mandoc's lint. *Releases up to 0.20.3.12 installed Chromium's generic page with its placeholders unreplaced (the port's substitution no longer matches Chromium's file). From revision 17 the port installs beryllium(1) and beryllium-sandbox(7) from man/ with the version and prefix filled in. Still to write: beryllium-policies(5), beryllium-privacy(7), the handbook under share/doc.* | should | 1 | **partial**<br>`man/beryllium.1`<br>`man/beryllium-sandbox.7`<br>`freebsd/tools/check-man`<br>`freebsd/ports/www/beryllium/Makefile (BERYLLIUM_MANPAGES)` | no | **passing**<br>`freebsd/tools/tests/test_check_man.py`<br>cloud session, 10 Nov 2026: both pages pass check-man and mandoc -T lint -W warning; CI runs the same on every push. Not yet read from an installed package | plan/17-DOCUMENTATION.md |

@@ -142,6 +142,9 @@ WRKSRC=		${WRKDIR}/chromium-${CHROMIUM_VERSION}
 BERYLLIUM_FILES=	${FILESDIR}/beryllium
 HELIUM_ENV=	HELIUM_UTILS=${WRKSRC_helium}/utils
 BERYLLIUM_ICON_SIZES=	16 22 24 32 48 64 128 256
+# Manual pages from the repository's man/ (plan/17-DOCUMENTATION.md); each
+# is also in pkg-plist.
+BERYLLIUM_MANPAGES=	beryllium.1 beryllium-sandbox.7
 
 MAKE_ARGS=	-C out/${BUILDTYPE}
 ALL_TARGET=	chrome
@@ -430,10 +433,16 @@ do-configure:
 
 do-install:
 	@${MKDIR} ${STAGEDIR}${DATADIR}
-	${INSTALL_MAN} ${WRKSRC}/chrome/app/resources/manpage.1.in \
-		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
-	@${SED} -i "" -e 's,\@\@PACKAGE\@\@,beryllium,g;s,\@\@MENUNAME\@\@,Beryllium,g' \
-		${STAGEDIR}${PREFIX}/share/man/man1/beryllium.1
+	# Manual pages: Beryllium's own (man/ in the repository, mdoc), with
+	# the package version and the prefix filled in. Chromium's page is no
+	# longer installed: its placeholders stopped matching the substitution
+	# the FreeBSD ports apply to it and reached users unreplaced.
+.for m in ${BERYLLIUM_MANPAGES}
+	${SED} -e 's,@@VERSION@@,${DISTVERSION},g' -e 's,/usr/local,${PREFIX},g' \
+		${BERYLLIUM_FILES}/man/${m} > ${WRKDIR}/${m}
+	${INSTALL_MAN} ${WRKDIR}/${m} \
+		${STAGEDIR}${PREFIX}/share/man/man${m:E}/${m}
+.endfor
 	# Desktop icons: artwork/icons (Beryllium art set v2, CC BY 4.0)
 .for s in ${BERYLLIUM_ICON_SIZES}
 	@${MKDIR} ${STAGEDIR}${PREFIX}/share/icons/hicolor/${s}x${s}/apps
