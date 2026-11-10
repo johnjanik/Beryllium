@@ -7,12 +7,14 @@ platform/beryllium-bsd-helium-linux-conditions.patch
 platform/beryllium-bsd-no-crashpad.patch
 platform/beryllium-bsd-nvidia-video-frames.patch
 platform/beryllium-bsd-wayland-wait-for-gpu.patch
+platform/beryllium-bsd-kernel-thread-names.patch
 security/beryllium-honest-gpu-sandbox-status.patch
 security/beryllium-close-inherited-descriptors.patch
 security/beryllium-anonymous-shared-memory.patch
 security/beryllium-no-renderer-swap-file.patch
 security/beryllium-descriptor-rights.patch
 security/beryllium-capsicum-renderer.patch
+security/beryllium-renderer-tracing-after-lockdown.patch
 security/beryllium-sender-side-rights.patch
 privacy/beryllium-services-off-by-default.patch
 privacy/beryllium-noise-hash-whole-token.patch

@@ -1,0 +1,68 @@
+Beryllium: thread names reach the kernel on FreeBSD
+
+Purpose: Chromium names its threads (CrRendererMain, Chrome_ChildIOThread,
+  Compositor, ThreadPoolForegroundWorker, PerfettoTrace...). On Linux
+  PlatformThread::SetName() also sets the kernel's name for the thread.
+  The FreeBSD port's platform_thread_bsd.cc is a set of stubs whose
+  SetName() calls SetNameCommon() only, which records the name inside the
+  process. So the kernel knew every thread of every Beryllium process by
+  the process's name: procstat -t, top -H, a debugger's thread list and a
+  core file all said "beryllium" for each. Build 0.20.3.16 logged the
+  kernel's names for the threads present at the renderer lockdown to find
+  out which the second one was, and got thread_names=beryllium,beryllium
+  (10 November 2026).
+  This patch also calls pthread_set_name_np() on FreeBSD. A thread's name
+  is separate from the process's name there (on Linux naming the main
+  thread renames the process, which is why Chromium skips it there), so
+  the main thread is named as well and ps, pkill and killall are
+  unaffected. The kernel keeps the first 19 bytes of a name
+  (MAXCOMLEN), so ThreadPoolForegroundWorker shows as ThreadPoolForegroun.
+  The system call behind it, thr_set_name, is allowed in capability mode.
+  A thread started by a library, or by Chromium without a name, still
+  shows the name of the thread that started it, as on any system.
+Stage: 4 (Beryllium series). Depends on the FreeBSD port's
+  patch-base_threading_platform__thread__bsd.cc (stage 2), which creates
+  the file.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled. pthread_set_name_np() is declared in <pthread_np.h>, which the
+  port already includes in platform_thread_posix.cc for
+  pthread_getthreadid_np().
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
+  prints the kernel's names for the threads at each lockdown
+  (thread_names= on the lockdown line) and says when they are only the
+  process's name; with this patch a renderer's reads CrRendererMain.
+security-review: not required (a name for diagnostics; no input from
+  outside the process)
+
+--- a/base/threading/platform_thread_bsd.cc
++++ b/base/threading/platform_thread_bsd.cc
+@@ -5,6 +5,12 @@
+ 
+ #include "base/notimplemented.h"
+ #include "base/threading/platform_thread.h"
++#include "build/build_config.h"
++
++#if BUILDFLAG(IS_FREEBSD)
++#include <pthread.h>
++#include <pthread_np.h>
++#endif
+ 
+ namespace base {
+ namespace internal {
+@@ -35,6 +41,15 @@
+ // static
+ void PlatformThreadBase::SetName(const std::string& name) {
+   SetNameCommon(name);
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: tell the kernel as well. SetNameCommon() records the name
++  // inside the process only, so procstat -t, top -H, a debugger and the
++  // renderer lockdown's own thread list knew every thread by the process's
++  // name. A thread's name is separate from the process's name on FreeBSD
++  // (unlike Linux, where naming the main thread renames the process), so
++  // the main thread is named too. The kernel keeps the first 19 bytes.
++  pthread_set_name_np(pthread_self(), name.c_str());
++#endif
+ }
+ 
+ }  // namespace base
