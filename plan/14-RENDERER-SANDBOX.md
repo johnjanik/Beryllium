@@ -606,6 +606,28 @@ FreeBSD test bed, so an increment must be worth a build.
    always log one; the search took the newest directory, so that is not
    yet certain. The next look picks the run by its report and reads the
    end of one browser's log without that line, with the kernel's record.
+   **The Intel node, answered (the same evening):** that look read the
+   Intel run itself (the search before it had read a later directory). The
+   end of `Startup.stderr.log`: "Unsupported modifier, resource creation
+   failed." three times, which is Mesa's Intel driver declining every
+   buffer layout in the list it was given, a list that comes from the
+   compositor; then `libwayland: [destroyed object]: error 7: importing
+   the supplied dmabufs failed`, the compositor refusing the buffer the
+   browser sent after falling back to the driver's own layout; and the
+   kernel logged each browser of that run as "exited on signal 5", the
+   `CHECK` in `WlDisplayCheckForErrors`. So the candidate was the cause:
+   the desktop takes buffers from the NVIDIA GPU and not from the Intel
+   one, the switch made the browser draw on the Intel one, and Chromium
+   stops on the compositor's error. Nothing in Beryllium is at fault and
+   nothing in it can make that pairing work; the switch was the wrong
+   tool, and the README and beryllium(1), which offered it for "the second
+   GPU", now say what it requires. For the browser to draw on the Intel
+   GPU the desktop itself would have to (KWin's choice of device), and the
+   browser would then follow without a switch. The suite names this
+   failure when it meets it (`berytest/browser.py` `EXPLANATIONS`, with
+   the excerpt above as its unit-test fixture). Still to see: a start
+   without the switch on this machine, which by the source reading uses
+   the compositor's device, the NVIDIA one.
    **Then attestation** (next, build 0.20.3.17; 0.20.3.16 carries the
    thread names): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

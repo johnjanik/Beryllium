@@ -89,6 +89,25 @@ NOISE = re.compile(r"SyncMethod::kSyncobj is not supported")
 STAMP = re.compile(r"^\[\d+:\d+:\d+/[\d.]+:")
 
 
+# Log lines whose cause is known, with what they mean. Each was met in a
+# report and traced: add to this only what has been.
+EXPLANATIONS = (
+    (re.compile(r"importing the supplied dmabufs failed"),
+     "the Wayland compositor could not import a buffer the browser drew, and Chromium "
+     "stops on any Wayland error (signal 5); with --render-node-override this means the "
+     "named GPU is not one the compositor can take buffers from (0.20.3.16 with the Intel "
+     "node on a desktop drawn by the NVIDIA GPU, 10 November 2026)"),
+)
+
+
+def explain(lines):
+    """What is known about the failure these log lines show, or ""."""
+    for pattern, meaning in EXPLANATIONS:
+        if any(pattern.search(l) for l in lines):
+            return meaning
+    return ""
+
+
 def quiet(lines):
     """Log lines without the per-frame noise and the blank ones."""
     return [l for l in lines if l.strip() and not NOISE.search(l)]
@@ -268,7 +287,11 @@ class Browser:
         kernel = kernel_lines(self.proc.pid)
         if kernel:
             parts.append("kernel: " + " | ".join(kernel))
-        tail = telling_lines(self._log())
+        log = self._log()
+        known = explain(log[-400:])
+        if known:
+            parts.append("known cause: " + known)
+        tail = telling_lines(log)
         parts.append("last lines of its log (" + os.path.basename(self.log_path) + "):\n  "
                      + "\n  ".join(tail) if tail else "its log is empty")
         return "; ".join(parts)
@@ -276,10 +299,13 @@ class Browser:
     def death_note(self):
         """For a test's notes: how the process ended, the kernel's line and
         more of the log than an error message carries."""
+        log = self._log()
+        known = explain(log[-400:])
         return (f"the browser process (pid {self.proc.pid}) {self.ended()}\n"
                 f"kernel: {' | '.join(kernel_lines(self.proc.pid)) or 'no line about it'}\n"
-                f"log ({os.path.basename(self.log_path)}):\n  "
-                + ("\n  ".join(telling_lines(self._log(), limit=20)) or "empty"))
+                + (f"known cause: {known}\n" if known else "")
+                + f"log ({os.path.basename(self.log_path)}):\n  "
+                + ("\n  ".join(telling_lines(log, limit=20)) or "empty"))
 
     def stop(self):
         self._stopping = True

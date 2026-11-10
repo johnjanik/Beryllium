@@ -138,8 +138,9 @@ Without the option the browser uses the GPU that the Wayland compositor
 announces as its own.
 When the compositor names none, it takes an Intel or AMD node if there is
 one, and otherwise the first that works.
-For machines with more than one GPU; see
-.Sx BUGS .
+The compositor must be able to take buffers from the named GPU.
+When it cannot, the browser stops about a second after it starts; see
+.Sx DIAGNOSTICS .
 .It Fl -disable-gpu
 Do not use the GPU; draw in software.
 .It Fl -enable-gpu-memory-buffer-video-frames
@@ -268,7 +269,8 @@ A private window through a SOCKS proxy on this machine:
 beryllium --incognito --proxy-server=socks5://127.0.0.1:1080
 .Ed
 .Pp
-Render on the second GPU of a machine with two:
+Render on a named GPU, on a desktop that can take its buffers (see
+.Sx CAVEATS ) :
 .Bd -literal -offset indent
 beryllium --render-node-override=/dev/dri/renderD129
 .Ed
@@ -303,6 +305,13 @@ a memory fault, 6 is
 and 5 is
 .Dv SIGTRAP ,
 a deliberate stop on a failed check.
+.It "libwayland: ...: error 7: importing the supplied dmabufs failed"
+The Wayland compositor could not import a buffer the browser drew, and
+the browser stopped itself, as it does on any Wayland error (signal 5).
+With
+.Fl -render-node-override
+the named GPU is one the compositor cannot take buffers from.
+Start the browser without the option.
 .It "beryllium-sandbox: ..."
 A line in the log from the renderer lockdown; see
 .Xr beryllium-sandbox 7 .
@@ -350,14 +359,15 @@ The package brings fonts for Latin, Greek, Cyrillic, Chinese, Japanese,
 Korean and emoji; other scripts need a font of their own, which
 .Xr fc-list 1
 can confirm.
+.Pp
+On Wayland the browser can render only on a GPU whose buffers the
+compositor can import.
+On a laptop with an NVIDIA and an Intel GPU under KDE Plasma, where the
+desktop took the NVIDIA GPU's buffers and refused the Intel GPU's,
+.Fl -render-node-override
+naming the Intel GPU stopped the browser at its first frame.
 .Sh BUGS
 WebGPU finds no adapter.
-.Pp
-On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland),
-version 0.20.3.16 ended about a second after starting when
-.Fl -render-node-override
-named the Intel GPU, and worked on the NVIDIA one.
-The cause is not yet known.
 .Pp
 Report problems at
 .Lk https://github.com/johnjanik/Beryllium/issues ,

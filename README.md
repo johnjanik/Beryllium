@@ -255,14 +255,16 @@ set it, and the launcher will not start the browser without it.
   and names the package.
 - **WebGPU** finds no adapter.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
-  compositor announces as its own; `--render-node-override` names another.
-  On a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland, both
-  drivers loaded), 0.20.3.16 works when the switch names the NVIDIA GPU
-  (`/dev/dri/renderD128` there) and ends about a second after starting
-  when it names the Intel one (Mesa 26.2.2). Why, and which of the two a
-  start without the switch uses on that machine, is not yet known. If the
-  window closes right after it opens on a machine with two GPUs, try the
-  switch with each node in turn.
+  compositor announces as its own. `--render-node-override` names another,
+  and that works only if the compositor can import that GPU's buffers. On
+  a laptop with an NVIDIA and an Intel GPU (KDE Plasma on Wayland, both
+  drivers loaded) it could not: with the switch naming the Intel GPU,
+  Intel's driver supported none of the buffer layouts the desktop offered,
+  the desktop refused the buffer the browser sent instead (`importing the
+  supplied dmabufs failed` in the browser's log), and the browser stopped
+  at its first frame, as Chromium does on any Wayland error. Naming the
+  NVIDIA GPU works there. If the window closes right after it opens,
+  start the browser without the switch.
 - **NVIDIA graphics.** NVIDIA's FreeBSD driver handles two parts of
   Chromium's graphics path differently from the Intel and AMD drivers, and
   Beryllium works around both when it detects an NVIDIA driver:

@@ -89,6 +89,61 @@ class TellingLines(unittest.TestCase):
         self.assertTrue(lines[2].endswith("last"))
 
 
+# The end of Startup.stderr.log from the owner's 0.20.3.16 run with
+# --render-node-override=/dev/dri/renderD129 (10 November 2026), and the
+# kernel's line for one of that run's browsers.
+INTEL_LOG = """\
+[81798:145243:1110/164337.237715:WARNING:ui/ozone/platform/wayland/common/wayland_object.cc:120] Binding to zwp_linux_dmabuf_v1 version 4 but version 5 is available.
+[82702:178567:1110/164337.421100:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:1796] vaInitialize failed: unknown libva error
+[81798:145243:1110/164337.437356:WARNING:ui/ozone/platform/wayland/host/wayland_surface.cc:170] Server doesn't support zcr_alpha_compositing_v1.
+[81798:145243:1110/164337.500000:WARNING:ui/ozone/platform/wayland/host/wayland_frame_manager.cc:537] WaylandBufferHandle::SyncMethod::kSyncobj is not supported!
+[81798:145243:1110/164337.580783:WARNING:components/dbus/xdg/portal.cc:126] Failed to register with org.freedesktop.host.portal.Registry
+Unsupported modifier, resource creation failed.
+Unsupported modifier, resource creation failed.
+Unsupported modifier, resource creation failed.
+[81798:145243:1110/164337.767586:ERROR:ui/events/platform/wayland/wayland_event_watcher.cc:47] libwayland: [destroyed object]: error 7: importing the supplied dmabufs failed
+
+[86171:181894:1110/164337.768799:ERROR:gpu/ipc/client/command_buffer_proxy_impl.cc:476] GPU state invalid after WaitForGetOffsetInRange.
+"""
+INTEL_KERNEL = ("Nov 10 16:44:28 zen kernel: pid 36024 (beryllium), jid 0, uid 1001: "
+                "exited on signal 5 (no core dump - coredumpsize limit is 0)\n")
+
+
+class TheIntelNodeRun(unittest.TestCase):
+    """What the suite would have said about that run."""
+
+    def test_the_excerpt_shows_the_cause(self):
+        lines = browser.telling_lines(INTEL_LOG.splitlines())
+        self.assertIn("Unsupported modifier, resource creation failed. (3 times)", lines)
+        self.assertTrue(any("importing the supplied dmabufs failed" in l for l in lines))
+        self.assertFalse(any("kSyncobj" in l for l in lines))
+
+    def test_the_cause_is_named(self):
+        meaning = browser.explain(INTEL_LOG.splitlines())
+        self.assertIn("could not import a buffer", meaning)
+        self.assertIn("--render-node-override", meaning)
+        self.assertEqual(browser.explain(LOG.splitlines()), "")
+        self.assertEqual(browser.explain([]), "")
+
+    def test_the_error_message_carries_signal_cause_and_kernel_line(self):
+        b = fake_browser(-signal.SIGTRAP, INTEL_LOG)
+        b.proc.pid = 36024
+        self.addCleanup(os.unlink, b.log_path)
+        with tempfile.NamedTemporaryFile("w", suffix=".messages", delete=False) as f:
+            f.write(INTEL_KERNEL)
+        self.addCleanup(os.unlink, f.name)
+        real = browser.kernel_lines
+        with unittest.mock.patch.object(browser, "kernel_lines",
+                                        lambda pid, path=f.name, limit=3: real(pid, path, limit)):
+            text = b.death()
+            note = b.death_note()
+        for message in (text, note):
+            self.assertIn("was killed by signal 5 (SIGTRAP)", message)
+            self.assertIn("exited on signal 5", message)
+            self.assertIn("known cause: the Wayland compositor could not import", message)
+            self.assertIn("importing the supplied dmabufs failed", message)
+
+
 class QuietAndCollapse(unittest.TestCase):
     def test_quiet_drops_noise_and_blank_lines(self):
         self.assertEqual(browser.quiet(["a", "", "  ", "x SyncMethod::kSyncobj is not "

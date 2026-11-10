@@ -108,6 +108,11 @@ directory. The next test of the class gets a new browser with a log of its
 own (`<Class>-2.stderr.log`, and so on), and a test that would have passed
 over a dead browser, such as the idle privacy test, fails instead.
 
+Where the cause of a death is known from an earlier report, the error names
+it. So far that is one: `importing the supplied dmabufs failed`, the Wayland
+compositor refusing a buffer from a GPU it cannot take buffers from, which is
+what `--render-node-override` naming the wrong GPU produces (signal 5).
+
 One line fills these logs on Wayland and means nothing: `WaylandBufferHandle::
 SyncMethod::kSyncobj is not supported!`. The FreeBSD port's patch to
 Chromium's `wayland_frame_manager.cc` writes it as a warning for every frame
