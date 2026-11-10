@@ -463,6 +463,7 @@ bin/beryllium
 %%DEBUG%%%%DATADIR%%/libVkLayer_khronos_validation.so
 %%DRIVER%%bin/beryllium-chromedriver
 share/man/man1/beryllium.1.gz
+share/man/man7/beryllium-sandbox.7.gz
 share/applications/beryllium.desktop
 share/icons/hicolor/128x128/apps/beryllium.png
 share/icons/hicolor/16x16/apps/beryllium.png

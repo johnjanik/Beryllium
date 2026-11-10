@@ -3,8 +3,8 @@
 """Make freebsd/ports/www/beryllium self-contained for Poudriere.
 
 A Poudriere overlay port sees only its own directory, not the rest of this
-repository. This copies Beryllium's build inputs (tools, patches, refreshes and
-branding) into the port's files/beryllium/ and writes Makefile.helium (the Helium commit, versions
+repository. This copies Beryllium's build inputs (tools, patches, refreshes,
+branding and manual pages) into the port's files/beryllium/ and writes Makefile.helium (the Helium commit, versions
 and dependency pins, read from the helium submodule), so the submodule
 stays the single source of truth.
 
@@ -126,6 +126,17 @@ def branding_files():
     return out
 
 
+MAN = os.path.join(REPO, "man")
+
+
+def manual_pages():
+    """The manual pages (man/*.[1-9]); the port installs them with the
+    package version and the prefix filled in (BERYLLIUM_MANPAGES)."""
+    if not os.path.isdir(MAN):
+        return []
+    return sorted(n for n in os.listdir(MAN) if re.fullmatch(r".+\.[1-9]", n))
+
+
 def plan():
     """Return {dest_relpath: (source_abspath or None, content or None)}."""
     items = {}
@@ -137,6 +148,8 @@ def plan():
         items[os.path.join("patches", rel)] = (os.path.join(REPO, "patches", rel), None)
     for rel in refresh_files():
         items[os.path.join("helium-refresh", rel)] = (os.path.join(REFRESH, rel), None)
+    for name in manual_pages():
+        items[os.path.join("man", name)] = (os.path.join(MAN, name), None)
     return items
 
 

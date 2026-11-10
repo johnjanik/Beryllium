@@ -1,0 +1,328 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\"
+.\" beryllium-sandbox(7): what Beryllium confines, by what means, and how
+.\" to check it.
+.\" Source: man/beryllium-sandbox.7 in the Beryllium repository.
+.\" The port replaces @@VERSION@@ and the /usr/local prefix at install.
+.\" Every statement here must agree with the feature matrix
+.\" (plan/13-FEATURE-MATRIX.md); this page claims nothing a test does not
+.\" back.
+.\" One sentence per line; check with freebsd/tools/check-man.
+.Dd November 10, 2026
+.Dt BERYLLIUM-SANDBOX 7
+.Os Beryllium @@VERSION@@
+.Sh NAME
+.Nm beryllium-sandbox
+.Nd process confinement in the Beryllium web browser
+.Sh DESCRIPTION
+.Xr beryllium 1
+runs as several processes.
+The browser process owns the windows, the profile and the network
+identity of the user.
+A renderer runs the content of one site.
+A GPU process draws, and utility processes handle the network, storage
+and audio.
+A sandbox confines the processes that handle untrusted data, so that a
+fault in one of them does not give a web page the authority of the user's
+account.
+.Pp
+This page states what Beryllium enforces, by what means, and how to check
+it from outside the browser.
+It describes the release it is installed with.
+.Ss Status
+By default no process is confined.
+A compromised web page is not contained, as with the Chromium port for
+.Fx .
+.Bl -column "Network, storage, audio" "Status" -offset indent
+.It Sy Process Ta Sy Status
+.It Browser Ta not confined
+.It Renderers Ta not confined by default; lockdown below
+.It GPU Ta not confined
+.It Network, storage, audio Ta not confined
+.El
+.Pp
+The page
+.Li beryllium://gpu
+reports
+.Dq Sandboxed: false
+for the GPU process, which is the kernel's answer and not a claim.
+.Ss Measures in every process
+Three measures apply to every child process, whether or not the lockdown
+is on.
+They limit what a compromised process can reach.
+They do not confine it.
+.Bl -bullet
+.It
+The descriptors the browser has open are closed between
+.Xr fork 2
+and
+.Xr execve 2 ,
+so a child starts with the descriptors meant for it and no others.
+.It
+Shared memory is anonymous, made with
+.Xr memfd_create 2 :
+it has no name in any file system, its size is sealed, and a region
+shared read-only is read-only by its Capsicum rights.
+.It
+A renderer is given no swap file, so page content parked by a background
+tab stays in memory.
+.El
+.Ss The renderer lockdown
+With the feature
+.Cm BerylliumCapsicumRenderer
+enabled, each renderer does the following before it handles page content:
+.Bl -enum
+.It
+It reads what capability mode would refuse later and keeps the answers:
+time zone data, message catalogues, the amount of memory.
+.It
+It judges every descriptor it holds by the admission rule below and cuts
+each one it keeps to the rights of its kind.
+.It
+It limits its standard streams.
+.It
+It calls
+.Xr cap_enter 2
+and checks the result with
+.Xr cap_getmode 2 .
+.El
+.Pp
+A process in capability mode cannot open a file by path, cannot create a
+network connection and cannot signal another process; see
+.Xr capsicum 4 .
+What it can still do is decided by the descriptors it holds and their
+rights, which is why the policy below matters as much as the mode.
+.Pp
+If any step fails, the renderer ends.
+A renderer asked to confine itself never runs unconfined.
+.Ss Descriptor policy
+At the lockdown point a descriptor is admitted by what it is and where it
+comes from:
+.Bl -bullet
+.It
+A read-only file is admitted only under
+.Pa /usr/local/share/beryllium/ ,
+the browser's own resources.
+.It
+A socket is admitted only as an end of an unnamed
+.Dv AF_UNIX
+socket pair, stream or sequenced packet, bound to no path and connected
+to no path.
+.It
+A directory is closed.
+.It
+Anything else, such as a writable file, a device or a terminal, ends the
+renderer.
+.El
+.Pp
+Each kind keeps these rights and no others; see
+.Xr rights 4 :
+.Bl -tag -width "shared memory"
+.It read-only file
+.Dv CAP_PREAD ,
+.Dv CAP_MMAP_R ,
+.Dv CAP_FSTAT ,
+and
+.Dv CAP_FCNTL
+for
+.Dv F_GETFL .
+.It socket
+.Dv CAP_RECV ,
+.Dv CAP_SEND ,
+.Dv CAP_EVENT ,
+.Dv CAP_FSTAT ,
+.Dv CAP_SHUTDOWN ,
+.Dv CAP_GETSOCKOPT ,
+.Dv CAP_SETSOCKOPT ,
+and
+.Dv CAP_FCNTL
+for
+.Dv F_GETFL
+and
+.Dv F_SETFL .
+Never the rights to connect, bind, listen or accept.
+.It kqueue
+.Dv CAP_KQUEUE ,
+.Dv CAP_EVENT
+and
+.Dv CAP_FSTAT .
+.It eventfd, pipe
+.Dv CAP_READ ,
+.Dv CAP_WRITE ,
+.Dv CAP_EVENT ,
+.Dv CAP_FSTAT ,
+.Dv CAP_FCNTL
+for
+.Dv F_GETFL
+and
+.Dv F_SETFL ,
+and
+.Dv CAP_IOCTL
+for
+.Dv FIONREAD
+alone.
+.It shared memory
+.Dv CAP_READ ,
+.Dv CAP_WRITE ,
+.Dv CAP_SEEK ,
+.Dv CAP_MMAP_RW ,
+.Dv CAP_FSTAT ,
+and
+.Dv CAP_FCNTL
+for
+.Dv F_GETFL ,
+less whatever its creator withheld.
+.It writable file
+Only one the browser hands over on purpose after the lockdown, such as a
+file a site was granted through the File System Access interface:
+.Dv CAP_PREAD ,
+.Dv CAP_PWRITE ,
+.Dv CAP_FTRUNCATE ,
+.Dv CAP_FSYNC ,
+.Dv CAP_MMAP_RW ,
+.Dv CAP_FSTAT ,
+and
+.Dv CAP_FCNTL
+for
+.Dv F_GETFL .
+.El
+.Pp
+Rights are only ever reduced, with
+.Xr cap_rights_limit 2 ,
+.Xr cap_fcntls_limit 2
+and
+.Xr cap_ioctls_limit 2 .
+.Pp
+Capsicum gives a new descriptor every right, so the policy is applied
+wherever a descriptor appears after the lockdown as well:
+.Bl -bullet
+.It
+What a confined renderer creates is cut at creation: the kqueue and
+eventfd of each message loop, shared memory, and the socket pairs Mojo
+makes.
+.It
+What it receives over a Mojo channel is cut on arrival.
+A received descriptor the policy has no kind for keeps no right at all.
+.It
+The browser cuts every descriptor it sends a confined renderer before it
+sends it, so the limits do not depend on the renderer's cooperation.
+.El
+.Ss What is not covered
+The lockdown is experimental, off by default, and not yet a complete
+sandbox.
+.Bl -bullet
+.It
+The browser, GPU, network, storage and audio processes are not confined.
+.It
+What the GPU process sends a renderer directly is limited by the
+receiving renderer only.
+.It
+The browser does not yet ask the kernel whether a renderer is confined
+before giving it a page; the checks in
+.Sx EXAMPLES
+are made from outside.
+.El
+.Sh EXAMPLES
+Check that every renderer is in capability mode, shown by a
+.Sq C
+in the flags column:
+.Bd -literal -offset indent
+procstat -s $(pgrep -f -- --type=renderer)
+.Ed
+.Pp
+List the descriptors of one renderer with their Capsicum rights:
+.Bd -literal -offset indent
+procstat -fC 12345
+.Ed
+.Pp
+Both need
+.Va security.bsd.unprivileged_proc_debug
+set to 1.
+.Pp
+From a checkout of the repository, run the sandbox tests with the lockdown
+on.
+They then act as a gate: they fail if any renderer is not in capability
+mode by the kernel's answer, if its descriptors cannot be read, or if any
+descriptor is outside the policy.
+.Bd -literal -offset indent
+freebsd/tests/browser/run sandbox \e
+    --browser-arg=--enable-features=BerylliumCapsicumRenderer
+.Ed
+.Pp
+Record what capability mode refuses in each process, with
+.Xr ktrace 1 :
+.Bd -literal -offset indent
+freebsd/tests/browser/run capsicum --diagnose \e
+    --browser-arg=--enable-features=BerylliumCapsicumRenderer
+.Ed
+.Sh DIAGNOSTICS
+The lockdown writes to the browser's log, which
+.Fl -enable-logging Ns = Ns Cm stderr
+sends to standard error.
+.Bl -diag
+.It "beryllium-sandbox: renderer pid=N capability_mode=1 closed_directories=N limited=N threads=N thread_names=..."
+A renderer locked down.
+The line counts the directories it closed and the descriptors it limited,
+and gives the number and the names of the threads the process had at that
+point.
+.It "beryllium-sandbox: renderer pid=N could not enter capability mode: ..."
+The lockdown failed and the renderer ended.
+The text after the colon names the descriptor that broke the policy, or
+the call that failed.
+.It "beryllium-sandbox: received ... (fd N), which a confined process may not hold: every right removed"
+A confined renderer received a descriptor the policy has no kind for.
+The descriptor stays open with no rights.
+.It "beryllium-sandbox: socket pair made at ... on thread '...' (fd N, fd N): limited"
+A confined renderer made a socket pair; both ends were cut to a socket's
+rights.
+.It "beryllium-sandbox: cut ... (fd N) bound for confined renderer pid N"
+The browser cut a descriptor before sending it.
+Logged only with
+.Fl -vmodule Ns = Ns Cm capsicum_rights=1 .
+.It "beryllium-sandbox: ... bound for confined renderer pid N, which it may not hold: every right removed before sending"
+The browser was about to send a confined renderer a descriptor the policy
+has no kind for.
+.El
+.Sh SEE ALSO
+.Xr beryllium 1 ,
+.Xr kdump 1 ,
+.Xr ktrace 1 ,
+.Xr procstat 1 ,
+.Xr cap_enter 2 ,
+.Xr cap_fcntls_limit 2 ,
+.Xr cap_ioctls_limit 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr memfd_create 2 ,
+.Xr capsicum 4 ,
+.Xr rights 4
+.Rs
+.%A Robert N. M. Watson
+.%A Jonathan Anderson
+.%A Ben Laurie
+.%A Kris Kennaway
+.%T "Capsicum: practical capabilities for UNIX"
+.%B "Proceedings of the 19th USENIX Security Symposium"
+.%D August 2010
+.Re
+.Pp
+The plan documents in the repository, in particular
+.Pa plan/06-SECURITY-MODEL.md
+and
+.Pa plan/14-RENDERER-SANDBOX.md ,
+give the reasoning and the results of each build.
+.Sh HISTORY
+The renderer lockdown first appeared in Beryllium 0.20.3.3.
+The closing of inherited descriptors followed in 0.20.3.4, anonymous
+shared memory in 0.20.3.5, the descriptor policy in 0.20.3.8, admission by
+place and shape in 0.20.3.10, limits at creation in 0.20.3.12 and the
+browser's limits before sending in 0.20.3.13.
+.Sh CAVEATS
+A process in capability mode cannot write a core dump.
+To see which call a confined renderer was refused, enable
+.Cm BerylliumCapsicumTrap
+as well, or record the refusals with the test suite as shown above.
+.Pp
+The status table and
+.Sx What is not covered
+are the honest summary: do not rely on this release to contain a
+compromised web page.

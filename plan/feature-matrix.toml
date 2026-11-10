@@ -2386,3 +2386,19 @@ implemented = "todo"
 built = "no"
 tested = "none"
 source = ["plan/05-PATCH-STRATEGY.md §8", "plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
+
+[[feature]]
+id = "R-DOC-04"
+group = "Documentation"
+title = "Manual pages"
+need = "The package installs manual pages written for Beryllium in mdoc, for the command and for the security model, that name the release they describe, claim nothing the matrix does not back, and pass mandoc's lint."
+priority = "should"
+phase = 1
+implemented = "partial"
+built = "no"
+tested = "passing"
+where = ["man/beryllium.1", "man/beryllium-sandbox.7", "freebsd/tools/check-man", "freebsd/ports/www/beryllium/Makefile (BERYLLIUM_MANPAGES)"]
+tests = ["freebsd/tools/tests/test_check_man.py"]
+evidence = "cloud session, 10 Nov 2026: both pages pass check-man and mandoc -T lint -W warning; CI runs the same on every push. Not yet read from an installed package"
+source = ["plan/17-DOCUMENTATION.md"]
+notes = "Releases up to 0.20.3.12 installed Chromium's generic page with its placeholders unreplaced (the port's substitution no longer matches Chromium's file). From revision 17 the port installs beryllium(1) and beryllium-sandbox(7) from man/ with the version and prefix filled in. Still to write: beryllium-policies(5), beryllium-privacy(7), the handbook under share/doc."

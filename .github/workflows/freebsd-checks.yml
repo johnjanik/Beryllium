@@ -44,6 +44,11 @@ jobs:
           --privacy-keys freebsd/ports/www/beryllium/files/beryllium/gn-privacy-keys.json
       - name: BSD patch review debt (advisory until the first full review, RT-10)
         run: ./freebsd/tools/import-bsd-patches check > review-debt.txt; head -n 1 review-debt.txt
+      - name: Manual pages (structure, then mandoc lint)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mandoc
+          ./freebsd/tools/check-man --require-mandoc
       - name: Shell syntax
         run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
       - name: ShellCheck on the installer and release tool

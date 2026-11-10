@@ -25,6 +25,7 @@
 | 14 | [Renderer sandbox working notes](14-RENDERER-SANDBOX.md) | Phase 2 in practice: what the FreeBSD sandbox code does today (renderers never reach it), the lockdown point, the build-by-build increments, starting with the Capsicum survey |
 | 15 | [Capsicum prototype evaluation](15-CAPSICUM-PROTOTYPE-EVALUATION.md) | Alex S's 2026 Capsicum sandbox for the FreeBSD port, read against Beryllium's design: diverge on architecture (zygote, interceptors, Casper channel in renderers, fails open), borrow its findings (time zone and message catalogue caching, libgcc_s, stdio limits, sysctl checklist, Phase 3 device inventories) |
 | 16 | [Adversarial review of 7 November 2026](16-ADVERSARIAL-REVIEW-2026-11-07.md) | An external adversarial assessment of the lockdown, its tests, the release tools and the assurance evidence (BER-01 to BER-07): what holds, what changed for build 0.20.3.10 (descriptor admission by place and shape, stdio failure fatal, the sandbox tests as a gate, release provenance from the build manifest), what remains, and the signing proposal |
+| 17 | [Documentation plan](17-DOCUMENTATION.md) | The manual pages and other user documentation: what the package shipped (Chromium's page with its placeholders unreplaced), the principles (mdoc, nothing the repository cannot back, one source, each page names its release, checked like code), the set of pages and their state, layout and install, the checker, writing rules, order of work |
 
 ## The findings that shape everything else
 

@@ -267,6 +267,27 @@ set it, and the launcher will not start the browser without it.
     on the test machine.
     `--disable-features=BerylliumWaylandWaitForGpu` turns the wait off.
 
+## Documentation
+
+- **Manual pages**, written for Beryllium in mdoc: `beryllium(1)` covers
+  the command, its options, the features Beryllium and Helium define,
+  the environment and the files; `beryllium-sandbox(7)` states what is
+  confined, by what means, and how to check it with `procstat`. They are
+  installed from the build after 0.20.3.16 (releases up to 0.20.3.12
+  shipped Chromium's generic page). From a checkout on FreeBSD:
+  `man man/beryllium.1`.
+- **This README** for status, install and known issues, and
+  [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+- **The plan documents** in [plan/](plan/00-INDEX.md), with the
+  [feature matrix](plan/13-FEATURE-MATRIX.md) of what is implemented,
+  built and tested, and the
+  [documentation plan](plan/17-DOCUMENTATION.md) for what is still to be
+  written.
+- **The test suite's guide**,
+  [freebsd/tests/browser/README.md](freebsd/tests/browser/README.md), and
+  the build guide for the port,
+  [freebsd/ports/README.md](freebsd/ports/README.md).
+
 ## Reporting a problem
 
 Open an [issue](https://github.com/johnjanik/Beryllium/issues). For a

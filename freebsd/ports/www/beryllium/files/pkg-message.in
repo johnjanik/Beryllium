@@ -11,6 +11,8 @@ sandbox, can be tried with:
 Do not rely on this release to contain a compromised web page. The sandbox
 status of each release is published at https://github.com/johnjanik/Beryllium.
 
+- Manual pages: beryllium(1) for the command, its options, environment
+  and files; beryllium-sandbox(7) for what is confined and how to check.
 - Updates: install a newer Beryllium package (install.sh, or a new
   Poudriere build); there is no in-browser updater.
 - Profile: ~/.config/beryllium (override with BERYLLIUM_CONFIG_HOME).
