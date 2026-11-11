@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Tests for the evidence on Helium's canvas noise hash
 (freebsd/privacy/noise-hash): the Python model against the suite's own
-model, the numbers the README states, the probe page's arithmetic against
-the model, and the collector's tally."""
+model, the numbers the README states, and the probe page's arithmetic
+against the model. The battery has its own tests (test_noise_battery.py)."""
 
-import importlib.machinery
-import importlib.util
 import json
 import os
 import random
@@ -24,11 +22,6 @@ sys.path.insert(0, os.path.join(REPO, "freebsd", "tests", "browser"))
 import analysis  # noqa: E402
 import model  # noqa: E402
 from berytest import noise  # noqa: E402
-
-loader = importlib.machinery.SourceFileLoader("noise_collect", os.path.join(EVIDENCE, "collect"))
-spec = importlib.util.spec_from_loader("noise_collect", loader)
-collect = importlib.util.module_from_spec(spec)
-loader.exec_module(collect)
 
 SIZES = [1031, 998, 1085, 982]   # by the token's low two bits
 
@@ -163,38 +156,6 @@ class ProbePage(unittest.TestCase):
                 want = sum(model.predicted_change(low, x, y, red)
                            for y in range(h) for x in range(w))
                 self.assertEqual(got[f"{w}x{h}x{red}x{low}"], want, (w, h, red, low))
-
-
-class Collector(unittest.TestCase):
-    def test_classify(self):
-        sets = collect.four_sets()
-        self.assertEqual([len(s) for s in sets], SIZES)
-        self.assertEqual(collect.classify([], sets), "none")
-        self.assertEqual(collect.classify([list(p) for p in sets[2]], sets), 2)
-        self.assertEqual(collect.classify([[0, 0], [5, 9]], sets), "other")
-        almost = [list(p) for p in sets[2]][1:]
-        self.assertEqual(collect.classify(almost, sets), "other")
-
-    def sample(self, session, site, which, count, steps=("1 0 0 0",)):
-        return {"session": session, "site": f"site{site}.test", "set": which, "count": count,
-                "steps": list(steps)}
-
-    def test_summary_of_a_browser_with_heliums_hash(self):
-        lines = collect.summarise([self.sample(0, 0, 3, 982), self.sample(0, 1, 2, 1085, ["0 -1 0 0"]),
-                                   self.sample(1, 0, 3, 982, ["0 0 1 0"])])
-        text = "\n".join(lines)
-        self.assertIn("3 readbacks in 2 new profiles", text)
-        self.assertIn("set 3 of the four: 2 readbacks; pixels moved: 982", text)
-        self.assertIn("Every noised readback (3) moved one of the same four sets", text)
-
-    def test_summary_of_a_browser_that_uses_the_whole_token(self):
-        text = "\n".join(collect.summarise([self.sample(0, 0, "other", 1016),
-                                            self.sample(0, 1, "other", 994)]))
-        self.assertIn("No readback moved one of the four sets (2 noised readbacks)", text)
-
-    def test_summary_of_a_browser_without_noise(self):
-        text = "\n".join(collect.summarise([self.sample(0, 0, "none", 0, [])]))
-        self.assertIn("No canvas noise", text)
 
 
 if __name__ == "__main__":

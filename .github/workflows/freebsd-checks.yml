@@ -61,6 +61,13 @@ jobs:
           freebsd/tests/browser/run pages media stability --headless --scheme chrome
           --browser "$(command -v google-chrome || command -v chromium)"
           --browser-arg=--no-sandbox --results "$RUNNER_TEMP/browser-tests"
+      - name: Canvas noise battery, self-test (against the runner's Chrome)
+        # The battery with stand-in noise: it must call Helium's hash weak,
+        # a fixed hash good and no noise none (freebsd/privacy/noise-hash).
+        run: >
+          freebsd/privacy/noise-hash/battery selftest
+          --browser "$(command -v google-chrome || command -v chromium)"
+          --browser-arg=--no-sandbox
       - name: Browser test suite harness, toolbar group (in Xvfb)
         run: >
           xvfb-run -a -s "-screen 0 1600x1000x24"
