@@ -303,6 +303,16 @@ set it, and the launcher will not start the browser without it.
   package. (Releases up to 0.20.3.12 brought no font for Chinese,
   Japanese, Korean or emoji: `pkg install noto-sans-sc noto-emoji` there.)
 - **WebGPU** finds no adapter.
+- **The canvas noise can be read around.** Helium's canvas noise, which
+  Beryllium carries, is applied when a page reads a canvas through
+  `getImageData`, `toDataURL`, `toBlob` or `convertToBlob`, and nowhere
+  else. Measured on Helium 0.21.2.1 on macOS and Linux (11 November
+  2026): a canvas copied into a WebGL texture or into a video frame reads
+  back with every pixel exact, and `readPixels` of a WebGL canvas is not
+  noised. Beryllium has the same code apart from the hash; it has not
+  been tested here and nothing has been changed yet. The measurements and
+  the test battery are in
+  [freebsd/privacy/noise-hash](freebsd/privacy/noise-hash/README.md).
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
   driven over DevTools, the video plays for about 45 seconds and then

@@ -9,8 +9,10 @@ BATTERY_TEST_BROWSER set to a Chromium-family binary, the whole battery
 runs its self-test against it."""
 
 import ast
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -453,6 +455,28 @@ class Server(unittest.TestCase):
         self.assertEqual(self.get("/sim.js")[0], 200)
         self.assertEqual(self.get("/battery")[0], 404)
         self.assertEqual(self.get("/../../README.md")[0], 404)
+
+    def test_a_request_for_something_else_is_refused_and_remembered(self):
+        self.assertEqual(self.get("/apple-touch-icon.png")[0], 404)
+        self.assertEqual(self.state.refused, {"/apple-touch-icon.png"})
+        self.assertEqual(self.get("/favicon.ico")[0], 204)
+        self.assertEqual(self.state.refused, {"/apple-touch-icon.png"})
+
+    def test_a_connection_the_browser_drops_prints_no_traceback(self):
+        """Helium on Fedora closed a connection while a 404 was being
+        written; the default handler printed a BrokenPipeError traceback
+        into the middle of the run (11 November 2026)."""
+        server = self.servers[0]
+        for error, printed in ((BrokenPipeError(32, "Broken pipe"), False),
+                               (ConnectionResetError(104, "reset"), False),
+                               (ValueError("a real fault"), True)):
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                try:
+                    raise error
+                except Exception:
+                    server.handle_error(None, ("127.0.0.1", 1))
+            self.assertEqual("Traceback" in captured.getvalue(), printed, repr(error))
 
     def test_results_arrive_on_every_port_for_a_run_it_started(self):
         self.assertEqual(self.post(self.ports[0], "/result",

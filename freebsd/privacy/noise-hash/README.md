@@ -1,14 +1,18 @@
-# Helium's canvas noise: two bits of the token choose the pixels
+# Helium's canvas noise: its hash, and the ways around it
 
 Collected on 11 November 2026 for the owner's report to Helium. This is
 the evidence, with a way to check each part. It is not the report: see
 "Reporting" at the end.
 
 Measured on Helium itself that day, release 0.21.2.1 on macOS and on
-Fedora: all 60 readbacks changed exactly one of the four sets below, the
-same sets on both machines. The same runs showed two further things about
-the noise that have nothing to do with the hash; they are under "Two more
-things the battery found".
+Fedora, in two runs on each: all 120 readbacks changed exactly one of the
+four sets below, the same sets on both machines.
+
+The same runs found something that matters more than the hash. The noise
+is applied at four calls only, and a page can read a canvas without going
+through any of them: copied into a WebGL texture or into a video frame,
+the canvas came back with every pixel exact, 60 times of 60. That and a
+second inconsistency are under "What else the battery found".
 
 ## The finding
 
@@ -181,26 +185,88 @@ What that establishes:
   draw below 3, was not predicted and is not expected to be.
 - **Sites share their pixels about one time in four:** 33 of 150 pairs.
 
+A second run on each machine that evening, with the battery extended
+(next section), gave the same answers to every question above, 30 of 30
+on each, with 18 and 16 pairs of 75 sharing their pixels. Over the four
+runs: 120 readbacks, every one of them one of the four sets, and 67 pairs
+of sites of 300 with the same pixels.
+
 ## What was not measured
 
-- Canvases with floating-point pixels.
-- A real fingerprinting script, and whether any of this recovers a stable
-  fingerprint from one.
-- The two routes added to the battery after these runs (a canvas copied
-  into a WebGL texture, and into a video frame): see the next section.
+- Canvases with floating-point pixels, and canvases drawn by the GPU
+  (the battery asks for a canvas that is read often, which is drawn in
+  memory).
+- A real fingerprinting script, and whether the hash alone recovers a
+  stable fingerprint from one.
+- Other ways out of a canvas: `captureStream`, `createImageBitmap`,
+  WebGPU. Two were tried and both were open; these were not tried.
+- Beryllium. It carries the same canvas code apart from the hash, so the
+  next section should hold there, and nobody has run the battery on it.
 
-## Two more things the battery found
+## What else the battery found
 
-Neither is about the hash, and Beryllium's change to the hash does not
-touch either. Both are in Beryllium too, where they have not been tested.
+None of this is about the hash, and Beryllium's change to the hash
+touches none of it.
 
-**A snapshot of a canvas is noised differently from `getImageData`.**
-`toDataURL` and `toBlob` (and `convertToBlob` on an `OffscreenCanvas`)
-gave the pixels of `getImageData` in 22 readbacks of 60, and those 22 are
-exactly the readbacks whose step fell on green. In the other 38 the step
-fell on red or blue. For the textured and mixed images the two never
-agreed, 0 of 60. The source says why. `canvas_noising_helper.cc` reads a
-snapshot back in the snapshot's own pixel format where that is one of
+### The noise is applied at four calls, and a canvas can be read around them
+
+Helium's canvas patch calls its noise in four places:
+
+| File | Function |
+|---|---|
+| `canvas2d/base_rendering_context_2d.cc` | `getImageData` |
+| `html/canvas/html_canvas_element.cc` | `ToDataURLInternal` (`toDataURL`) |
+| `html/canvas/html_canvas_element.cc` | `toBlob` |
+| `offscreencanvas/offscreen_canvas.cc` | `convertToBlob` |
+
+Nothing else that hands out a canvas's pixels is touched. The second run
+tried two other routes on the textured canvas of known pixels, with the
+noise on:
+
+| | macOS, arm64 | Fedora, x86_64 |
+|---|---|---|
+| Copied into a WebGL texture and read with `readPixels`: every pixel exact | 30 of 30 | 30 of 30 |
+| Copied into a video frame and copied out (`VideoFrame.copyTo`): every pixel exact | 30 of 30 | 30 of 30 |
+| The same two routes with the noise switched off: exact | 6 of 6 each | 6 of 6 each |
+| `getImageData` of that canvas in the same readbacks: about 2,200 of 2,304 pixels changed | 30 of 30 | 30 of 30 |
+| WebGL `readPixels` of a canvas WebGL drew itself: noised | 0 of 30 | 0 of 30 |
+| `toDataURL` of that WebGL canvas: one of the four sets | 30 of 30 | 30 of 30 |
+
+So a page that wants a canvas's true pixels has them: draw on a 2D
+canvas, hand it to WebGL as a texture, read the texture. The noise only
+reaches a script that reads through one of the four calls. The canvas
+fingerprinting scripts in common use read through `toDataURL` or
+`getImageData` and do get noise; changing that takes a few lines. No
+tracker is known to this project to do it.
+
+A line for the console, on any ordinary page. It fills a 2D canvas and
+counts the pixels that come back changed, first through `getImageData`
+and then through a WebGL texture:
+
+```js
+(() => { const c = document.createElement('canvas'); c.width = c.height = 64; const k = c.getContext('2d'); k.fillStyle = 'rgb(100,100,100)'; k.fillRect(0, 0, 64, 64); const count = d => { let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] != 100 || d[i + 1] != 100 || d[i + 2] != 100) n++; return n; }; const g = document.createElement('canvas').getContext('webgl'); g.bindTexture(g.TEXTURE_2D, g.createTexture()); g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, c); g.bindFramebuffer(g.FRAMEBUFFER, g.createFramebuffer()); g.framebufferTexture2D(g.FRAMEBUFFER, g.COLOR_ATTACHMENT0, g.TEXTURE_2D, g.getParameter(g.TEXTURE_BINDING_2D), 0); const p = new Uint8Array(64 * 64 * 4); g.readPixels(0, 0, 64, 64, g.RGBA, g.UNSIGNED_BYTE, p); return [count(k.getImageData(0, 0, 64, 64).data), count(p)]; })()
+```
+
+In a browser without canvas noise it answers `[0, 0]`. From the battery's
+results Helium should answer about a thousand and then 0. The line itself
+has been run in a Chromium without noise and with the stand-in noise
+(`[982, 0]`), not yet by hand in Helium.
+
+### A snapshot is noised with red and blue exchanged
+
+`toDataURL`, `toBlob` and `convertToBlob` gave the pixels of
+`getImageData` in 42 readbacks of 120, and those are exactly the
+readbacks whose step fell on green. The second run asked the question
+directly:
+
+| | macOS, arm64 | Fedora, x86_64 |
+|---|---|---|
+| `toDataURL`, `toBlob`, `convertToBlob` of the grey fill are the pixels of `getImageData` with red and blue exchanged | 30 of 30 | 30 of 30 |
+| `toDataURL` of the textured image equals its `getImageData` | 0 of 30 | 0 of 30 |
+| and is explained by the same five bits once red and blue are exchanged | 30 of 30 | 30 of 30 |
+
+The source says why. `canvas_noising_helper.cc` reads a snapshot back in
+the snapshot's own pixel format where that is one of
 
 ```cpp
     case kRGBA_8888_SkColorType:
@@ -209,39 +275,17 @@ snapshot back in the snapshot's own pixel format where that is one of
 
 and runs the same four-bytes-a-pixel arithmetic over it. `ImageData` is
 always red, green, blue, alpha; a snapshot on these machines is blue,
-green, red, alpha. So for a snapshot the "low byte" that the hash sees is
-blue, and channel 0 is blue. A grey fill hashes the same either way, which
-is why its pixels and direction agree and only the channel moves; any
-other content gets different noise altogether. A site therefore holds two
-differently noised copies of one canvas for the asking. What that is
-worth to a tracker has not been measured. In a smooth area a pixel
-changes in the one reading when its red has a certain value modulo 4, and
-in the other when its blue does, so where those differ at most one of the
-two readings is changed.
+green, red, alpha. So for a snapshot the low byte that the hash sees is
+blue, and channel 0 is blue. A grey fill hashes the same either way,
+which is why its pixels and direction agree and only the channel moves;
+any other content gets different noise altogether.
 
-The battery now checks this directly: whether a snapshot is the pixels of
-`getImageData` with red and blue exchanged, and whether the textured
-image's snapshot is explained by the same five bits once red and blue are
-exchanged. That check has run against the stand-in noise only.
-
-**WebGL `readPixels` is not noised.** A WebGL canvas cleared to
-rgb(100,100,100) read back exact through `readPixels` in 60 readbacks of
-60, while `toDataURL` of the same canvas changed one of the four sets
-every time. Helium's canvas patch touches the 2D context, the canvas
-element and `OffscreenCanvas`, and not the WebGL context. A line for the
-console, to compare with the one under "Check it yourself":
-
-```js
-(() => { const c = document.createElement('canvas'); c.width = c.height = 64; const gl = c.getContext('webgl', {preserveDrawingBuffer: true}); gl.clearColor(100 / 255, 100 / 255, 100 / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT); const p = new Uint8Array(64 * 64 * 4); gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, p); let n = 0; for (let i = 0; i < p.length; i += 4) if (p[i] != 100 || p[i + 1] != 100 || p[i + 2] != 100) n++; return n; })()
-```
-
-It answered 0 with the noise on. The question that follows is whether
-any canvas can be read without noise by going through WebGL. The battery
-now asks it: it copies the textured 2D canvas into a WebGL texture and
-reads that with `readPixels`, and copies it into a video frame and copies
-the frame out. In a Chromium without noise both give every pixel exact,
-so the routes themselves are faithful. Neither has yet run against
-Helium.
+A site therefore holds two differently noised copies of one canvas for
+the asking. In a smooth area a pixel changes in the one reading when its
+red has a certain value modulo 4 and in the other when its blue does, so
+where those differ at most one of the two readings is changed. What that
+is worth to a tracker was not measured, and beside the section above it
+matters little.
 
 ## What it does and does not mean
 
@@ -251,11 +295,17 @@ same for everyone, and a page can tell exactly where noise was applied.
 In textured areas a page can recover five bits of the token and with them
 the sign of each channel's fixed step.
 
-Not established: that this recovers a stable canvas fingerprint from a
-real fingerprinting image. In textured areas the rest of each step uses
-the whole token, and noise this small can be tolerated by a matcher that
-compares images loosely, whatever the hash. The finding is about the hash
-doing less than its design reads as intending, and it has a small fix.
+Not established: that the hash alone recovers a stable canvas fingerprint
+from a real fingerprinting image. In textured areas the rest of each step
+uses the whole token, and noise this small can be tolerated by a matcher
+that compares images loosely, whatever the hash. The finding about the
+hash is that it does less than its design reads as intending, and it has
+a small fix.
+
+The order of importance is the other way round from the order of
+discovery. The hash decides how good the noise is where it is applied.
+The four calls decide whether it is applied, and a page chooses the
+call.
 
 ## Check it yourself
 
@@ -356,10 +406,12 @@ the reports above never touched.
 
 How far the battery has been tried: its arithmetic against the Python
 model with node; the whole of it against a Chromium with the stand-in
-noise (the self-test above, which CI also runs); and its first version
-against Helium 0.21.2.1 on macOS and Fedora, with the results above. The
-checks added after those runs (the exchange of red and blue, the WebGL
-texture, the video frame) have run against the stand-in only.
+noise (the self-test above, which CI also runs); and against Helium
+0.21.2.1 on macOS and Fedora, twice, with the results above. On Fedora
+the first runs printed a traceback: Helium dropped a connection while the
+battery was refusing a file it does not serve. The runs were unaffected;
+the battery no longer prints it, and it now records what else a browser
+asks it for.
 
 ## Beryllium's change
 
@@ -386,9 +438,11 @@ not be. So:
 - The report is the owner's, in the owner's words, about what the owner
   has run and understood: the console line on a stock Helium, on a few
   sites and profiles, is enough to stand on.
-- There are now three separate things (the hash, the snapshot's byte
-  order, WebGL `readPixels`). Each wants its own reproduction by hand
-  before it goes into a report, and each can be reported on its own.
+- There are three separate things: that a canvas can be read around the
+  noise (WebGL texture, video frame, and `readPixels` of a WebGL canvas),
+  the snapshot's byte order, and the hash. Each wants its own
+  reproduction by hand before it goes into a report, and each can be
+  reported on its own. The first is the one that matters most.
 - No patch is offered. Helium can read Beryllium's if it wishes.
 - If asked how it was found, the answer is the true one: the test suite of
   a derived browser failed one run in four, and an AI assistant worked
