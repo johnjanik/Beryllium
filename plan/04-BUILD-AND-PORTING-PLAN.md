@@ -202,7 +202,15 @@ from section 4 (RT-09); do not change `treat_warnings_as_errors` or
   limited to `wrkdir` only if RAM allows, otherwise off (several past
   stable/14 failures were tied to `USE_TMPFS=all`).
 - `ccache` for `beryllium-devel` iteration; not for release builds, so the
-  manifest reflects a clean build.
+  manifest reflects a clean build. Wired on 11 November 2026, before
+  `beryllium-devel` exists, as an opt-in of the one port:
+  `install.sh --build --ccache` builds in a Poudriere set of its own
+  (`-z ccache`, its own packages and logs, the only set that reads
+  `CCACHE_DIR`), the port writes `compiler_cache` into `BUILD-MANIFEST.json`,
+  and `check-provenance` refuses to release a package where it is not
+  `none`. Steps and state: freebsd/ports/README.md, "Faster test builds
+  with a compiler cache". Not yet run on FreeBSD; the saving is not
+  measured.
 - Expect a few hours per full build on the build host. The FreeBSD package
   cluster times out on `www/chromium` regularly; Beryllium's CI uses a
   generous timeout and builds nightly rather than per commit, plus an

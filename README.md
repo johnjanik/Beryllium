@@ -397,8 +397,10 @@ Beryllium builds in a [Poudriere](https://github.com/freebsd/poudriere) jail
 from this repository's port, `freebsd/ports/www/beryllium`. The full
 walkthrough, from installing Poudriere to installing the package, is
 [freebsd/ports/README.md](freebsd/ports/README.md); `sh install.sh --build`
-follows it for you. With the jail and ports trees set up as described
-there, a build is:
+follows it for you, and `sh install.sh --build --ccache` makes a test build
+with a compiler cache, so that the next one compiles only what changed (a
+release is always built without it). With the jail and ports trees set up
+as described there, a build is:
 
 ```sh
 doas poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium

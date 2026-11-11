@@ -2032,7 +2032,7 @@ built = "no"
 tested = "none"
 where = ["freebsd/tools/build-manifest"]
 source = ["helium-freebsd-security-port-spec.md §11.2", "plan/08-TESTING-AND-VERIFICATION.md §2.6"]
-notes = "Missing: the Beryllium commit, compiler versions, distfile hashes."
+notes = "Missing: the Beryllium commit, compiler versions, distfile hashes. From 0.20.3.18 it records compiler_cache: none for a clean build, ccache when the ports framework's compiler cache was on (install.sh --build --ccache)."
 
 [[feature]]
 id = "B-PRT-11"
@@ -2286,7 +2286,7 @@ source = ["plan/08-TESTING-AND-VERIFICATION.md §4"]
 id = "R-REL-01"
 group = "Releases"
 title = "Publishing releases"
-need = "publish-release names packages per FreeBSD version, writes SHA256SUMS and notes naming the source commit, refuses a package whose BUILD-MANIFEST.json was not built from that commit, publishes the manifests, and creates the GitHub release."
+need = "publish-release names packages per FreeBSD version, writes SHA256SUMS and notes naming the source commit, refuses a package whose BUILD-MANIFEST.json was not built from that commit or was built with a compiler cache, publishes the manifests, and creates the GitHub release."
 priority = "must"
 phase = 6
 implemented = "done"
@@ -2294,7 +2294,8 @@ built = "no"
 tested = "passing"
 where = ["freebsd/tools/publish-release", "freebsd/tools/check-provenance"]
 tests = ["freebsd/tools/tests/test_install_sh.py::test_dry_run_layout_and_notes",
-         "freebsd/tools/tests/test_install_sh.py::test_refuses_a_package_built_from_other_patches"]
+         "freebsd/tools/tests/test_install_sh.py::test_refuses_a_package_built_from_other_patches",
+         "freebsd/tools/tests/test_install_sh.py::test_refuses_a_package_built_with_a_compiler_cache"]
 evidence = "v0.20.3.1-1 published 4 Nov 2026; releases to 0.20.3.7 published without the provenance check; v0.20.3.12 published 8 Nov 2026 with the check and BUILD-MANIFEST-FreeBSD-16-amd64.json among its assets"
 source = ["plan/11-MAINTENANCE-AND-RELEASE.md §3", "plan/16-ADVERSARIAL-REVIEW-2026-11-07.md"]
 notes = "From 7 Nov 2026 (plan/16 BER-06): each package's BUILD-MANIFEST.json (version, Chromium and Helium versions, BSD patch set, SHA-256 of every Beryllium patch) must match the checkout and the package's own version, so the release never names a commit the package was not built from."

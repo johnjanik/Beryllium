@@ -15,6 +15,12 @@ helium_commit (the port's Makefile.helium), bsd_patches (the port's
 files/IMPORTED-FROM) and beryllium_patches (the SHA-256 of every patch in
 patches/series, byte for byte, the same set). Exit 0 when everything
 matches, 1 with the differences listed, 2 if the manifest cannot be read.
+
+A release is also a clean build (plan/04): every object file in it came
+from the compiler during that build. A manifest whose compiler_cache is
+not "none" (install.sh --build --ccache, or CCACHE_DIR in poudriere.conf)
+is a test build; exit 3 when that is the only objection. A manifest
+without the key was written before the port recorded it.
 """
 
 import argparse
@@ -101,6 +107,12 @@ def differences(manifest, want, pkg_version=None):
     return out
 
 
+def compiler_cache(manifest):
+    """The compiler cache the package was built with, or None."""
+    value = manifest.get("compiler_cache", "none")
+    return None if value == "none" else str(value)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--repo", default=REPO)
@@ -117,12 +129,18 @@ def main(argv=None):
         return 2
     want = expected(a.repo)
     diffs = differences(manifest, want, a.version)
+    cache = compiler_cache(manifest)
+    if cache:
+        print(f"check-provenance: the package was built with a compiler cache ({cache}): "
+              "it is a test build, not a release", file=sys.stderr)
     if diffs:
         print("check-provenance: the package was not built from this checkout:",
               file=sys.stderr)
         for d in diffs:
             print(f"  {d}", file=sys.stderr)
         return 1
+    if cache:
+        return 3
     print(f"check-provenance: built from this checkout: Beryllium {want['beryllium_version']}, "
           f"Chromium {want['chromium_version']}, Helium {want['helium_commit'][:12]}, "
           f"{len(want['beryllium_patches'])} patches, BSD set "
