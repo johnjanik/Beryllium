@@ -1,0 +1,134 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas noise: which pixels move</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 46em; margin: 2em auto; padding: 0 1em; }
+  table { border-collapse: collapse; margin: .6em 0; }
+  td, th { border: 1px solid #888; padding: .2em .7em; text-align: left; }
+  .found { font-weight: 600; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+<h1>Canvas noise: which pixels move</h1>
+<p>This page draws flat colours on canvases, reads them back, and lists the
+pixels that came back changed. It makes no network request and stores
+nothing. Serve it over http (for example <code>python3 -m http.server</code>
+in this directory) and open it as <code>http://localhost:8000/probe.html</code>
+and as <code>http://127.0.0.1:8000/probe.html</code>, which are two different
+sites to the browser. Then try a private window and a new profile.</p>
+<div id="out"></div>
+<script>
+// --- model begin
+// Two things from Helium's source, restated: the mixing of a pixel's
+// coordinates (MixCanvasCoordinateSeed, canvas_noising_helper.cc) and the
+// low two bits of two FNV-1a steps (helium_noise_hash.cc). The FNV prime is
+// 3 modulo 4, and the low two bits of a product depend only on the low two
+// bits of its factors.
+const MASK = (1n << 64n) - 1n;
+function mix(v) {
+  v ^= v >> 30n; v = v * 0xbf58476d1ce4e5b9n & MASK;
+  v ^= v >> 27n; v = v * 0x94d049bb133111ebn & MASK;
+  v ^= v >> 31n; return v;
+}
+// Does the pixel at (x, y) of a flat area change? low: the low two bits of
+// the site's token (0 to 3). red: the pixel's red value.
+function changes(low, x, y, red) {
+  const m = Number(mix(BigInt(y) << 32n | BigInt(x)) & 3n);
+  const step = ((low ^ m) * 3) & 3;
+  return (((step ^ (red & 3)) * 3) & 3) === 0;
+}
+function predicted(low, width, height, red) {
+  const set = [];
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (changes(low, x, y, red)) set.push(x + ',' + y);
+  return set;
+}
+// --- model end
+
+// Fill a canvas with one colour, read it back, and say which pixels differ
+// from that colour and by how much.
+function readFill(width, height, rgb) {
+  const c = document.createElement('canvas');
+  c.width = width; c.height = height;
+  const k = c.getContext('2d', {willReadFrequently: true});
+  k.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+  k.fillRect(0, 0, width, height);
+  const d = k.getImageData(0, 0, width, height).data;
+  const changed = [], steps = new Set();
+  for (let i = 0; i < d.length; i += 4) {
+    const delta = [d[i] - rgb[0], d[i + 1] - rgb[1], d[i + 2] - rgb[2], d[i + 3] - 255];
+    if (delta.some(v => v !== 0)) {
+      changed.push(((i / 4) % width) + ',' + Math.floor(i / 4 / width));
+      steps.add(delta.join(' '));
+    }
+  }
+  return {changed, steps: [...steps]};
+}
+function same(a, b) { return a.length === b.length && a.every((v, i) => v === b[i]); }
+
+const out = document.getElementById('out');
+function add(html) { out.insertAdjacentHTML('beforeend', html); }
+
+// Part 1: a 64 x 64 fill of rgb(100,100,100), against the four sets.
+const first = readFill(64, 64, [100, 100, 100]);
+let low = null;
+let rows = '';
+for (let candidate = 0; candidate < 4; candidate++) {
+  const set = predicted(candidate, 64, 64, 100);
+  const hit = same(set, first.changed);
+  if (hit) low = candidate;
+  rows += `<tr><td>${candidate}</td><td>${set.length}</td><td>${hit ? 'yes' : 'no'}</td></tr>`;
+}
+add(`<h2>1. A 64 by 64 fill of rgb(100,100,100)</h2>
+<p>${first.changed.length} of 4096 pixels came back changed` +
+    (first.steps.length ? `, each by (red green blue alpha) ${first.steps.join(' or ')}` : '') + `.</p>
+<table><tr><th>token's low two bits</th><th>pixels that would change</th>
+<th>exactly the pixels that did change</th></tr>${rows}</table>`);
+
+if (first.changed.length === 0) {
+  add(`<p class="found">No pixel changed. This browser adds no canvas noise here
+(another browser, or the noise is switched off).</p>`);
+} else if (low === null) {
+  add(`<p class="found">The changed pixels are none of the four sets. Which pixels
+move here is not decided by two bits of the token.</p>`);
+} else {
+  add(`<p class="found">The changed pixels are exactly set ${low}: one of four sets
+that are the same in every browser with this code. Two bits of this site's
+64-bit token chose them.</p>`);
+
+  // Part 2: from those two bits, say in advance which pixels of other
+  // fills will come back changed. Channel values stay away from 0 and 255,
+  // where a step can be clamped away.
+  const fills = [[40, 25, [37, 142, 201]], [90, 31, [101, 50, 200]],
+                 [33, 77, [250, 7, 7]], [128, 16, [3, 250, 9]], [200, 3, [64, 64, 64]]];
+  let table = '';
+  let all = true;
+  for (const [w, h, rgb] of fills) {
+    const want = predicted(low, w, h, rgb[0]);
+    const got = readFill(w, h, rgb);
+    const hit = same(want, got.changed);
+    all = all && hit;
+    table += `<tr><td>${w} by ${h}</td><td>rgb(${rgb.join(',')})</td><td>${want.length}</td>
+<td>${got.changed.length}</td><td>${hit ? 'yes' : 'no'}</td><td>${got.steps.join(' or ')}</td></tr>`;
+  }
+  add(`<h2>2. Other fills, predicted from those two bits</h2>
+<p>For each fill the left count was computed before the canvas was read, from
+the two bits found above, the pixel's coordinates and its red value.</p>
+<table><tr><th>size</th><th>colour</th><th>predicted to change</th><th>changed</th>
+<th>the same pixels</th><th>step</th></tr>${table}</table>
+<p class="found">${all ? 'Every prediction was exact.' : 'A prediction missed.'}
+The direction of the step follows the token's lowest bit:
+${low & 1 ? '+1' : '-1'} was expected here.</p>`);
+}
+add(`<h2>3. Elsewhere</h2>
+<p>Open this page from another site, in a private window, in a new profile
+and on another machine. A browser whose noise positions depend on the whole
+token gives a different set of pixels each time, with counts spread around
+1024. One that draws them from two bits gives set 0, 1, 2 or 3 every time,
+with 1031, 998, 1085 or 982 pixels.</p>`);
+</script>
+</html>

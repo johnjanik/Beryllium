@@ -13,12 +13,20 @@ Purpose: Helium's noise (helium/core/noise/core.patch) gives every site a
     flat fill move was therefore one of four sets, chosen by two bits of
     the token, and the four sets are the same in every browser that
     carries this code;
-  - the direction of the change is GetValueBelow(2) after a two-bit draw,
-    which is bit 2: three bits of the token.
+  - the direction of the change is GetValueBelow(2) on the content hash,
+    and it is that hash's first draw: in
+    "noise[hash.GetValueBelow(3)] = GetNonZeroSignedNoiseValue(hash)" the
+    right side is evaluated first (C++17). So it is bit 0, and in a flat
+    fill bit 0 of the token: the same two bits that choose the pixels
+    also give the direction. (An earlier text of this header said bit 2
+    and 24 readbacks; the owner's reports of 10 November show the
+    direction following the set in six sessions of six, as bit 0 does.)
   Only draws whose bound is not a power of two (the channel, below 3)
-  depended on more. A flat fill had 24 possible readbacks in all, and two
-  sites in one session moved exactly the same pixels with probability one
-  in four.
+  depended on more. A flat fill had 12 possible readbacks in all (four
+  sets of pixels, three channels), and two sites in one session moved
+  exactly the same pixels with probability one in four.
+  freebsd/privacy/noise-hash/ has the model, the measurements and a page
+  that shows which of the four sets a browser moves.
   Found by the owner's suite runs: the per-site test compares which pixels
   two origins move, and in three of the eight runs that made the comparison
   (one of four on 0.20.3.14, none of two on 0.20.3.15, both on 0.20.3.16)

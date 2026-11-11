@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Read back a flat canvas fill on many sites in many new profiles, and
+tally which pixels the browser's canvas noise moved.
+
+  collect --browser /path/to/helium                 10 profiles, 10 sites each
+  collect --browser /path/to/helium --sessions 50 --sites 20 --out samples.json
+
+Every profile is new and thrown away (a new profile has a new noise token),
+every site is a made-up name (site0.test, site1.test, ...) that the browser
+is told to find on this machine, and the page is served from this machine:
+nothing leaves it. Works with any Chromium-family browser; what it finds:
+
+  - Helium's noise as of 0.20.3: every sample is one of four sets of pixels
+    (1031, 998, 1085 or 982 of 4096), the same four everywhere;
+  - a hash that uses the whole token (Beryllium from 0.20.3.17): no sample
+    is one of the four, and the counts spread around 1024;
+  - no canvas noise: nothing moves.
+"""
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "..", "..", "tests", "browser"))
+
+import model  # noqa: E402
+
+WIDTH = HEIGHT = 64
+FILL = (100, 100, 100)
+
+PROBE = """(() => {
+  const c = document.createElement('canvas'); c.width = %d; c.height = %d;
+  const k = c.getContext('2d', {willReadFrequently: true});
+  k.fillStyle = 'rgb(%d,%d,%d)'; k.fillRect(0, 0, c.width, c.height);
+  const d = k.getImageData(0, 0, c.width, c.height).data;
+  const changed = [], steps = new Set();
+  for (let i = 0; i < d.length; i += 4) {
+    const delta = [d[i] - %d, d[i + 1] - %d, d[i + 2] - %d, d[i + 3] - 255];
+    if (delta.some(v => v !== 0)) {
+      changed.push([(i / 4) %% c.width, Math.floor(i / 4 / c.width)]);
+      steps.add(delta.join(' '));
+    }
+  }
+  return {changed, steps: [...steps]};
+})()""" % (WIDTH, HEIGHT, *FILL, *FILL)
+
+
+def four_sets():
+    """The four sets of pixels Helium's hash can move in the fill, by the
+    token's low two bits."""
+    return [frozenset((x, y) for y in range(HEIGHT) for x in range(WIDTH)
+                      if model.predicted_change(low, x, y, FILL[0])) for low in range(4)]
+
+
+def classify(changed, sets):
+    """0 to 3 if the changed pixels are exactly one of the four sets,
+    "none" if nothing changed, "other" for any other set."""
+    pixels = frozenset(tuple(p) for p in changed)
+    if not pixels:
+        return "none"
+    for low, candidate in enumerate(sets):
+        if pixels == candidate:
+            return low
+    return "other"
+
+
+def summarise(samples):
+    """samples: [{"session": i, "site": name, "set": 0..3 | "none" | "other",
+    "count": n, "steps": [...]}]. Returns the lines of the tally."""
+    lines = [f"{len(samples)} readbacks in {len({s['session'] for s in samples})} new profiles"]
+    by_set = {}
+    for s in samples:
+        by_set.setdefault(s["set"], []).append(s)
+    for key in (0, 1, 2, 3, "other", "none"):
+        group = by_set.get(key, [])
+        if not group:
+            continue
+        counts = sorted({s["count"] for s in group})
+        steps = sorted({step for s in group for step in s["steps"]})
+        name = {"other": "some other set of pixels", "none": "no pixel moved"}.get(
+            key, f"set {key} of the four")
+        shown = ", ".join(str(c) for c in counts[:12]) + (" ..." if len(counts) > 12 else "")
+        lines.append(f"  {name}: {len(group)} readbacks; pixels moved: {shown}"
+                     + (f"; steps (red green blue alpha): {', '.join(steps)}" if steps else ""))
+    weak = sum(len(by_set.get(k, [])) for k in range(4))
+    noised = weak + len(by_set.get("other", []))
+    if noised == 0:
+        lines.append("No canvas noise: nothing moved in any readback.")
+    elif weak == noised:
+        lines.append(f"Every noised readback ({weak}) moved one of the same four sets of "
+                     "pixels: two bits of the site's token choose them.")
+    elif weak == 0:
+        lines.append(f"No readback moved one of the four sets ({noised} noised readbacks): "
+                     "which pixels move does not come from two bits of the token.")
+    else:
+        lines.append(f"{weak} of {noised} noised readbacks moved one of the four sets.")
+    distinct = len({(s["session"], s["site"]) for s in samples})
+    patterns = len({(s["set"], s["count"], tuple(s["steps"])) for s in samples
+                    if s["set"] != "none"})
+    lines.append(f"Different site-and-profile pairs: {distinct}; different noise patterns "
+                 f"seen among them: {patterns}")
+    return lines
+
+
+def collect(o):
+    from argparse import Namespace
+    from berytest import context
+    from berytest.browser import Browser
+    results = tempfile.mkdtemp(prefix="noise-collect.")
+    options = Namespace(browser=o.browser, headless=not o.windows, keep_profiles=False,
+                        scheme="chrome", results=results, cores=False,
+                        browser_args=list(o.browser_args))
+    context.CTX = ctx = context.Context(options)
+    sets = four_sets()
+    samples = []
+    try:
+        base = ctx.fixtures().url("blank.html")
+        for session in range(o.sessions):
+            browser = Browser(ctx, f"session{session}",
+                              args=["--host-resolver-rules=MAP *.test 127.0.0.1"]).start()
+            try:
+                for site in range(o.sites):
+                    name = f"site{site}.test"
+                    page = browser.new_page(base.replace("127.0.0.1", name))
+                    try:
+                        out = page.eval(PROBE)
+                    finally:
+                        browser.close_page(page)
+                    samples.append({"session": session, "site": name,
+                                    "set": classify(out["changed"], sets),
+                                    "count": len(out["changed"]),
+                                    "steps": sorted(out["steps"])})
+                version = browser.version.get("product", "")
+            finally:
+                browser.stop()
+            print(f"profile {session + 1} of {o.sessions}: "
+                  + " ".join(str(s["set"]) for s in samples[-o.sites:]), flush=True)
+    finally:
+        ctx.close()
+    return version, samples
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("--browser", required=True, help="the browser's binary")
+    ap.add_argument("--sessions", type=int, default=10, help="new profiles (default 10)")
+    ap.add_argument("--sites", type=int, default=10, help="sites per profile (default 10)")
+    ap.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
+                    help="a switch for the browser (repeatable)")
+    ap.add_argument("--windows", action="store_true", help="show windows (default: headless)")
+    ap.add_argument("--out", help="also write every sample to this file as JSON")
+    o = ap.parse_args(argv)
+    version, samples = collect(o)
+    lines = [f"Browser: {version or o.browser}"] + summarise(samples)
+    print("\n".join(lines))
+    if o.out:
+        with open(o.out, "w") as f:
+            json.dump({"browser": version, "fill": [WIDTH, HEIGHT, *FILL],
+                       "samples": samples, "summary": lines}, f, indent=1)
+        print(f"Samples: {o.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
