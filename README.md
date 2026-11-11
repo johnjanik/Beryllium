@@ -311,8 +311,11 @@ set it, and the launcher will not start the browser without it.
   WebGL texture or into a video frame reads back with every pixel exact,
   and `readPixels` of a WebGL canvas is not noised. Reading a canvas
   through `toDataURL` or `toBlob` also gives other noise than
-  `getImageData` does (red and blue are exchanged). Nothing has been
-  changed for either yet. The measurements and the test battery are in
+  `getImageData` does (red and blue are exchanged). Two patches written
+  for the next build, 0.20.3.18, give a snapshot the noise of
+  `getImageData` and put the noise on WebGL `readPixels`; they are not
+  built yet, and they leave the video frame and some other WebGL reads
+  open. The measurements, the patches' limits and the test battery are in
   [freebsd/privacy/noise-hash](freebsd/privacy/noise-hash/README.md).
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile

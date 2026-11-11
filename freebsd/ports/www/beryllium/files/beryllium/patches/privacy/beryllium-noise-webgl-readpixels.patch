@@ -1,0 +1,256 @@
+Beryllium: what a page reads back from WebGL carries the canvas noise
+
+Purpose: Helium's canvas noise is called in four places: getImageData(),
+  toDataURL(), toBlob() and OffscreenCanvas convertToBlob()
+  (helium/core/noise/canvas.patch). WebGL's readPixels() is not one of
+  them. A WebGL scene is the other picture fingerprinting scripts hash,
+  and they read it with readPixels(); and a page can hand any 2D canvas to
+  WebGL as a texture and read that. Measured with the battery on Beryllium
+  0.20.3.17 on FreeBSD (freebsd/privacy/noise-hash/README.md, 11 November
+  2026): a 2D canvas of known pixels copied into a texture came back from
+  readPixels() with every pixel exact in 30 readbacks of 30, while
+  getImageData() of the same canvas changed about 2,200 of its 2,304
+  pixels. The same on Helium 0.21.2.1 on macOS and Fedora, 60 of 60.
+  The change: WebGLRenderingContextBase::ReadPixelsHelper(), through which
+  every readPixels() into an array goes in WebGL 1 and 2, hands what it
+  read to a new CanvasNoisingHelper::MaybeNoiseWebGLReadback() when the
+  read is RGBA and UNSIGNED_BYTE. That runs Helium's 8-bit noise over the
+  pixels with the site's canvas token, anchored to the framebuffer
+  coordinates of the read, so that two reads of one place agree and a
+  read in pieces gets the noise of a read in one. It follows the pack
+  parameters (alignment, and in WebGL 2 row length and skipped rows and
+  pixels), so that none of them is a way round; a layout it cannot place
+  in the destination is handed back as zeros.
+  One thing it does not do as getImageData() does. Helium's noise moves
+  about one pixel in four of a flat area by one level. WebGL pages read
+  flat areas back for their exact values: the colour under the pointer
+  names the object drawn there, and a page that gets a neighbouring value
+  one time in four selects the wrong thing or nothing. (Tor Browser's
+  readPixels() protection broke pages this way:
+  gitlab.torproject.org/tpo/applications/tor-browser/-/issues/42082.) So
+  a pixel whose whole 3 by 3 neighbourhood in the read is one exact colour
+  is handed back as read. A flat area tells a page nothing one pixel of
+  it would not, and Helium's sparse noise did not hide that pixel either:
+  three in four of the area's pixels were exact already.
+  What is still open, on purpose or for later (feature matrix P-FPR-07):
+  - a read of one pixel at a time: each is a neighbourhood of itself, so
+    each is exact. That is what keeps one-pixel picking working, and it
+    costs a page one call a pixel;
+  - a read in another format: RGBA with FLOAT or HALF_FLOAT, integer
+    formats, or whatever second format the driver offers. Float reads are
+    how pages take numbers out of the GPU, and the 8-bit noise clamps
+    floats to colours;
+  - WebGL 2 readPixels() into a buffer object, read with
+    getBufferSubData();
+  - a canvas copied into a video frame, captureStream, createImageBitmap.
+  Costs: a read of w by h pixels is copied twice more and hashed, as
+  getImageData() is. A page that packs numbers into bytes and reads them
+  with RGBA and UNSIGNED_BYTE gets them noised unless its results are
+  flat; the per-site exception to the noise is the way out. A multi-pixel
+  pick that straddles the edge of an object gets noised edge pixels. And
+  if the GL read itself fails, the bytes noised are the page's own.
+Stage: 4 (Beryllium series). Depends on helium/core/noise/canvas.patch,
+  which creates the helper, and on
+  privacy/beryllium-noise-snapshot-channel-order.patch, which changes the
+  same file before it.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not
+  compiled in the tree. The new function, with the 8-bit path of the
+  helper it calls, and the layout arithmetic added to ReadPixelsHelper()
+  were compiled verbatim outside the tree against Chromium's own
+  base/containers/span.h, base/numerics/checked_math.h and
+  byte_conversions.h (clang 18, libc++, C++23, with -Wall -Wextra
+  -Wshorten-64-to-32 -Wsign-compare -Wimplicit-int-conversion: no warning
+  in the new code) and run on 240 cases of images, pack parameters,
+  offsets and buffer sizes: the output is the Python model's
+  (freebsd/privacy/noise-hash/model.py, webgl_readback) in every case;
+  39 flat fills of 39 and 16 one-pixel reads of 16 came back exact; 9
+  buffers too small for their layout came back as zeros. What that did
+  not compile: the three lines that call the helper from the WebGL
+  context (GetPackPixelStoreParams(), Host()->GetTopExecutionContext(),
+  ByteSpanMaybeShared().subspan()), each used elsewhere in that file in
+  the same form. First build: 0.20.3.18.
+Test: freebsd/privacy/noise-hash/battery. On 0.20.3.17 "A canvas copied
+  into a WebGL texture reads back exact, without noise" reads 30 of 30 and
+  must read 0 of 30, with "reads back with the noise of getImageData" at
+  30 of 30; "WebGL: single pixels and 3 by 3 blocks of a flat colour read
+  back exact" must stay 30 of 30; "WebGL: read one pixel at a time, a
+  canvas comes back exact" stays 30 of 30 and is the open route named
+  above. The battery's self-test runs these rows against stand-in noise
+  that behaves as this patch intends. Feature matrix row P-FPR-07.
+security-review: not required for the sandbox (renderer-only, no new
+  input from outside the page, no new privilege). It changes what a web
+  API returns: a compatibility review is the first build's battery run and
+  the owner's use of WebGL pages on it.
+
+--- a/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.h
++++ b/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.h
+@@ -9,6 +9,10 @@
+ #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HELIUM_NOISE_CANVAS_NOISING_HELPER_H_
+ #define THIRD_PARTY_BLINK_RENDERER_CORE_HELIUM_NOISE_CANVAS_NOISING_HELPER_H_
+ 
++#include <cstddef>
++#include <cstdint>
++
++#include "base/containers/span.h"
+ #include "third_party/blink/renderer/core/core_export.h"
+ #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+ #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+@@ -31,6 +35,21 @@
+                                   int source_x,
+                                   int source_y);
+ 
++  // Beryllium: if allowed, performs noising in place on pixels of four 8-bit
++  // channels that WebGL read back into |destination|: |height| rows of
++  // |width| pixels, |row_stride| bytes apart, the first at
++  // |first_pixel_offset|, read from (|source_x|, |source_y|) of the
++  // framebuffer. A pixel whose whole neighborhood in the read is one exact
++  // color is left as it was read. Returns true if noise was applied.
++  static bool MaybeNoiseWebGLReadback(ExecutionContext* execution_context,
++                                      base::span<uint8_t> destination,
++                                      size_t first_pixel_offset,
++                                      size_t row_stride,
++                                      int width,
++                                      int height,
++                                      int source_x,
++                                      int source_y);
++
+  private:
+   CanvasNoisingHelper() = delete;
+ };
+--- a/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.cc
++++ b/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.cc
+@@ -640,4 +640,83 @@
+                                 source_x, source_y);
+ }
+ 
++// static
++bool CanvasNoisingHelper::MaybeNoiseWebGLReadback(
++    ExecutionContext* execution_context,
++    base::span<uint8_t> destination,
++    size_t first_pixel_offset,
++    size_t row_stride,
++    int width,
++    int height,
++    int source_x,
++    int source_y) {
++  std::optional<HeliumNoiseHash> token_hash =
++      GetCanvasTokenHash(execution_context);
++  if (!token_hash || width <= 0 || height <= 0) {
++    return false;
++  }
++
++  const size_t row_bytes = static_cast<size_t>(width) * kChannelsPerPixel;
++  base::CheckedNumeric<size_t> end = row_stride;
++  end *= static_cast<size_t>(height - 1);
++  end += first_pixel_offset;
++  end += row_bytes;
++  // GetPixelAt() indexes with int.
++  base::CheckedNumeric<int> last_index = width;
++  last_index *= height;
++  last_index *= kChannelsPerPixel;
++  if (!end.IsValid() || end.ValueOrDie() > destination.size() ||
++      row_stride < row_bytes || !last_index.IsValid()) {
++    // Not a layout this code knows, or more than it can index. Nothing is
++    // handed back unnoised.
++    std::ranges::fill(destination, 0u);
++    return true;
++  }
++
++  // Gather the rows into one block, as the noise wants them.
++  std::vector<uint8_t> block(
++      CheckedPixelStorageSize(width, height, sizeof(uint8_t)));
++  base::span<uint8_t> pixels(block);
++  for (int y = 0; y < height; ++y) {
++    pixels.subspan(y * row_bytes, row_bytes)
++        .copy_from(destination.subspan(first_pixel_offset + y * row_stride,
++                                       row_bytes));
++  }
++
++  // The noise moves about one pixel in four of a flat area by one level. A
++  // WebGL page reads flat areas back for their exact values: the color under
++  // the pointer names the object drawn there. A pixel whose whole
++  // neighborhood in this read is one exact color is therefore put back as it
++  // was read; it tells a page nothing that one pixel of it would not.
++  const std::vector<uint8_t> original(block);
++  const base::span<const uint8_t> source_pixels(original);
++
++  HeliumNoisePixels(*token_hash, pixels, width, height, source_x, source_y);
++
++  for (int y = 0; y < height; ++y) {
++    for (int x = 0; x < width; ++x) {
++      auto source_pixel = GetPixelAt(x, y, width, source_pixels);
++      const uint32_t value = base::U32FromLittleEndian(source_pixel);
++      bool uniform = true;
++      for (int dy = -1; dy <= 1 && uniform; ++dy) {
++        const int sample_y = std::clamp(y + dy, 0, height - 1);
++        for (int dx = -1; dx <= 1 && uniform; ++dx) {
++          const int sample_x = std::clamp(x + dx, 0, width - 1);
++          uniform = base::U32FromLittleEndian(GetPixelAt(
++                        sample_x, sample_y, width, source_pixels)) == value;
++        }
++      }
++      if (uniform) {
++        GetPixelAt(x, y, width, pixels).copy_from(source_pixel);
++      }
++    }
++  }
++
++  for (int y = 0; y < height; ++y) {
++    destination.subspan(first_pixel_offset + y * row_stride, row_bytes)
++        .copy_from(pixels.subspan(y * row_bytes, row_bytes));
++  }
++  return true;
++}
++
+ }  // namespace blink
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -81,6 +81,7 @@
+ #include "third_party/blink/renderer/core/frame/settings.h"
+ #include "third_party/blink/renderer/core/frame/web_feature.h"
+ #include "third_party/blink/renderer/core/geometry/dom_rect_read_only.h"
++#include "third_party/blink/renderer/core/helium_noise/canvas_noising_helper.h"
+ #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_host.h"
+ #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+ #include "third_party/blink/renderer/core/html/canvas/image_data.h"
+@@ -5376,6 +5377,39 @@
+     }
+     ContextGL()->ReadPixels(x, y, width, height, format, type, data);
+   }
++
++  // Beryllium: what a page reads back from WebGL carries the canvas noise of
++  // its site, as getImageData() does. Without it readPixels() returned the
++  // exact pixels of a WebGL scene, and of any 2D canvas the page had made a
++  // texture of. Four bytes a pixel is the read every WebGL context offers
++  // and the one fingerprinting scripts make. Reads in other formats, and
++  // reads into a buffer object, are not noised.
++  if (format == GL_RGBA && type == GL_UNSIGNED_BYTE && width > 0 &&
++      height > 0) {
++    // Where the pack parameters put the pixels: a row holds |row_length|
++    // pixels if that is set and |width| if not, padded to the alignment, and
++    // skipped rows and pixels come before the first pixel read.
++    const WebGLImageConversion::PixelStoreParams params =
++        GetPackPixelStoreParams();
++    base::CheckedNumeric<size_t> row_stride =
++        params.row_length > 0 ? params.row_length : width;
++    row_stride *= 4;
++    row_stride += params.alignment - 1;
++    row_stride /= params.alignment;
++    row_stride *= params.alignment;
++    base::CheckedNumeric<size_t> first_pixel = row_stride;
++    first_pixel *= params.skip_rows;
++    base::CheckedNumeric<size_t> skipped_pixels = params.skip_pixels;
++    skipped_pixels *= 4;
++    first_pixel += skipped_pixels;
++    // A layout that does not compute gets offsets no buffer holds, and the
++    // helper then hands back zeros.
++    CanvasNoisingHelper::MaybeNoiseWebGLReadback(
++        Host()->GetTopExecutionContext(),
++        pixels->ByteSpanMaybeShared().subspan(offset_in_bytes.ValueOrDie()),
++        first_pixel.ValueOrDefault(SIZE_MAX),
++        row_stride.ValueOrDefault(SIZE_MAX), width, height, x, y);
++  }
+ }
+ 
+ void WebGLRenderingContextBase::RenderbufferStorageImpl(

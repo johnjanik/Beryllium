@@ -1,0 +1,59 @@
+Beryllium: a canvas snapshot carries the noise getImageData() carries
+
+Purpose: Helium noises a canvas readback with one routine in two kinds of
+  place (helium/core/noise/canvas.patch). getImageData() hands it an
+  ImageData, whose bytes are red, green, blue, alpha. toDataURL(), toBlob()
+  and OffscreenCanvas convertToBlob() hand it a snapshot, read back in the
+  snapshot's own colour type where that is one the routine accepts, and it
+  accepts blue, green, red, alpha as it stands. The routine hashes a pixel
+  as its four bytes and numbers its channels by byte, so on a snapshot in
+  that order the hash took blue for the pixel's low byte and "channel 0"
+  was blue. One canvas, read on one site in one session, came back with
+  two different noises: for a grey fill the same pixels with the step on
+  the other of red and blue, for any other content other pixels and other
+  steps altogether. A page holding two differently noised copies of an
+  image knows more about the image than either copy says, and "the same
+  within a session" did not hold across the two calls.
+  Measured with the battery (freebsd/privacy/noise-hash/README.md, 11
+  November 2026): on Beryllium 0.20.3.17 on FreeBSD the snapshot of a grey
+  fill was the pixels of getImageData() with red and blue exchanged in 30
+  readbacks of 30, and equal to them only where the step fell on green (10
+  of 30). The same on Helium 0.21.2.1 on macOS and Fedora, where the
+  snapshot of a textured image was explained by the same five token bits
+  once red and blue were exchanged (60 of 60).
+  The change: MaybeNoiseSnapshot() reads a blue, green, red snapshot back
+  as red, green, blue, as it already does for every colour type the
+  routine does not accept. What is encoded afterwards takes either order.
+Stage: 4 (Beryllium series). Depends on helium/core/noise/canvas.patch,
+  which creates the file.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not
+  compiled. The eight lines use only names the function uses already
+  (color_type, kBGRA_8888_SkColorType, kRGBA_8888_SkColorType). First
+  build: 0.20.3.18.
+Test: freebsd/privacy/noise-hash/battery. The rows "toDataURL gives the
+  same pixels as getImageData", the same for toBlob and convertToBlob, and
+  "Textured image through toDataURL gives the pixels of getImageData" read
+  10, 10, 10 and 0 of 30 on 0.20.3.17 and must read 30 of 30. The
+  battery's self-test runs the same rows against stand-in noise that
+  behaves as this patch intends. Feature matrix row P-FPR-04.
+security-review: not required (changes the byte order a readback is taken
+  in; no new input, no new state)
+
+--- a/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.cc
++++ b/third_party/blink/renderer/core/helium_noise/canvas_noising_helper.cc
+@@ -568,6 +568,14 @@
+   if (!IsSupportedNoisingColorType(color_type)) {
+     color_type = kRGBA_8888_SkColorType;
+   }
++  // Beryllium: a blue, green, red snapshot is read back as red, green, blue,
++  // the order of ImageData. The noise hashes a pixel as its four bytes and
++  // numbers its channels by byte, so on a snapshot in the other order it
++  // took blue for red, and toDataURL(), toBlob() and convertToBlob() returned
++  // other noise than getImageData() did for the same canvas.
++  if (color_type == kBGRA_8888_SkColorType) {
++    color_type = kRGBA_8888_SkColorType;
++  }
+   auto info = SkImageInfo::Make(
+       snapshot->GetSize().width(), snapshot->GetSize().height(), color_type,
+       kUnpremul_SkAlphaType, snapshot->GetColorSpace().ToSkColorSpace());

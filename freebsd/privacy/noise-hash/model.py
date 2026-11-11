@@ -152,6 +152,30 @@ def noise_pixels(token, pixels, width, height, x_offset=0, y_offset=0, finalize=
     return out
 
 
+def spare_uniform(before, after, width, height):
+    """Beryllium's WebGL readback (patches/privacy/
+    beryllium-noise-webgl-readpixels.patch): a pixel whose 3 x 3
+    neighbourhood in the read, clamped at its edges, is one exact colour
+    is put back as it was read. before, after: lists of (r, g, b, a)."""
+    out = list(after)
+    for y in range(height):
+        for x in range(width):
+            pixel = before[x + y * width]
+            if all(before[min(max(x + dx, 0), width - 1)
+                          + min(max(y + dy, 0), height - 1) * width] == pixel
+                   for dy in (-1, 0, 1) for dx in (-1, 0, 1)):
+                out[x + y * width] = pixel
+    return out
+
+
+def webgl_readback(token, pixels, width, height, x=0, y=0, finalize=True):
+    """What readPixels(x, y, width, height, RGBA, UNSIGNED_BYTE) hands a
+    page with that patch: the canvas noise anchored to the framebuffer,
+    uniform neighbourhoods spared. Rows as WebGL gives them, bottom first."""
+    noised = noise_pixels(token, pixels, width, height, x, y, finalize=finalize)
+    return spare_uniform(pixels, noised, width, height)
+
+
 def changed(before, after, width):
     """[(x, y, dr, dg, db, da)] for every pixel that differs."""
     found = []

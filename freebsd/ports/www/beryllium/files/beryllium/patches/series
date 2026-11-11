@@ -18,4 +18,6 @@ security/beryllium-renderer-tracing-after-lockdown.patch
 security/beryllium-sender-side-rights.patch
 privacy/beryllium-services-off-by-default.patch
 privacy/beryllium-noise-hash-whole-token.patch
+privacy/beryllium-noise-snapshot-channel-order.patch
+privacy/beryllium-noise-webgl-readpixels.patch
 ui/beryllium-toolbar-buttons-zero-height.patch

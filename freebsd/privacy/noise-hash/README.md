@@ -226,8 +226,9 @@ carries Helium 0.20.3's canvas code with one change, to the hash.
 - **Everything under "What else the battery found" is in Beryllium too.**
   A canvas reads back exact through a WebGL texture and through a video
   frame, `readPixels` of a WebGL canvas carries no noise, and a snapshot
-  is noised with red and blue exchanged. None of that is changed in
-  Beryllium yet.
+  is noised with red and blue exchanged. Two patches for build 0.20.3.18
+  answer the snapshot and the WebGL read ("Beryllium's changes" below);
+  0.20.3.17, measured here, has neither.
 
 ## What was not measured
 
@@ -427,7 +428,9 @@ What each site is asked, and what Helium's hash should answer:
 | `toDataURL`, `toBlob`, `convertToBlob` | the pixels of `getImageData` with red and blue exchanged (the same pixels only when the step is on green); the PNG is decoded in the page, because drawing it back would be noised again |
 | `OffscreenCanvas` | the same pixels as a canvas element |
 | The textured image through `toDataURL` | explained by the same five bits once red and blue are exchanged |
-| The textured canvas copied into a WebGL texture, and into a video frame | recorded: exact, or noised |
+| The textured canvas copied into a WebGL texture, and into a video frame | recorded: exact, or noised, and whether the noise is `getImageData`'s |
+| WebGL reads of flat colour: one pixel, and 3 by 3 | recorded: exact or not. A page that picks objects by colour needs them exact |
+| The textured canvas through WebGL one pixel at a time | recorded: exact or not |
 | WebGL | recorded: whether `readPixels` is noised, and whether `toDataURL` of a WebGL canvas changes one of the four sets |
 | A textured image of known pixels | exactly one value of the token's low five bits accounts for the sign of every step, and its two low bits are the fill's |
 | An image part flat, part gradient, part textured | every pixel behaves as those five bits predict |
@@ -451,11 +454,61 @@ battery was refusing a file it does not serve. The runs were unaffected;
 the battery no longer prints it, and it now records what else a browser
 asks it for.
 
-## Beryllium's change
+## Beryllium's changes
+
+Three patches, public in this repository.
 
 `patches/privacy/beryllium-noise-hash-whole-token.patch`: the state goes
 through SplitMix64's finalizer before each draw, so every draw depends on
-the whole token. Released in 0.20.3.17 and public in this repository.
+the whole token. Released in 0.20.3.17 and measured above.
+
+`patches/privacy/beryllium-noise-snapshot-channel-order.patch`, written
+11 November 2026 for 0.20.3.18: a blue, green, red snapshot is read back
+as red, green, blue before it is noised, so `toDataURL`, `toBlob` and
+`convertToBlob` carry the noise `getImageData` carries. Eight lines. Not
+yet built.
+
+`patches/privacy/beryllium-noise-webgl-readpixels.patch`, written the
+same day for 0.20.3.18: `readPixels` into an array, in the format every
+WebGL context offers (four bytes a pixel), gets the site's canvas noise,
+anchored to the framebuffer. That covers a WebGL scene read back, and a
+2D canvas read through a texture, which then carries exactly the noise
+`getImageData` gives it. Not yet built in the tree; its new function was
+compiled outside it against Chromium's own headers and agrees with
+`model.py` on 240 cases.
+
+It leaves one kind of pixel alone: one whose whole 3 by 3 neighbourhood
+in the read is one exact colour. WebGL pages read flat colour back for
+exact values (the colour under the pointer names the object drawn
+there), and Helium's noise changes one such pixel in four. Tor Browser's
+protection of `readPixels` broke pages that way. A flat area tells a
+page nothing one pixel of it would not.
+
+What that patch leaves open, and the battery will keep showing:
+
+- a read of one pixel at a time, which is exact for the reason above and
+  costs a page one call a pixel;
+- reads in other formats (floating point, integer);
+- WebGL 2 `readPixels` into a buffer object;
+- video frames, `captureStream`, `createImageBitmap`.
+
+So after 0.20.3.18 the scripts that hash a WebGL scene with `readPixels`,
+or a canvas with `toDataURL`, get noise, and one noise. A page written to
+get round Beryllium's noise still can. Feature matrix row P-FPR-07 stays
+open for that.
+
+What the battery should show on 0.20.3.18, from a rehearsal against the
+stand-in noise (`battery run --simulate fixed`):
+
+| Row | 0.20.3.17, measured | 0.20.3.18, expected |
+|---|---|---|
+| `toDataURL`, `toBlob`, `convertToBlob` give the pixels of `getImageData` | 10 of 30 | 30 of 30 |
+| Textured image through `toDataURL` gives the pixels of `getImageData` | 0 of 30 | 30 of 30 |
+| A canvas copied into a WebGL texture reads back exact | 30 of 30 | 0 of 30 |
+| or reads back with the noise of `getImageData` | 0 of 30 | 30 of 30 |
+| WebGL: single pixels and 3 by 3 blocks of a flat colour read back exact | not asked | 30 of 30 |
+| WebGL: read one pixel at a time, a canvas comes back exact | not asked | 30 of 30 (the open route) |
+| A canvas copied into a video frame reads back exact | 30 of 30 | 30 of 30 (still open) |
 
 ## Reporting
 

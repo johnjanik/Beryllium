@@ -1209,7 +1209,7 @@ as a defect with its cause. README item 7 goes.
 
 | Build | Carries | Proves |
 |---|---|---|
-| 0.20.3.18 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices |
+| 0.20.3.18 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07) | attestation; the sender alone suffices; the noise battery's rows for snapshots and WebGL |
 | 0.20.3.19 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
 | 0.20.3.20 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
