@@ -14,6 +14,10 @@ through any of them: copied into a WebGL texture or into a video frame,
 the canvas came back with every pixel exact, 60 times of 60. That and a
 second inconsistency are under "What else the battery found".
 
+Beryllium 0.20.3.17 was measured the same evening on FreeBSD. Its change
+to the hash holds: 30 readbacks, 30 different sets of pixels, none of the
+four. The ways around the noise are open on it exactly as on Helium.
+
 ## The finding
 
 Helium gives each site a 64-bit noise token per profile session and
@@ -191,6 +195,40 @@ on each, with 18 and 16 pairs of 75 sharing their pixels. Over the four
 runs: 120 readbacks, every one of them one of the four sets, and 67 pairs
 of sites of 300 with the same pixels.
 
+## Measured on Beryllium
+
+The owner ran the same battery against Beryllium 0.20.3.17 (Chromium
+156.0.8078.79) on FreeBSD 16.0-CURRENT, amd64, that evening: one control
+profile and five new profiles of six sites, thirty readbacks. Beryllium
+carries Helium 0.20.3's canvas code with one change, to the hash.
+
+| | Helium 0.21.2.1, macOS and Fedora | Beryllium 0.20.3.17, FreeBSD |
+|---|---|---|
+| Control, noise off: every readback exact | 6 of 6 on each | 6 of 6 |
+| Readbacks with noise | 30 of 30 on each | 30 of 30 |
+| Changed pixels are one of the four sets | 30 of 30 on each | 0 of 30 |
+| Different sets of changed pixels among the readbacks | 4 | 30 |
+| Counts of changed pixels | 982, 998, 1031, 1085 | 945 to 1065, mean 1015 |
+| Textured image: some value of five low bits explains every step | 30 of 30 on each | 0 of 30 |
+| Pairs of sites in one profile with the same pixels | 18 and 16 of 75 | 0 of 75 |
+| The same canvas read twice gives the same pixels | 30 of 30 on each | 30 of 30 |
+| Snapshots are `getImageData` with red and blue exchanged | 30 of 30 on each | 30 of 30 |
+| WebGL `readPixels` is noised | 0 of 30 on each | 0 of 30 |
+| Canvas copied into a WebGL texture: every pixel exact | 30 of 30 on each | 30 of 30 |
+| Canvas copied into a video frame: every pixel exact | 30 of 30 on each | 30 of 30 |
+
+- **The change to the hash does what it was written for,** by a test that
+  was not written for it. Thirty readbacks gave thirty different sets of
+  pixels. Their counts spread as independent choices with chance one in
+  four would (mean 1015 and standard deviation 27, against 1024 and 28).
+  For the textured image no value of five bits comes near: the closest
+  gets about half of some 4,600 signs wrong, which is what guessing gets.
+- **Everything under "What else the battery found" is in Beryllium too.**
+  A canvas reads back exact through a WebGL texture and through a video
+  frame, `readPixels` of a WebGL canvas carries no noise, and a snapshot
+  is noised with red and blue exchanged. None of that is changed in
+  Beryllium yet.
+
 ## What was not measured
 
 - Canvases with floating-point pixels, and canvases drawn by the GPU
@@ -199,14 +237,14 @@ of sites of 300 with the same pixels.
 - A real fingerprinting script, and whether the hash alone recovers a
   stable fingerprint from one.
 - Other ways out of a canvas: `captureStream`, `createImageBitmap`,
-  WebGPU. Two were tried and both were open; these were not tried.
-- Beryllium. It carries the same canvas code apart from the hash, so the
-  next section should hold there, and nobody has run the battery on it.
+  WebGPU, and in WebGL 2 a read into a buffer. Two routes were tried and
+  both were open; these were not tried.
 
 ## What else the battery found
 
 None of this is about the hash, and Beryllium's change to the hash
-touches none of it.
+touches none of it: the same measurements on Beryllium are in the section
+above.
 
 ### The noise is applied at four calls, and a canvas can be read around them
 
