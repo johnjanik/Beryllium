@@ -299,12 +299,11 @@ set it, and the launcher will not start the browser without it.
   cause is not known yet. The suite uses a new, empty profile driven over
   DevTools, which YouTube may refuse where it would serve a person's
   browser; YouTube was last confirmed playing, by hand, on 0.20.3.1. One
-  thing can
-  break YouTube as a build ages: the bundled uBlock Origin gets its filter
-  lists through the online services, and with those off (the default) its
-  lists stay as old as the build. The test now reports YouTube's own
-  answer, the failed requests and the console errors when a video does
-  not play.
+  thing can break YouTube as a build ages: the bundled uBlock Origin gets
+  its filter lists through the online services, and with those off (the
+  default) its lists stay as old as the build. The test now reports
+  YouTube's own answer, the failed requests and the console errors when a
+  video does not play.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
   compositor announces as its own. `--render-node-override` names another,
   and that works only if the compositor can import that GPU's buffers. On
