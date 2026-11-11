@@ -6,6 +6,8 @@ each: where it stands, what the code says, the design, the work in order,
 how it is tested, how it is attacked, and when it counts as done.
 **Status of this document:** a plan. Nothing in it is built. Where a
 statement rests on source reading, a report or a trial, it says which.
+**Decisions:** the owner decided the seven open questions on 11 November
+2026; they are recorded in section 8.3 and in the sections they change.
 
 How the facts were gathered:
 
@@ -28,13 +30,13 @@ work is grouped by build in section 8.
 
 | # | Item | Matrix rows | Needs a build | Depends on | Owner decision |
 |---|---|---|---|---|---|
-| 1 | Sender-side cut on every link to a confined renderer | S-IPC-01, S-IPC-03 | yes | 0.1 | device descriptors to renderers: never (recommended) |
+| 1 | Sender-side cut on every link to a confined renderer | S-IPC-01, S-IPC-03 | yes | 0.1 | decided: renderers never hold a device descriptor |
 | 2 | The kernel's word on each renderer, and `beryllium://sandbox` | S-STA-01, S-STA-02, S-STA-03 | yes | none | none |
-| 3 | On by default, fail closed | S-REN-09, S-REN-10, S-REN-02, S-HRD-01, S-HRD-03, S-KRN-03 | yes, several | 1, 2, 0.1 | one package or two; when the escape hatch goes |
+| 3 | On by default, fail closed | S-REN-09, S-REN-10, S-REN-02, S-HRD-01, S-HRD-03, S-KRN-03 | yes, several | 1, 2, 0.1 | decided: one package; 100 clean runs in a row |
 | 4 | The other processes | S-PRC-01 to S-PRC-08, S-DSP-01 | yes, later | 3 for the pattern | which processes get a statement instead of a policy |
-| 5 | Signed releases | B-PKG-07, R-REL-01 | no | none | the key: hardware token, backup, where the fingerprint is published |
-| 6 | Assurance | R-TST-06, S-SUP-01, S-SUP-02, S-SUP-03, S-SUP-05 | spikes | none | where the test machine runs |
-| 7 | WebGPU | F-GPU-02, F-GPU-03 | small | none | off deliberately (recommended) or pursued |
+| 5 | Signed releases | B-PKG-07, R-REL-01 | no | none | decided: a key file first, a hardware token to follow |
+| 6 | Assurance | R-TST-06, S-SUP-01, S-SUP-02, S-SUP-03, S-SUP-05 | spikes | none | decided: the owner's machine, at night |
+| 7 | WebGPU | F-GPU-02, F-GPU-03 | small | none | decided: off by default, the opt-in kept, not pursued now |
 
 ## 0. Tools the plans share
 
@@ -188,8 +190,10 @@ than invent a `kGpuBuffer` kind with an ioctl allowlist for buffers
 nobody has measured, the lockdown turns GPU memory buffer video frames
 off on every driver, as Beryllium already does for NVIDIA. Cost: one copy
 per video frame on Mesa. This keeps the renderer policy at seven kinds
-and removes the largest unknown. It is an owner decision because it
-trades performance on hardware the project cannot test yet.
+and removes the largest unknown. It trades performance on hardware the
+project cannot test yet, so it was the owner's to decide. **Decided, 11
+November 2026: never.** `freebsd/tools/gpu-probe` says whether a machine
+would use Mesa under FreeBSD, to find one to measure the cost on.
 
 **The inventory becomes a committed table.** The survey already names
 the process at the other end of every socket a renderer holds. A new
@@ -449,12 +453,51 @@ default changes.
 and by the browser's check in this session, so a user who sees dead tabs
 can say why in a bug report.
 
-**P7. "Every run" has a number.** Proposed: on the release candidate,
-twenty consecutive full lockdown runs across at least two boots with no
-failure; one trap-mode run with no refused call; the `redteam` group
-passing; the standalone jobs passing on 14, 15 and 16; the hand checklist
-of P5 complete. The owner sets the number, and it is written down before
-the runs begin.
+**P7. "Every run" has a number.** The owner left the number to this plan
+on 11 November 2026, and it is fixed here before the runs begin: on the
+release candidate, 100 consecutive whole-suite lockdown runs with nothing
+failing, on one package version, over at least 3 boots, at least 20 of
+them with windows open (a headless run skips the toolbar tests). Then:
+one trap-mode run with no refused call; the `redteam` group passing; the
+standalone jobs passing on 14, 15 and 16; the hand checklist of P5
+complete.
+
+Why 100. A whole run takes about three minutes (189 seconds in the
+report of 10 November), so 100 runs are a little over five hours: one
+night. With no failure in 100 runs, the chance that a run fails is below
+about 3 in 100 at the usual 95% confidence; twenty runs would only have
+shown it to be below about 1 in 7. The boots are there because some
+state is set once per boot (device numbering, loaded modules, the
+display configuration), and the windowed runs because the toolbar tests
+and real compositing only happen with a window.
+
+The rules of the count, so that nothing is decided after the fact:
+
+- A run counts if it is the whole offline suite with `--lockdown`. A run
+  of some groups, or without the lockdown, is recorded and changes
+  nothing.
+- Any failure or error in a counting run sets the count back to zero. So
+  does a run that hangs or dies. The cause is found before counting
+  resumes; if the fault is in a test, the test is fixed and the count
+  still starts again.
+- A new package version starts its own count.
+- A run the owner stops by hand is not recorded.
+
+The suite keeps the count itself: every run adds a line to a ledger
+(`~/beryllium-test-results/ledger.jsonl`), `run --lockdown --repeat 100`
+makes the runs one after another, each a process of its own so that a
+hung run does not end the night, and `run --tally` prints the count, the
+boots and what is still missing. A test holds the numbers in the suite to
+the numbers in this paragraph.
+
+*Not yet verified:* that a run with windows completes while the screen
+is locked or asleep. Until that has been tried, a night of windowed runs
+wants the screen lock off.
+
+Once the kernel check of item 2 is in, a renderer that fails to confine
+is ended, so a rare failure shows as a dead tab and not as an unconfined
+page. The count then measures reliability more than safety, and what the
+suite does not exercise (P5) matters more than a larger number.
 
 ### 3.3 The switch itself, in two steps
 
@@ -467,14 +510,35 @@ field data is bug reports, and a user who cannot get a page to load
 needs a way to keep working while reporting it. The README's sandbox
 table changes to "Renderers: confined".
 
-**Step 2: no way back in the production package.** After a stated
-number of releases without a lockdown regression, the production package
-ignores the switches that undo the sandbox (S-REN-10, the list in
-plan/06 section 3.4) and `beryllium-devel` keeps them. This needs the
-second package, which doubles the owner's build time per release. If
-that is not acceptable, the alternative is a single package whose
-escape hatches exist only when a file an administrator must create is
-present; the decision is the owner's.
+**Step 2: no way back without the administrator.** **Decided, 11
+November 2026: one package.** There is no `beryllium-devel`; a second
+package would double the owner's build time per release and would mean
+testing one binary and shipping another. After a stated number of
+releases without a lockdown regression, the switches that undo the
+sandbox (S-REN-10, the list in plan/06 section 3.4) work only when a file
+that an administrator must create is present, and are ignored otherwise.
+The owner's reasoning: BSD users administer their own machines.
+
+The gate, so that it is worth having:
+
+- one fixed path under `/usr/local/etc/beryllium/`, compiled in, never
+  taken from the environment or the command line;
+- honoured only if the file and every directory above it are owned by
+  root and writable by nobody else, checked with `fstat` on an opened
+  descriptor so the check and the use are the same file;
+- read once, by the browser process, at start; children are told the
+  answer and do not look for themselves;
+- when it is in effect, a line on stderr and a line on
+  `beryllium://sandbox` say so, with each switch that was honoured;
+- the suite's deepest tests (the debugger, the survey, the thread probe)
+  need it, so the owner's test machine has the file and every report
+  says so in its header.
+
+Tests: each switch on the list is ignored without the file and honoured
+with it; the file is ignored when it is a symbolic link, when it is
+writable by its group or by others, when it is owned by the user, and
+when a directory above it is; and a renderer started with the file
+absent and `--no-sandbox` given is confined all the same.
 
 ### 3.4 Tests
 
@@ -494,7 +558,8 @@ test.
 
 | Route | Must hold |
 |---|---|
-| `--no-sandbox`: *source:* `RendererMain` skips `EnableSandbox()` entirely when the switch is present, so the renderer never locks down | item 2's check ends the renderer, because the check does not look at the switch; step 2 ignores the switch |
+| `--no-sandbox`: *source:* `RendererMain` skips `EnableSandbox()` entirely when the switch is present, so the renderer never locks down | item 2's check ends the renderer, because the check does not look at the switch; step 2 ignores the switch unless the administrator's file is present |
+| The administrator's file forged by the user: a symbolic link, a file in a directory the user owns, a path given through the environment | ignored; the tests of 3.3 try each |
 | `--single-process`, `--in-process-gpu`: the renderer or the GPU code runs inside the browser process | refused at start in production; in step 1, the page and stderr say so |
 | The feature turned off somewhere other than the command line: a flags page entry, a field-trial override, a policy, an environment variable | enumerate each mechanism the build has and test each; none turns the lockdown off silently |
 | `--renderer-cmd-prefix`, `--utility-cmd-prefix`: a wrapper that changes the child's command line (this is also the suite's own tool in 2.5) | the browser's check catches the result; step 2 ignores the switches |
@@ -739,6 +804,31 @@ special. Two tokens, both in `allowed_signers` from the first signed
 release, one kept somewhere else. A revocation file in the repository,
 consulted by the installer (`-r`). Validity windows on each line.
 
+**Decided, 11 November 2026: a key file on the build machine first, a
+hardware token to follow** (the owner intends a YubiKey 5C NFC). What
+the first stage does and does not give:
+
+- It protects against a release whose assets were replaced by someone
+  who got at the GitHub account or a token for it and nothing else.
+- It does not protect against code running as the owner on the build
+  machine, which can read the key file and wait for the passphrase. The
+  GitHub token is on the same machine, so such code could publish too.
+- So the key file has a passphrase, is not kept loaded in an agent, and
+  is readable by the owner's account alone. The nightly test job (6.1)
+  runs as another user that cannot read it, because that job builds and
+  runs whatever is on main with nobody watching.
+- The file key gets a short validity window in `allowed_signers` (to the
+  end of the quarter in which the token is expected), so that it stops
+  being accepted without anyone having to remember to remove it.
+
+When the token arrives: generate `ed25519-sk` keys on two tokens, with
+`-O verify-required` so each signature needs the PIN and a touch; add
+both lines to `allowed_signers`; sign one release with both the old and
+the new key listed; then put the file key in the revocation file. FreeBSD's
+own OpenSSH has had these key types since November 2021; the user needs
+access to the USB device, for which the `security/u2f-devd` package
+installs the rules. *Not yet verified* on the owner's 16.0-CURRENT.
+
 **Transition.** From the first signed release, `latest` requires a
 signature. An older tag installs only with `--release TAG
 --allow-unsigned`, which says what it is doing. If `ssh-keygen` is
@@ -839,7 +929,32 @@ runs the suite headless, and pushes `report.txt` and the survey to a
 `reports` branch, named by commit. Then the standalone jobs in CI (0.2),
 which need no machine. A dedicated machine when one exists.
 
-The test machine never holds the release key (item 5).
+**Decided, 11 November 2026: the owner's machine, at night.** If the
+owner's Lenovo turns out to use Mesa under FreeBSD, it builds and tests
+as well, which would give the project its first Mesa results.
+`freebsd/tools/gpu-probe` answers that for any machine it is run on, or
+for a list of hosts over ssh.
+
+The release key and the test job now share a machine, which the first
+draft of this plan ruled out. The separation is by user until the
+hardware token arrives: the job runs as an account that cannot read the
+key file (5.2), builds main only, and never a pull request.
+
+Until the job exists, the repeat mode of the suite (3.2, P7) is the
+night's work: it needs no build.
+
+**Other architectures.** The owner has a StarFive VisionFive 2 (RISC-V,
+JH7110). It is not a target, for reasons outside this project. FreeBSD
+on that board was reported in 2025 to boot with no video and no USB, and
+its GPU (Imagination BXE-4-32) has no FreeBSD driver, so there is nothing
+for a browser to draw on. FreeBSD's Chromium port does not build for
+riscv64; Chromium itself does on Linux, where distributions carry
+patches for it. The board has 8 GB of memory at most, so the build would
+be a cross build on amd64, and a new FreeBSD architecture for Chromium is
+a port of its own (V8's code generator, the unwinder, the media
+libraries' configuration, Rust's tier 3 target). If a second
+architecture is wanted, aarch64 is the one the port already supports.
+`gpu-probe` run on the board says what its current system uses.
 
 **Tests of the tester.** The job fails loudly: a build that fails, a
 suite that does not start, a report that is not pushed each produce a
@@ -1030,6 +1145,12 @@ it; revisit when the GPU process has a policy.** Today's state is the
 worst of both: the status page says WebGPU is enabled, pages are told
 there is no adapter, and nobody chose either.
 
+**Decided, 11 November 2026: off by default, the opt-in switch kept, and
+making WebGPU work is not pursued now.** Of the work plan below, steps 1
+(the probes, no build) and 2 (the default) and step 3 (identifying the
+GPU, which matters for the blocklist with or without WebGPU) stand; step
+4 waits.
+
 ### 7.3 Work plan
 
 1. *No build.* The suite's rendering group records, in fresh browsers:
@@ -1097,18 +1218,33 @@ as a defect with its cause. README item 7 goes.
 A build that fails to compile costs a build. Each row keeps its patches
 small and of a kind already compiled once in this tree where possible.
 
-### 8.3 Decisions that are the owner's
+### 8.3 The owner's decisions, 11 November 2026
 
-1. Device descriptors to renderers under the lockdown: never
-   (recommended), at the cost of a copy per video frame on Mesa.
-2. One package or two, and when the escape hatch goes (3.3).
-3. The numbers in P7.
-4. The signing key: hardware token, the backup, where the fingerprint is
-   published (5.2).
-5. Where the test job runs (6.1).
-6. WebGPU: off by default (recommended).
-7. Which findings in the port's patches are reported to the port, and
-   the Helium noise finding to Helium.
+1. **Device descriptors to renderers under the lockdown: never**, at the
+   cost of a copy per video frame on Mesa (1.2). A Mesa machine is to be
+   found with `freebsd/tools/gpu-probe`.
+2. **One package.** The switches that undo the sandbox come to need a
+   file only an administrator can create (3.3, step 2). The way back of
+   step 1 stays for a few releases after the default changes.
+3. **The number was left to this plan:** 100 consecutive whole-suite
+   lockdown runs, over at least 3 boots, at least 20 of them with windows
+   (3.2, P7). Runs are made overnight with `run --lockdown --repeat`.
+4. **The signing key starts as a file on the build machine;** a hardware
+   token follows (5.2). Where the fingerprint is published outside
+   GitHub is still open.
+5. **The test job runs on the owner's machine, at night,** and on the
+   owner's Lenovo too if that turns out to be a Mesa machine (6.1).
+6. **WebGPU off by default, the opt-in kept,** not pursued now (7.2).
+7. **The Helium noise finding is to be reported to Helium, by the owner,**
+   once as much evidence as possible has been collected; the evidence is
+   in `freebsd/privacy/noise-hash/`. Helium's rules (its
+   `CONTRIBUTING.md` and `AGENTS.md`, read on 11 November 2026) forbid
+   issue or pull request text generated by AI and code contributions
+   written by AI. So the report is written by the owner, in the owner's
+   words, from evidence the owner has run and checked, and no patch is
+   offered to Helium; Beryllium's own fix is public for anyone to read.
+   Which of the port's defects go to the port's maintainers is still
+   open.
 
 ### 8.4 What this plan does not establish
 

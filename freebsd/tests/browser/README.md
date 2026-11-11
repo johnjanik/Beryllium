@@ -53,6 +53,23 @@ it they are skipped. Useful options:
   processes in capability mode cannot write core dumps, so run the
   `capsicum` survey with the same switch to see which calls they are
   refused.
+- `run --lockdown --repeat 100`: that many runs one after another, each a
+  process of its own with its own directory (`run-001`, ...) under the
+  results directory, so a run that hangs (thirty minutes without ending)
+  or dies is stopped with its browsers, recorded, and the next one
+  starts. Every run, repeated or not, adds one line to a ledger
+  (`~/beryllium-test-results/ledger.jsonl`, or `--ledger FILE`): when,
+  which boot, the package version, lockdown or not, whole suite or some
+  groups, the result and what did not pass. `run --tally` reads it and
+  says, per package version, how many whole-suite lockdown runs in a row
+  were clean, over how many boots, and what is still missing from the bar
+  for turning the lockdown on by default (100 in a row, 3 boots, 20 with
+  windows; plan/18 section 3.2). A failure, a hang or a death sets the
+  count back to zero; runs of some groups or without the lockdown are
+  recorded and do not count; a run you stop with Ctrl-C is not recorded.
+  A whole run takes about three minutes. Not yet tried: runs with windows
+  while the screen is locked or asleep; turn the screen lock off for the
+  night or pass `--headless` (which skips the toolbar tests).
 - `run media videodiag --diagnose`: replay video under switches that each
   turn off one part of the video path (GPU, hardware decode, decode
   threads, Wayland...) and record which avoid a crash

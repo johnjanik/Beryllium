@@ -1,0 +1,369 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# gpu-probe: say which graphics driver a machine uses, and whether FreeBSD
+# would drive its GPU with Mesa.
+#
+# Beryllium has been tested with NVIDIA's own driver only. The Intel and AMD
+# path (Mesa) has never been run (plan/18 sections 1 and 6.1). This finds a
+# machine to run it on. It reads; it changes nothing and installs nothing.
+#
+#   sh gpu-probe                    this machine
+#   sh gpu-probe host [host ...]    each host over ssh; the script travels on
+#                                   stdin and nothing is left on the host
+#   sh gpu-probe --vendor 0x8086    what a PCI vendor id means under FreeBSD
+#
+# Runs on FreeBSD, Linux and macOS with nothing but the base system. On
+# Windows, ask PowerShell for the id and hand it to --vendor:
+#   Get-CimInstance Win32_VideoController | Format-List Name,PNPDeviceID
+# PNPDeviceID holds VEN_8086 for Intel, VEN_1002 for AMD, VEN_10DE for NVIDIA.
+#
+# GPU_PROBE_ROOT, if set, is put in front of /sys and /dev (for the tests).
+
+set -u
+
+ROOT=${GPU_PROBE_ROOT:-}
+
+say() { printf '%s\n' "$*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+lower() { printf '%s' "$1" | tr 'ABCDEF' 'abcdef'; }
+
+usage() {
+	sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+vendor_name() {
+	case "$1" in
+	8086) say "Intel" ;;
+	1002) say "AMD" ;;
+	10de) say "NVIDIA" ;;
+	106b) say "Apple" ;;
+	15ad) say "VMware (a virtual machine)" ;;
+	1af4) say "virtio (a virtual machine)" ;;
+	1234 | 1b36) say "QEMU (a virtual machine)" ;;
+	1a03) say "ASPEED (a server's management chip)" ;;
+	102b) say "Matrox (a server's management chip)" ;;
+	*) say "vendor 0x$1" ;;
+	esac
+}
+
+# What FreeBSD would drive a PCI vendor's GPU with: "class|words", where
+# class is mesa, nvidia, none or unknown.
+freebsd_path() {
+	case "$1" in
+	8086) say "mesa|Mesa, with the i915kms module from drm-kmod" ;;
+	1002) say "mesa|Mesa, with the amdgpu or radeonkms module from drm-kmod" ;;
+	10de) say "nvidia|NVIDIA's own driver (x11/nvidia-driver). FreeBSD has no Mesa driver for NVIDIA" ;;
+	15ad) say "mesa|Mesa, with the vmwgfx module from drm-kmod, in a VMware guest" ;;
+	106b) say "none|no FreeBSD graphics driver for Apple's GPUs" ;;
+	1af4 | 1234 | 1b36 | 1a03 | 102b) say "none|a plain framebuffer, with no acceleration" ;;
+	*) say "unknown|not known to this script" ;;
+	esac
+}
+
+# The stack a kernel driver belongs to: mesa, nvidia, vendor (a closed driver
+# with its own libraries), display (shows a picture, draws nothing) or unknown.
+driver_class() {
+	case "$1" in
+	i915 | xe | i915kms | amdgpu | radeon | radeonkms | nouveau | vmwgfx | \
+		virtio_gpu | virtio-pci | panfrost | panthor | lima | v3d | vc4 | \
+		etnaviv | msm | asahi | powervr | tegra) say mesa ;;
+	nvidia | nvidia-drm | nvidia_drm | nvidia-modeset) say nvidia ;;
+	pvrsrvkm | mali | mali_kbase) say vendor ;;
+	simple-framebuffer | simpledrm | efifb | vesa | bochs-drm | bochs | qxl | \
+		ast | mgag200 | cirrus | starfive | verisilicon | vs-drm | none) say display ;;
+	*) say unknown ;;
+	esac
+}
+
+class_words() {
+	case "$1" in
+	mesa) say "Mesa" ;;
+	nvidia) say "NVIDIA's own driver, no Mesa" ;;
+	vendor) say "the chip maker's closed driver, no Mesa" ;;
+	display) say "no accelerated driver (software drawing, if anything)" ;;
+	*) say "a driver this script does not know" ;;
+	esac
+}
+
+# One line per display-class PCI device: vendor|address|device name
+freebsd_gpus() {
+	pciconf -lv 2>/dev/null | awk '
+		function flush() { if (id != "") print id "|" sel "|" dev; id = "" }
+		/^[a-z0-9_]+@pci/ {
+			flush()
+			if ($0 !~ /class=0x03/) next
+			sel = $1; sub(/:$/, "", sel); sub(/^[^@]*@/, "", sel)
+			if (match($0, /vendor=0x[0-9a-fA-F]+/))
+				id = substr($0, RSTART + 9, RLENGTH - 9)
+			else if (match($0, /chip=0x[0-9a-fA-F]+/))
+				id = substr($0, RSTART + RLENGTH - 4, 4)
+			dev = ""
+			next
+		}
+		id != "" && /^[ \t]+device[ \t]+=/ {
+			dev = $0; sub(/^[^=]*=[ \t]*/, "", dev); gsub(/\047/, "", dev)
+		}
+		END { flush() }'
+}
+
+linux_gpus() {
+	for d in "$ROOT"/sys/bus/pci/devices/*; do
+		[ -r "$d/class" ] || continue
+		case "$(cat "$d/class")" in 0x03*) ;; *) continue ;; esac
+		vendor=$(sed 's/^0x//' "$d/vendor" 2>/dev/null)
+		device=$(sed 's/^0x//' "$d/device" 2>/dev/null)
+		drv=none
+		[ -e "$d/driver" ] && drv=$(basename "$(readlink "$d/driver")")
+		say "$vendor|${d##*/}|device 0x$device|$drv"
+	done
+}
+
+# GPUs that are part of the processor chip and not on PCI (ARM, RISC-V):
+# driver|what the device tree calls it
+linux_platform_gpus() {
+	for c in "$ROOT"/sys/class/drm/card[0-9]*; do
+		case "${c##*/}" in *-*) continue ;; esac
+		[ -e "$c/device/driver" ] || continue
+		[ -e "$c/device/vendor" ] && continue
+		drv=$(basename "$(readlink "$c/device/driver")")
+		compat=""
+		[ -r "$c/device/of_node/compatible" ] &&
+			compat=$(tr '\000' ' ' <"$c/device/of_node/compatible")
+		say "$drv|$compat"
+	done
+}
+
+# What the graphics libraries say, where a tool is installed that can ask.
+library_report() {
+	found=""
+	if have glxinfo && [ -n "${DISPLAY:-}" ]; then
+		found=$(glxinfo -B 2>/dev/null | grep -E 'OpenGL (vendor|renderer|version) string')
+	fi
+	if [ -z "$found" ] && have eglinfo; then
+		found=$(eglinfo -B 2>/dev/null |
+			grep -E 'OpenGL( core| compatibility)?( profile)? (vendor|renderer|version)' |
+			sort -u | head -n 6)
+	fi
+	if [ -n "$found" ]; then
+		say "$found" | sed 's/^/  /'
+	else
+		say "  not asked: needs glxinfo or eglinfo (mesa-demos) and a desktop session"
+	fi
+	if have vulkaninfo; then
+		vulkaninfo --summary 2>/dev/null |
+			grep -E '^[[:space:]]*(deviceName|driverName|driverInfo)' |
+			sed 's/^[[:space:]]*/  Vulkan: /'
+	fi
+	# KDE says which GPU its compositor draws with; a browser on Wayland
+	# follows the compositor.
+	for q in qdbus6 qdbus; do
+		if ! have "$q" || [ -z "${WAYLAND_DISPLAY:-}" ]; then
+			continue
+		fi
+		"$q" org.kde.KWin /KWin supportInformation 2>/dev/null |
+			grep -E '^OpenGL (vendor|renderer) string' | sed 's/^/  KWin: /'
+		break
+	done
+}
+
+render_nodes() {
+	for n in "$ROOT"/dev/dri/renderD*; do
+		[ -e "$n" ] && printf '%s ' "${n#"$ROOT"}"
+	done
+}
+
+FOUND_MESA=0
+FOUND_NVIDIA=0
+FOUND_ANY=0
+
+# report_gpu vendor address name driver
+report_gpu() {
+	vendor=$(lower "$1")
+	path=$(freebsd_path "$vendor")
+	FOUND_ANY=1
+	case "${path%%|*}" in
+	mesa) FOUND_MESA=1 ;;
+	nvidia) FOUND_NVIDIA=1 ;;
+	esac
+	say "GPU: $(vendor_name "$vendor"), $3 (at $2)"
+	say "  driver in use here: $4 ($(class_words "$(driver_class "$4")"))"
+	say "  under FreeBSD: ${path#*|}"
+}
+
+verdict() {
+	arch=$1
+	say ""
+	if [ "$FOUND_MESA" = 1 ] && [ "$FOUND_NVIDIA" = 1 ]; then
+		say "Verdict: both. This machine has a GPU FreeBSD drives with Mesa and an"
+		say "NVIDIA GPU. Which one a browser uses follows the desktop's compositor;"
+		say "to test the Mesa path the desktop must draw with the Mesa GPU."
+	elif [ "$FOUND_MESA" = 1 ]; then
+		say "Verdict: a Mesa machine. FreeBSD would drive this GPU with Mesa."
+	elif [ "$FOUND_NVIDIA" = 1 ]; then
+		say "Verdict: not a Mesa machine. FreeBSD would use NVIDIA's own driver."
+	elif [ "$FOUND_ANY" = 1 ]; then
+		say "Verdict: not a Mesa machine under FreeBSD, as far as this script knows."
+	else
+		say "Verdict: no GPU found on PCI."
+	fi
+	case "$arch" in
+	amd64 | x86_64) ;;
+	*)
+		say "Note: this machine is $arch. Beryllium is built for amd64 only, and"
+		say "FreeBSD's Chromium port builds on amd64 and aarch64."
+		;;
+	esac
+}
+
+# On FreeBSD every GPU sits under vgapci; the driver that draws is a kernel
+# module loaded on top of it. Which of this vendor's modules is loaded?
+freebsd_driver() {
+	for want in $2; do
+		for got in $1; do
+			[ "$want" = "$got" ] && {
+				say "$want"
+				return
+			}
+		done
+	done
+	say none
+}
+
+probe_freebsd() {
+	mods=$(kldstat 2>/dev/null | awk '{ print $NF }' | sed 's/\.ko$//' |
+		grep -E '^(drm|i915kms|amdgpu|radeonkms|vmwgfx|nvidia|nvidia-modeset|nvidia-drm)$' |
+		tr '\n' ' ')
+	gpus=$(freebsd_gpus)
+	if [ -n "$gpus" ]; then
+		while IFS='|' read -r vendor addr name; do
+			case "$(lower "$vendor")" in
+			8086) drv=$(freebsd_driver "$mods" "i915kms") ;;
+			1002) drv=$(freebsd_driver "$mods" "amdgpu radeonkms") ;;
+			10de) drv=$(freebsd_driver "$mods" "nvidia nvidia-modeset") ;;
+			15ad) drv=$(freebsd_driver "$mods" "vmwgfx") ;;
+			*) drv=none ;;
+			esac
+			report_gpu "$vendor" "$addr" "${name:-unnamed}" "$drv"
+		done <<EOF
+$gpus
+EOF
+	fi
+	say "Kernel modules: $mods"
+	say "Render nodes: $(render_nodes)"
+	say "Packages:"
+	pkg query -x '%n-%v' \
+		'^(mesa-|nvidia-driver|nvidia-drm|drm-[0-9a-z-]*kmod|libglvnd|vulkan-loader|libva-)' \
+		2>/dev/null | sed 's/^/  /'
+}
+
+probe_linux() {
+	gpus=$(linux_gpus)
+	if [ -n "$gpus" ]; then
+		while IFS='|' read -r vendor addr name drv; do
+			report_gpu "$vendor" "$addr" "$name" "$drv"
+		done <<EOF
+$gpus
+EOF
+	fi
+	soc=$(linux_platform_gpus)
+	if [ -n "$soc" ]; then
+		while IFS='|' read -r drv compat; do
+			FOUND_ANY=1
+			say "GPU in the processor chip: ${compat:-unnamed}"
+			say "  driver in use here: $drv ($(class_words "$(driver_class "$drv")"))"
+			say "  under FreeBSD: no accelerated driver that this script knows of"
+		done <<EOF
+$soc
+EOF
+	fi
+	say "Render nodes: $(render_nodes)"
+}
+
+probe_darwin() {
+	info=$(system_profiler SPDisplaysDataType 2>/dev/null |
+		grep -E 'Chipset Model|Vendor' | sed 's/^ */  /')
+	say "$info"
+	say "  macOS draws with Metal; no Mesa is in use here."
+	FOUND_ANY=1
+	case "$info" in
+	*Intel* | *0x8086*) FOUND_MESA=1 ;;
+	esac
+	case "$info" in
+	*AMD* | *0x1002*) FOUND_MESA=1 ;;
+	esac
+	case "$info" in
+	*NVIDIA* | *0x10de*) FOUND_NVIDIA=1 ;;
+	esac
+}
+
+probe_here() {
+	os=$(uname -s)
+	arch=$(uname -m)
+	say "Machine: $(uname -n), $os $(uname -r), $arch"
+	say "Session: ${XDG_SESSION_TYPE:-not a desktop session}${WAYLAND_DISPLAY:+, Wayland}${DISPLAY:+, X11 display $DISPLAY}"
+	case "$os" in
+	FreeBSD) probe_freebsd ;;
+	Linux) probe_linux ;;
+	Darwin) probe_darwin ;;
+	*)
+		say "gpu-probe: $os is not a system this script knows"
+		return 1
+		;;
+	esac
+	say "Graphics libraries:"
+	library_report
+	verdict "$arch"
+}
+
+case "${1:-}" in
+-h | --help)
+	usage
+	exit 0
+	;;
+--vendor)
+	[ $# -eq 2 ] || { usage >&2; exit 2; }
+	id=$(lower "$2")
+	id=${id#0x}
+	case "$id" in
+	'' | *[!0-9a-f]* | ?????*)
+		say "gpu-probe: $2 is not a PCI vendor id (four hex digits, such as 0x8086)" >&2
+		exit 2
+		;;
+	esac
+	path=$(freebsd_path "$id")
+	say "$(vendor_name "$id"): under FreeBSD, ${path#*|}"
+	exit 0
+	;;
+-*)
+	say "gpu-probe: unknown option $1" >&2
+	usage >&2
+	exit 2
+	;;
+esac
+
+if [ $# -eq 0 ]; then
+	# Nothing here reads standard input, and over ssh the script itself
+	# arrives on it.
+	probe_here </dev/null
+	exit $?
+fi
+
+status=0
+for host in "$@"; do
+	case "$host" in
+	-*)
+		say "gpu-probe: $host is not a host name" >&2
+		exit 2
+		;;
+	esac
+done
+for host in "$@"; do
+	say "=== $host"
+	if ! ssh -o ConnectTimeout=10 "$host" sh -s <"$0"; then
+		say "gpu-probe: $host did not run the probe (no answer over ssh, or no sh there)"
+		status=1
+	fi
+	say ""
+done
+exit $status

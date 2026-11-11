@@ -209,10 +209,13 @@ stands, the design, the work, the tests, and how it is to be attacked.
 2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
-3. **On by default, fail closed.** When the suite passes the gate on every
-   run, the production package turns the lockdown on. 0.20.3.17 is the
-   first build to pass it since the gate began counting threads, in both
-   runs made so far.
+3. **On by default, fail closed.** The lockdown becomes the default when
+   a release candidate passes the whole suite with the lockdown on 100
+   times in a row, over at least three boots (the suite keeps the count:
+   `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17 is the
+   first build to pass the gate since it began counting threads, in both
+   runs made so far. There will be one package: the switches that undo
+   the sandbox will come to need a file only an administrator can create.
 4. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
 5. **Signed releases.** Signing each release with a key kept off GitHub,
@@ -222,9 +225,9 @@ stands, the design, the work, the tests, and how it is to be attacked.
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
 7. **WebGPU** finds no adapter. Chromium gives Linux and BSD a WebGPU
-   adapter only when the GPU process uses Vulkan, which it does not here;
-   plan/18 recommends turning WebGPU off deliberately until the GPU
-   process has a policy.
+   adapter only when the GPU process uses Vulkan, which it does not here.
+   Decided: the next build turns WebGPU off by default, with a switch for
+   those who want it, until the GPU process has a policy.
 
 ## Install
 
