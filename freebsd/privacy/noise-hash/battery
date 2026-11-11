@@ -1,0 +1,716 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""A battery of tests of a browser's canvas noise, to run on several
+machines and compare.
+
+  battery run                     find Helium and test it (5 new profiles, 6 sites each)
+  battery run --browser PATH      test this browser (a binary, or a .app on macOS)
+  battery selftest                show that the battery can tell a weak hash from a good one
+  battery serve                   test a browser you drive yourself: open the address it prints
+  battery compare A.json B.json   put the results of several machines side by side
+
+Each run starts the browser with a new, empty profile in a temporary
+directory (your own profile is not touched) and points it at a page served
+from this machine, on several ports. To the browser each port is another
+site with another noise token. The page (battery.html) draws on canvases,
+reads them back and holds every readback against the arithmetic in
+battery.js; the results come back to this program, which checks the main
+one again against the Python model and writes a JSON file. Nothing is sent
+anywhere else.
+
+What it asks of the browser, per site:
+  - a flat fill read twice: is there noise, is it the same twice, and are
+    the changed pixels exactly one of the four sets that two bits of the
+    token would choose
+  - five other fills, predicted pixel for pixel from those two bits
+  - the direction of the step, predicted from the lowest bit
+  - a rectangle read from the middle of the canvas
+  - the same canvas through toDataURL, toBlob, an OffscreenCanvas and WebGL
+  - a textured image of known pixels: do five low bits of the token account
+    for the sign of every step
+  - an image with flat, gradient and textured parts: does every pixel
+    behave as those five bits predict
+and across sites and profiles: how often two sites share their pixels.
+
+A control profile runs first with Helium's canvas noise switched off
+(--disable-features=HeliumNoiseCanvas): every readback must then be exact,
+or the tests above mean nothing on that machine.
+
+Python 3.8 or later, nothing to install.
+"""
+
+import argparse
+import hashlib
+import http.server
+import json
+import os
+import platform
+import plistlib
+import re
+import secrets
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import model  # noqa: E402
+
+FILES = {
+    "/battery.html": ("battery.html", "text/html; charset=utf-8"),
+    "/battery.js": ("battery.js", "text/javascript; charset=utf-8"),
+    "/sim.js": ("sim.js", "text/javascript; charset=utf-8"),
+}
+SIZE = 64
+RED = 100
+NOISE_OFF = "--disable-features=HeliumNoiseCanvas"
+STAND_IN = "NOT A MEASUREMENT (stand-in noise): "
+
+
+# -- the model's four sets ---------------------------------------------------
+
+_SETS = None
+
+
+def four_sets():
+    """The four sets of pixels of the 64 x 64 fill, by the token's low two
+    bits, as the page writes them: "x,y;x,y;..." in reading order."""
+    global _SETS
+    if _SETS is None:
+        _SETS = [";".join(f"{x},{y}" for y in range(SIZE) for x in range(SIZE)
+                          if model.predicted_change(low, x, y, RED)) for low in range(4)]
+    return _SETS
+
+
+def classify(keys):
+    """0 to 3 if the changed pixels are exactly one of the four sets,
+    "none" if nothing changed, "other" otherwise."""
+    if not keys:
+        return "none"
+    try:
+        return four_sets().index(keys)
+    except ValueError:
+        return "other"
+
+
+def digest(keys):
+    return hashlib.sha256(keys.encode()).hexdigest()[:12]
+
+
+# -- the local server --------------------------------------------------------
+
+class State:
+    def __init__(self, accept_manual=False):
+        self.lock = threading.Lock()
+        self.reports = {}        # run -> {index: report}
+        self.done = set()
+        self.expected = set()    # runs this program started
+        self.accept_manual = accept_manual
+
+    def wanted(self, run):
+        return run in self.expected or (self.accept_manual and str(run).startswith("manual-"))
+
+
+def handler_for(state):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                self.send_response(302)
+                self.send_header("Location", "/battery.html")
+                self.end_headers()
+                return
+            if path not in FILES:
+                self.send_error(404)
+                return
+            name, kind = FILES[path]
+            with open(os.path.join(HERE, name), "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 4 * 1024 * 1024:
+                self.send_error(413)
+                return
+            try:
+                message = json.loads(self.rfile.read(length) or b"{}")
+            except ValueError:
+                self.send_error(400)
+                return
+            run = message.get("run") if isinstance(message, dict) else None
+            if not state.wanted(run):
+                self.send_error(403)
+                return
+            with state.lock:
+                if self.path == "/result" and isinstance(message.get("report"), dict):
+                    state.reports.setdefault(run, {})[int(message.get("index", 0))] = \
+                        message["report"]
+                elif self.path == "/done":
+                    state.done.add(run)
+            self.send_response(204)
+            self.end_headers()
+    return Handler
+
+
+def start_servers(state, count):
+    servers = []
+    for _ in range(count):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler_for(state))
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+    return servers
+
+
+def page_url(ports, run, extra=""):
+    return (f"http://127.0.0.1:{ports[0]}/battery.html#run={run}"
+            f"&ports={','.join(str(p) for p in ports)}&index=0{extra}")
+
+
+# -- finding and starting the browser ----------------------------------------
+
+CANDIDATES = {
+    "Darwin": ["/Applications/Helium.app", "~/Applications/Helium.app"],
+    "Linux": ["helium", "helium-browser", "/opt/helium/helium", "/usr/lib/helium/helium"],
+    "FreeBSD": ["beryllium", "/usr/local/bin/beryllium"],
+}
+
+
+def bundle_binary(app):
+    """The executable inside a macOS .app bundle."""
+    macos = os.path.join(app, "Contents", "MacOS")
+    try:
+        with open(os.path.join(app, "Contents", "Info.plist"), "rb") as f:
+            name = plistlib.load(f).get("CFBundleExecutable")
+        if name and os.path.isfile(os.path.join(macos, name)):
+            return os.path.join(macos, name)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        pass
+    try:
+        names = [n for n in sorted(os.listdir(macos)) if os.path.isfile(os.path.join(macos, n))]
+    except OSError:
+        names = []
+    return os.path.join(macos, names[0]) if names else None
+
+
+def find_browser(given, system=None):
+    """The path of the binary to run, or None."""
+    for candidate in ([given] if given else CANDIDATES.get(system or platform.system(), [])):
+        path = os.path.expanduser(candidate)
+        if os.path.isdir(os.path.join(path, "Contents", "MacOS")):
+            binary = bundle_binary(path)
+            if binary:
+                return binary
+            continue
+        found = path if os.path.isfile(path) else shutil.which(candidate)
+        if found:
+            return os.path.abspath(found)
+    return None
+
+
+def browser_command(binary, profile, url, windows=False, noise_off=False, extra=()):
+    command = [binary, f"--user-data-dir={profile}", "--no-first-run",
+               "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic",
+               "--disable-background-networking", "--disable-component-update",
+               "--disable-sync", "--disable-search-engine-choice-screen",
+               "--window-size=900,700"]
+    if not windows:
+        command.append("--headless")
+    if noise_off:
+        command.append(NOISE_OFF)
+    return command + list(extra) + [url]
+
+
+def browser_version(binary):
+    try:
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=20)
+        return out.stdout.strip().splitlines()[0] if out.stdout.strip() else ""
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return ""
+
+
+def stop(child):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(child.pid, sig)
+        except OSError:
+            return
+        try:
+            child.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def tail(path, lines=12):
+    try:
+        with open(path, errors="replace") as f:
+            return [line.rstrip() for line in f.readlines()[-lines:]]
+    except OSError:
+        return []
+
+
+def session(state, ports, binary, o, noise_off=False, extra_url="", timeout=None):
+    """One new profile through every site. Returns (reports in site order,
+    what went wrong or "")."""
+    run = secrets.token_hex(8)
+    with state.lock:
+        state.expected.add(run)
+    profile = tempfile.mkdtemp(prefix="noise-battery-profile.")
+    log = os.path.join(profile, "browser-output.txt")
+    command = browser_command(binary, os.path.join(profile, "profile"),
+                              page_url(ports, run, extra_url), o.windows, noise_off,
+                              o.browser_args)
+    timeout = timeout or 60 + 30 * len(ports)
+    problem = ""
+    try:
+        with open(log, "w") as output:
+            child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                                     stderr=output, start_new_session=True)
+        started = time.time()
+        try:
+            while True:
+                with state.lock:
+                    got = len(state.reports.get(run, {}))
+                    finished = run in state.done
+                if finished or got >= len(ports):
+                    break
+                if child.poll() is not None:
+                    problem = f"the browser ended (status {child.returncode}) after {got} sites"
+                    break
+                if time.time() - started > timeout:
+                    problem = f"no answer after {timeout} s ({got} of {len(ports)} sites)"
+                    break
+                time.sleep(0.2)
+        finally:
+            stop(child)
+        if problem:
+            problem += "\n  command: " + " ".join(command)
+            for line in tail(log):
+                problem += "\n  | " + line[:200]
+    except OSError as e:
+        problem = f"could not start {binary}: {e}"
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+    with state.lock:
+        reports = state.reports.get(run, {})
+    return [reports[i] for i in sorted(reports)], problem
+
+
+# -- what the readbacks say --------------------------------------------------
+
+def evaluate(report):
+    """One site's report from the page, reduced to the facts the summary
+    counts. The flat fill is classified here again, by the Python model."""
+    t = report.get("tests", {})
+    flat = t.get("flat") or {}
+    keys = flat.get("keys", "")
+    which = classify(keys)
+    weak = which in (0, 1, 2, 3)
+    e = {
+        "origin": report.get("origin", ""),
+        "simulated": report.get("simulated"),
+        "set": which,
+        "count": flat.get("count", 0),
+        "digest": digest(keys) if keys else "",
+        "steps": flat.get("steps", []),
+        "stable": flat.get("stable"),
+        "page_agrees": (flat.get("set") == which) if weak else flat.get("set") is None,
+        "cores": report.get("cores"),
+        "errors": sorted(report.get("errors", {})),
+    }
+    fills = t.get("fills") or []
+    e["fills_exact"] = bool(fills) and all(f.get("same") for f in fills) if weak else None
+    direction = t.get("direction") or {}
+    e["direction_ok"] = direction.get("ok") if direction.get("applies") else None
+    offset = t.get("offset") or {}
+    e["offset_follows"] = offset.get("follows") if offset.get("applies") else None
+    for name in ("dataurl", "blob"):
+        e[name + "_equal"] = (t.get(name) or {}).get("equal")
+    offscreen = t.get("offscreen") or {}
+    e["offscreen_same"] = offscreen.get("sameAsCanvas") if offscreen.get("available") else None
+    e["offscreen_blob_equal"] = offscreen.get("blobEqual") if offscreen.get("available") else None
+    webgl = t.get("webgl") or {}
+    e["webgl"] = bool(webgl.get("available"))
+    e["webgl_readpixels"] = webgl.get("readPixels") if e["webgl"] else None
+    e["webgl_dataurl"] = webgl.get("dataurl") if e["webgl"] else None
+    e["webgl_dataurl_set"] = webgl.get("dataurlSet") if e["webgl"] else None
+    for name in ("textured", "mixed"):
+        image = t.get(name) or {}
+        fits = image.get("fits") or []
+        e[name + "_exact"] = image.get("exact")
+        e[name + "_changed"] = image.get("changed", 0)
+        e[name + "_fits"] = fits
+        e[name + "_unique"] = (len(fits) == 1 and (image.get("constraints", 0) > 0
+                                                   or image.get("smooth", 0) > 0)
+                               if image.get("changed") else None)
+        e[name + "_closest_wrong"] = image.get("closestWrong")
+        e[name + "_constraints"] = image.get("constraints", 0)
+        e[name + "_dataurl_equal"] = image.get("dataurlEqual")
+    low5 = e["textured_fits"][0] if e["textured_unique"] else None
+    e["low5"] = low5
+    e["low5_agrees_flat"] = (low5 & 3) == which if (low5 is not None and weak) else None
+    e["mixed_agrees_textured"] = (e["mixed_fits"] == e["textured_fits"]
+                                  if e["textured_unique"] and e["mixed_unique"] is not None
+                                  else None)
+    noiseless = (which == "none" and e["textured_exact"] and e["mixed_exact"]
+                 and e["dataurl_equal"] is not False and e["textured_dataurl_equal"] is not False)
+    e["exact_everywhere"] = bool(noiseless)
+    return e
+
+
+def share(samples, key, among=None):
+    """"n of m" for a yes/no fact over the samples where it applies."""
+    pool = [s for s in samples if s.get(key) is not None and (among is None or among(s))]
+    return f"{sum(1 for s in pool if s[key])} of {len(pool)}" if pool else "does not apply"
+
+
+def summarise(data):
+    """The rows of one result file: [(label, value)], and the verdict."""
+    profiles = data.get("profiles", [])
+    samples = [s for p in profiles if p.get("kind") == "measure" for s in p.get("samples", [])]
+    controls = [s for p in profiles if p.get("kind") == "control" for s in p.get("samples", [])]
+    noised = [s for s in samples if s["set"] != "none"]
+    weak = [s for s in noised if s["set"] != "other"]
+    measured = [p for p in profiles if p.get("kind") == "measure"]
+    rows = [
+        ("Browser", data.get("browser", {}).get("version") or "unknown"),
+        ("System", " ".join(str(data.get("machine", {}).get(k, "")) for k in
+                            ("system", "release", "machine")).strip()),
+        ("Readbacks", f"{len(samples)} ({len(measured)} new profiles)"),
+        ("Control with the noise switched off: every readback exact",
+         share(controls, "exact_everywhere") if controls else "not run"),
+        ("Readbacks with noise", f"{len(noised)} of {len(samples)}"),
+        ("Changed pixels are exactly one of the four sets", f"{len(weak)} of {len(noised)}"),
+    ]
+    for low in range(4):
+        group = [s for s in weak if s["set"] == low]
+        if group:
+            rows.append((f"  set {low}", f"{len(group)} readbacks, {group[0]['count']} pixels, "
+                         f"digest {'/'.join(sorted({s['digest'] for s in group}))}"))
+    rows += [
+        ("Counts of changed pixels seen",
+         ", ".join(str(c) for c in sorted({s["count"] for s in noised})) or "none"),
+        ("The page and the Python model name the same set", share(noised, "page_agrees")),
+        ("The same canvas read twice gives the same pixels", share(noised, "stable")),
+        ("Five other fills predicted pixel for pixel from two bits", share(weak, "fills_exact")),
+        ("The step's direction follows the token's lowest bit", share(weak, "direction_ok")),
+        ("A rectangle read at an offset follows",
+         ", ".join(f"{name} coordinates: {n}" for name, n in sorted(
+             {v: sum(1 for s in weak if s["offset_follows"] == v)
+              for v in {s["offset_follows"] for s in weak if s["offset_follows"]}}.items()))
+         or "does not apply"),
+        ("toDataURL gives the same pixels as getImageData", share(noised, "dataurl_equal")),
+        ("toBlob gives the same pixels as getImageData", share(noised, "blob_equal")),
+        ("OffscreenCanvas gives the same pixels as a canvas", share(noised, "offscreen_same")),
+        ("WebGL readPixels is noised",
+         share([dict(s, n=bool(s["webgl_readpixels"])) for s in noised if s["webgl"]], "n")),
+        ("WebGL toDataURL changes one of the four sets",
+         share([dict(s, n=s["webgl_dataurl_set"] is not None) for s in noised if s["webgl"]], "n")),
+        ("Textured image: one value of five low bits explains every step",
+         share(noised, "textured_unique")),
+        ("  and its two low bits are the flat fill's", share(noised, "low5_agrees_flat")),
+        ("Mixed image: the same five bits explain every pixel",
+         share(noised, "mixed_agrees_textured")),
+    ]
+    pairs = same = 0
+    for p in measured:
+        sets = [s["digest"] for s in p.get("samples", []) if s["set"] != "none"]
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                pairs += 1
+                same += sets[i] == sets[j]
+    rows.append(("Pairs of sites in one profile with the same changed pixels",
+                 f"{same} of {pairs}" + (" (one in four expected if two bits choose)"
+                                         if pairs else "")))
+    rows.append(("CPU cores reported to pages",
+                 ", ".join(str(c) for c in sorted({s["cores"] for s in samples if s["cores"]}))))
+    problems = sorted({e for s in samples for e in s["errors"]})
+    if problems:
+        rows.append(("Tests that could not run", ", ".join(problems)))
+    if not samples:
+        verdict = "nothing measured"
+    elif not noised:
+        verdict = "no canvas noise"
+    elif len(weak) == len(noised):
+        verdict = "two bits of the token choose the pixels, in every readback"
+    elif not weak:
+        verdict = "the pixels are not chosen by two bits of the token"
+    else:
+        verdict = "mixed: some readbacks are one of the four sets and some are not"
+    if any(s.get("simulated") for s in samples):
+        verdict = STAND_IN + verdict
+    return rows, verdict
+
+
+def print_summary(data):
+    rows, verdict = summarise(data)
+    width = max(len(label) for label, _ in rows)
+    for label, value in rows:
+        print(f"{label:<{width}}  {value}")
+    print(f"\nVerdict: {verdict}")
+
+
+def compare(files):
+    """Lines that put several result files side by side."""
+    loaded = []
+    for path in files:
+        with open(path) as f:
+            data = json.load(f)
+        loaded.append((data.get("label") or os.path.basename(path), data, summarise(data)))
+    names = [name for name, _, _ in loaded]
+    width = max(len(n) for n in names)
+    lines = []
+    labels = []
+    for _, _, (rows, _) in loaded:
+        for label, _ in rows:
+            if label not in labels:
+                labels.append(label)
+    for label in labels:
+        lines.append(label)
+        for name, _, (rows, _) in loaded:
+            value = dict(rows).get(label, "-")
+            lines.append(f"    {name:<{width}}  {value}")
+    lines.append("Verdict")
+    for name, _, (_, verdict) in loaded:
+        lines.append(f"    {name:<{width}}  {verdict}")
+    lines.append("")
+    lines.append("Across the machines")
+    verdicts = {verdict for _, _, (_, verdict) in loaded}
+    lines.append("    the same verdict on each: " + ("yes" if len(verdicts) == 1 else "no"))
+    for low in range(4):
+        seen = {}
+        for name, data, _ in loaded:
+            found = {s["digest"] for p in data.get("profiles", []) if p.get("kind") == "measure"
+                     for s in p.get("samples", []) if s["set"] == low}
+            if found:
+                seen[name] = found
+        if seen:
+            every = set().union(*seen.values())
+            lines.append(f"    set {low}: seen on {len(seen)} of {len(loaded)}, "
+                         + ("the same pixels on each, and the model's"
+                            if every == {digest(four_sets()[low])} else "NOT the same pixels")
+                         + f" (digest {'/'.join(sorted(every))})")
+    simulated = [name for name, data, _ in loaded
+                 if any(s.get("simulated") for p in data.get("profiles", [])
+                        for s in p.get("samples", []))]
+    if simulated:
+        lines.append("    NOT MEASUREMENTS (made with the stand-in noise): " + ", ".join(simulated))
+    return lines
+
+
+# -- the commands ------------------------------------------------------------
+
+def machine():
+    return {"system": platform.system(), "release": platform.release(),
+            "machine": platform.machine(), "node": platform.node()}
+
+
+def default_label():
+    return re.sub(r"[^a-z0-9.-]+", "-", f"{platform.node()}-{platform.system()}".lower()).strip("-")
+
+
+def need_browser(o):
+    binary = find_browser(o.browser)
+    if not binary:
+        wanted = o.browser or ", ".join(CANDIDATES.get(platform.system(), [])) or "a browser"
+        sys.exit(f"battery: no browser found ({wanted}). Give one with --browser PATH; "
+                 "on macOS the .app will do.")
+    return binary
+
+
+def run(o):
+    binary = need_browser(o)
+    state = State()
+    servers = start_servers(state, o.sites)
+    ports = [s.server_address[1] for s in servers]
+    version = browser_version(binary)
+    print(f"Browser: {binary}" + (f" ({version})" if version else ""))
+    print(f"Sites: {o.sites} ports on 127.0.0.1; new profiles: {o.profiles}"
+          + ("" if o.no_control else ", and one control with the canvas noise switched off"))
+    data = {"battery": 1, "label": o.label or default_label(),
+            "started": time.strftime("%Y-%m-%d %H:%M:%S"), "machine": machine(),
+            "browser": {"path": binary, "version": version, "arguments": o.browser_args},
+            "profiles": []}
+    plan = ([] if o.no_control else [("control", True)]) + [("measure", False)] * o.profiles
+    for number, (kind, noise_off) in enumerate(plan, 1):
+        extra = ""
+        if o.simulate and kind == "measure":
+            # the stand-in noise in place of the browser's own
+            noise_off = True
+            extra = f"&simulate={o.simulate}&seed={secrets.randbits(48)}"
+        reports, problem = session(state, ports, binary, o, noise_off=noise_off, extra_url=extra)
+        samples = [evaluate(r) for r in reports]
+        data["profiles"].append({"kind": kind, "samples": samples, "problem": problem})
+        if reports and not data["browser"].get("user_agent"):
+            data["browser"]["user_agent"] = reports[0].get("ua", "")
+            data["browser"]["brands"] = reports[0].get("brands", [])
+        print(f"profile {number} of {len(plan)} ({kind}): "
+              + " ".join(str(s["set"]) for s in samples) + (f"  [{problem.splitlines()[0]}]"
+                                                           if problem else ""), flush=True)
+        if problem and not reports:
+            print(problem)
+            print("battery: the browser gave no result. Try --windows, or `battery serve` "
+                  "and open the address it prints in the browser yourself.")
+            break
+    for s in servers:
+        s.shutdown()
+    out = o.out or f"noise-battery-{data['label']}.json"
+    with open(out, "w") as f:
+        json.dump(data, f, indent=1)
+    print()
+    print_summary(data)
+    print(f"\nResults: {os.path.abspath(out)}")
+    return 0 if any(p["samples"] for p in data["profiles"]) else 1
+
+
+def selftest(o):
+    """The battery against the stand-in noise: it must call the weak hash
+    weak, the good hash good and no noise none."""
+    binary = need_browser(o)
+    state = State()
+    servers = start_servers(state, 3)
+    ports = [s.server_address[1] for s in servers]
+    wanted = [("weak", "&simulate=weak&seed=20261111",
+               "two bits of the token choose the pixels, in every readback"),
+              ("fixed", "&simulate=fixed&seed=20261111",
+               "the pixels are not chosen by two bits of the token"),
+              ("none", "", "no canvas noise")]
+    failures = 0
+    for name, extra, verdict in wanted:
+        reports, problem = session(state, ports, binary, o, noise_off=True, extra_url=extra)
+        samples = [evaluate(r) for r in reports]
+        data = {"profiles": [{"kind": "measure", "samples": samples}], "machine": machine()}
+        rows, got = summarise(data)
+        checks = [("verdict", got.replace(STAND_IN, "") == verdict),
+                  ("all sites answered", len(samples) == len(ports))]
+        if name == "weak":
+            checks += [(label, all(s[key] for s in samples) and bool(samples)) for label, key in (
+                ("other fills predicted", "fills_exact"), ("direction", "direction_ok"),
+                ("toDataURL equal", "dataurl_equal"), ("toBlob equal", "blob_equal"),
+                ("five bits found", "textured_unique"), ("five bits agree", "low5_agrees_flat"),
+                ("mixed image", "mixed_agrees_textured"))]
+            checks.append(("offset follows the canvas",
+                           all(s["offset_follows"] == "canvas" for s in samples) and bool(samples)))
+        if name == "fixed":
+            checks.append(("no five bits fit", all(not s["textured_fits"] for s in samples)
+                           and bool(samples)))
+        if name == "none":
+            checks.append(("every readback exact", all(s["exact_everywhere"] for s in samples)
+                           and bool(samples)))
+        bad = [label for label, ok in checks if not ok]
+        failures += bool(bad)
+        print(f"stand-in noise {name:<5}: " + ("as expected" if not bad else
+                                                "NOT as expected: " + ", ".join(bad))
+              + f"  (verdict: {got})")
+        if problem:
+            print(problem)
+    for s in servers:
+        s.shutdown()
+    print("Self-test " + ("passed: on this machine the battery tells a weak hash from a good "
+                          "one and from none." if not failures else "FAILED."))
+    return 1 if failures else 0
+
+
+def serve(o):
+    state = State(accept_manual=True)
+    servers = start_servers(state, o.sites)
+    ports = [s.server_address[1] for s in servers]
+    address = (f"http://127.0.0.1:{ports[0]}/battery.html#ports="
+               f"{','.join(str(p) for p in ports)}&index=0")
+    print("Open this address in the browser to test. Each time you open it (a normal window,\n"
+          "a private window, another profile) counts as one profile; the page walks through\n"
+          f"{o.sites} sites by itself. Press Ctrl-C here when you are done.\n\n  {address}\n")
+    data = {"battery": 1, "label": o.label or default_label() + "-by-hand",
+            "started": time.strftime("%Y-%m-%d %H:%M:%S"), "machine": machine(),
+            "browser": {"path": "opened by hand", "version": ""}, "profiles": []}
+    told = set()
+    out = o.out or f"noise-battery-{data['label']}.json"
+
+    def ended(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, ended)
+    try:
+        while True:
+            time.sleep(0.5)
+            with state.lock:
+                finished = [r for r in state.done if r not in told]
+            for r in finished:
+                told.add(r)
+                with state.lock:
+                    reports = [state.reports[r][i] for i in sorted(state.reports.get(r, {}))]
+                samples = [evaluate(x) for x in reports]
+                data["profiles"].append({"kind": "measure", "samples": samples, "problem": ""})
+                if reports:
+                    data["browser"]["version"] = reports[0].get("ua", "")
+                print(f"profile {len(data['profiles'])}: "
+                      + " ".join(str(s["set"]) for s in samples), flush=True)
+                # written after every profile, so that nothing is lost
+                with open(out, "w") as f:
+                    json.dump(data, f, indent=1)
+    except KeyboardInterrupt:
+        pass
+    for s in servers:
+        s.shutdown()
+    with open(out, "w") as f:
+        json.dump(data, f, indent=1)
+    print()
+    print_summary(data)
+    print(f"\nResults: {os.path.abspath(out)}")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    def common(p, sites):
+        p.add_argument("--browser", help="the browser: a binary, or on macOS a .app")
+        p.add_argument("--browser-arg", dest="browser_args", action="append", default=[],
+                       help="one more switch for the browser (repeatable)")
+        p.add_argument("--windows", action="store_true", help="show windows (default: headless)")
+        p.add_argument("--sites", type=int, default=sites, help=f"sites per profile ({sites})")
+        p.add_argument("--label", help="a name for this machine in the results")
+        p.add_argument("--out", help="the results file (default: noise-battery-LABEL.json)")
+
+    p = sub.add_parser("run", help="test a browser")
+    common(p, 6)
+    p.add_argument("--profiles", type=int, default=5, help="new profiles (5)")
+    p.add_argument("--no-control", action="store_true",
+                   help="skip the control profile with the noise switched off")
+    p.add_argument("--simulate", choices=("weak", "fixed"),
+                   help="a rehearsal, not a measurement: switch the browser's noise off and "
+                        "use the stand-in noise of sim.js (Helium's hash, or a fixed one)")
+    p = sub.add_parser("selftest", help="test the battery itself against stand-in noise")
+    common(p, 3)
+    p = sub.add_parser("serve", help="serve the page for a browser you open yourself")
+    common(p, 4)
+    p = sub.add_parser("compare", help="put result files side by side")
+    p.add_argument("files", nargs="+")
+    o = ap.parse_args(argv)
+    if o.command == "compare":
+        print("\n".join(compare(o.files)))
+        return 0
+    if o.sites < 1:
+        ap.error("--sites needs at least 1")
+    return {"run": run, "selftest": selftest, "serve": serve}[o.command](o)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

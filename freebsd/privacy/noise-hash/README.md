@@ -176,26 +176,84 @@ python3 -m http.server 8000 --directory freebsd/privacy/noise-hash
 then `http://localhost:8000/probe.html` and
 `http://127.0.0.1:8000/probe.html`.
 
-`collect` does the same over many new profiles and made-up sites, with
-any Chromium-family browser, and tallies the sets:
-
-```bash
-freebsd/privacy/noise-hash/collect --browser /path/to/helium --sessions 20 --sites 10 --out samples.json
-```
-
 `analysis.py` recomputes the arithmetic (under a minute):
 
 ```bash
 python3 freebsd/privacy/noise-hash/analysis.py
 ```
 
-How far each of these has been tried: the page and the collector were run
-against a Chromium with no canvas noise (nothing changes, and they say
-so), and the page against the model's output put in place of the
-browser's readback, for two tokens with Helium's hash (set 1 stepping up,
-set 2 stepping down, every prediction exact) and one with Beryllium's
-(none of the four). Neither has been run against a browser with Helium's
-noise.
+How far these have been tried: the page was run against a Chromium with
+no canvas noise (nothing changes, and it says so), and against the
+model's output put in place of the browser's readback, for two tokens
+with Helium's hash (set 1 stepping up, set 2 stepping down, every
+prediction exact) and one with Beryllium's (none of the four). It has not
+been run against a browser with Helium's noise.
+
+## The battery: the same tests on every machine
+
+`battery` runs a browser through a fixed set of tests and writes one
+result file per machine; `battery compare` puts the files side by side.
+It needs Python 3.8 or later and nothing else, and runs on macOS, Linux
+and FreeBSD. Each run uses new, empty profiles in a temporary directory
+and a page served from the same machine on several ports. Helium derives
+the token from the origin, port included, so each port is another site
+with another token. Nothing leaves the machine and your own profile is
+not touched.
+
+First, on each machine, show that the battery can tell a weak hash from a
+good one there. This switches the browser's own canvas noise off and puts
+stand-in noise (`sim.js`, the model in JavaScript) in its place:
+
+```bash
+freebsd/privacy/noise-hash/battery selftest
+```
+
+Then the measurement:
+
+```bash
+freebsd/privacy/noise-hash/battery run --label mac
+```
+
+On macOS it looks for `/Applications/Helium.app`; elsewhere, or for
+another browser, give `--browser PATH` (a binary, or a `.app`). On a
+machine reached over ssh it runs headless as it is. Then, with the result
+files copied to one place:
+
+```bash
+freebsd/privacy/noise-hash/battery compare noise-battery-mac.json noise-battery-linux1.json
+```
+
+For a browser the battery cannot start, or to test a private window or
+your everyday profile, `battery serve` prints an address to open by hand.
+
+What each site is asked, and what Helium's hash should answer:
+
+| Test | With two bits choosing the pixels |
+|---|---|
+| A 64 by 64 fill, read twice | 1031, 998, 1085 or 982 pixels changed, the same twice, exactly one of the four sets (checked again by the Python model) |
+| Five other fills | every changed pixel predicted from the two bits |
+| Direction of the step | +1 for an odd token, -1 for an even one |
+| A rectangle read from (5, 7) | the noise follows canvas coordinates (`source_x`, `source_y` in the code) |
+| `toDataURL`, `toBlob`, `OffscreenCanvas` | the same pixels as `getImageData`; the PNG is decoded in the page, because drawing it back would be noised again |
+| WebGL | recorded: whether `readPixels` is noised, and whether `toDataURL` of a WebGL canvas changes one of the four sets |
+| A textured image of known pixels | exactly one value of the token's low five bits accounts for the sign of every step, and its two low bits are the fill's |
+| An image part flat, part gradient, part textured | every pixel behaves as those five bits predict |
+| Across sites in one profile | two sites share their pixels about one time in four |
+
+A control profile runs first with `--disable-features=HeliumNoiseCanvas`:
+every readback must then be exact, or the rest means nothing on that
+machine.
+
+The textured and mixed images go further than anything measured so far.
+They are put on the canvas pixel by pixel, so the page knows the original
+of every pixel and can test the arithmetic of the textured path, which
+the reports above never touched.
+
+How far the battery has been tried: its arithmetic against the Python
+model with node, and the whole of it against a Chromium with the stand-in
+noise (the self-test above, which CI also runs). Against a browser with
+Helium's own noise it has not been run. Its first run on macOS is the
+owner's.
 
 ## Beryllium's change
 

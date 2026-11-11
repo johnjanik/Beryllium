@@ -1,0 +1,265 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas noise battery</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 52em; margin: 2em auto; padding: 0 1em; }
+  table { border-collapse: collapse; margin: .6em 0; width: 100%; }
+  td, th { border: 1px solid #888; padding: .2em .7em; text-align: left; vertical-align: top; }
+  #banner { font-weight: 600; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+<h1>Canvas noise battery</h1>
+<p>This page draws on canvases, reads them back in several ways, and holds
+each readback against what Helium's noise hash would do if a few low bits
+of the site's token decided it. It is served by
+<code>freebsd/privacy/noise-hash/battery</code> on this machine, sends its
+results only there, and stores nothing.</p>
+<p id="banner"></p>
+<table id="results"><tr><th>Test</th><th>Result</th></tr></table>
+<p id="next"></p>
+<script src="battery.js"></script>
+<script>
+(async () => {
+  const B = NoiseBattery;
+  const params = new URLSearchParams(location.hash.slice(1));
+  const ports = (params.get('ports') || location.port).split(',');
+  const index = Number(params.get('index') || 0);
+  const run = params.get('run') || 'manual-' + Math.random().toString(36).slice(2, 12);
+  const banner = document.getElementById('banner');
+  const table = document.getElementById('results');
+  const say = (name, text) => {
+    const row = table.insertRow();
+    row.insertCell().textContent = name;
+    row.insertCell().textContent = text;
+  };
+
+  const report = {
+    battery: 1, origin: location.origin, ua: navigator.userAgent,
+    brands: ((navigator.userAgentData && navigator.userAgentData.brands) || [])
+      .map(b => b.brand + ' ' + b.version),
+    cores: navigator.hardwareConcurrency, simulated: null, tests: {}, errors: {},
+  };
+
+  if (params.get('simulate')) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'sim.js'; s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    NoiseSim.install(params.get('seed') || '1', params.get('simulate') === 'fixed');
+    report.simulated = params.get('simulate');
+    banner.textContent = 'SIMULATION: the noise on this page comes from sim.js, not from ' +
+                         'the browser. These results are a test of the battery only.';
+  }
+
+  const FILL = [100, 100, 100];
+  const SIZE = 64;
+  function flatImage(width, height, rgb) {
+    const img = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < img.length; i += 4) {
+      img[i] = rgb[0]; img[i + 1] = rgb[1]; img[i + 2] = rgb[2]; img[i + 3] = 255;
+    }
+    return img;
+  }
+  function canvasOf(width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    return {canvas, context: canvas.getContext('2d', {willReadFrequently: true})};
+  }
+  function filled(width, height, rgb) {
+    const c = canvasOf(width, height);
+    c.context.fillStyle = `rgb(${rgb.join(',')})`;
+    c.context.fillRect(0, 0, width, height);
+    return c;
+  }
+  function drawn(img, width, height) {
+    const c = canvasOf(width, height);
+    c.context.putImageData(new ImageData(img, width, height), 0, 0);
+    return c;
+  }
+  const read = (c, width, height) => c.context.getImageData(0, 0, width, height).data;
+  async function pngOf(dataUrl) {
+    const text = atob(dataUrl.split(',')[1]);
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+    return (await B.decodePng(bytes)).data;
+  }
+  async function attempt(name, test) {
+    try {
+      report.tests[name] = await test();
+    } catch (e) {
+      report.errors[name] = String((e && e.message) || e);
+      say(name, 'could not run: ' + report.errors[name]);
+    }
+  }
+
+  // 1. A flat fill, read twice.
+  const expected = flatImage(SIZE, SIZE, FILL);
+  const main = filled(SIZE, SIZE, FILL);
+  const first = read(main, SIZE, SIZE);
+  let low2 = null;
+  await attempt('flat', () => {
+    const second = read(main, SIZE, SIZE);
+    const changed = B.changedPixels(expected, first, SIZE);
+    low2 = changed.keys.length ? B.whichSet(changed.keys, SIZE, SIZE, FILL[0]) : null;
+    say('A 64 by 64 fill of rgb(100,100,100)',
+        changed.keys.length === 0 ? 'no pixel changed: no canvas noise here' :
+        `${changed.keys.length} pixels changed, by ${changed.steps.join(' or ')}; ` +
+        (low2 === null ? 'none of the four sets' : `exactly set ${low2} of the four`));
+    return {count: changed.keys.length, steps: changed.steps, set: low2,
+            stable: B.sameList(first, second), keys: changed.keys.join(';')};
+  });
+  const noised = report.tests.flat && report.tests.flat.count > 0;
+
+  // 2. Other fills, predicted from the two bits.
+  await attempt('fills', () => {
+    const fills = [[40, 25, [37, 142, 201]], [90, 31, [101, 50, 200]], [33, 77, [250, 7, 7]],
+                   [128, 16, [3, 250, 9]], [200, 3, [64, 64, 64]]];
+    const out = [];
+    for (const [w, h, rgb] of fills) {
+      const got = B.changedPixels(flatImage(w, h, rgb), read(filled(w, h, rgb), w, h), w);
+      const want = low2 === null ? null : B.flatSet(low2, w, h, rgb[0]);
+      out.push({size: [w, h], rgb, observed: got.keys.length, steps: got.steps,
+                predicted: want && want.length, same: want ? B.sameList(want, got.keys) : null});
+    }
+    if (low2 !== null) {
+      say('Five other fills, predicted from those two bits',
+          out.every(f => f.same) ? 'every changed pixel predicted' :
+          `${out.filter(f => f.same).length} of ${out.length} predicted exactly`);
+    }
+    return out;
+  });
+
+  // 3. The direction of the step.
+  await attempt('direction', () => {
+    if (low2 === null) return {applies: false};
+    const want = low2 & 1 ? 1 : -1;
+    const steps = new Set(report.tests.flat.steps);
+    for (const f of report.tests.fills || []) f.steps.forEach(s => steps.add(s));
+    const ok = [...steps].every(s => {
+      const d = s.split(' ').map(Number);
+      return d[3] === 0 && d.slice(0, 3).filter(v => v !== 0).join() === String(want);
+    });
+    say('Direction of the step', `${want > 0 ? '+1' : '-1'} expected from the token's lowest ` +
+        `bit; seen: ${[...steps].join(', ')}: ${ok ? 'as expected' : 'not as expected'}`);
+    return {applies: true, expected: want, steps: [...steps], ok};
+  });
+
+  // 4. A rectangle read from the middle of the canvas.
+  await attempt('offset', () => {
+    if (low2 === null) return {applies: false};
+    const data = main.context.getImageData(5, 7, 40, 30).data;
+    const keys = B.changedPixels(flatImage(40, 30, FILL), data, 40).keys;
+    const byCanvas = B.sameList(keys, B.flatSet(low2, 40, 30, FILL[0], 5, 7));
+    const byRectangle = B.sameList(keys, B.flatSet(low2, 40, 30, FILL[0], 0, 0));
+    const follows = byCanvas && byRectangle ? 'both' : byCanvas ? 'canvas' :
+                    byRectangle ? 'rectangle' : 'neither';
+    say('A rectangle read at (5, 7)', `the noise follows: ${follows} coordinates`);
+    return {applies: true, count: keys.length, follows};
+  });
+
+  // 5. The same canvas through toDataURL and toBlob.
+  const encoded = (name, label, bytesOf) => attempt(name, async () => {
+    const data = await bytesOf();
+    const changed = B.changedPixels(expected, data, SIZE);
+    const equal = B.sameList(data, first);
+    if (noised) say(label, equal ? 'the same pixels as getImageData' :
+                    `differs from getImageData (${changed.keys.length} pixels changed)`);
+    return {count: changed.keys.length, equal,
+            set: changed.keys.length ? B.whichSet(changed.keys, SIZE, SIZE, FILL[0]) : null};
+  });
+  await encoded('dataurl', 'toDataURL', () => pngOf(main.canvas.toDataURL('image/png')));
+  await encoded('blob', 'toBlob', async () => {
+    const blob = await new Promise(resolve => main.canvas.toBlob(resolve, 'image/png'));
+    return (await B.decodePng(new Uint8Array(await blob.arrayBuffer()))).data;
+  });
+
+  // 6. An OffscreenCanvas.
+  await attempt('offscreen', async () => {
+    if (typeof OffscreenCanvas === 'undefined') return {available: false};
+    const canvas = new OffscreenCanvas(SIZE, SIZE);
+    const context = canvas.getContext('2d', {willReadFrequently: true});
+    context.fillStyle = `rgb(${FILL.join(',')})`;
+    context.fillRect(0, 0, SIZE, SIZE);
+    const data = context.getImageData(0, 0, SIZE, SIZE).data;
+    const changed = B.changedPixels(expected, data, SIZE);
+    const blob = await canvas.convertToBlob({type: 'image/png'});
+    const png = (await B.decodePng(new Uint8Array(await blob.arrayBuffer()))).data;
+    if (noised) say('OffscreenCanvas', B.sameList(data, first) ?
+                    'the same pixels as a canvas element' : `${changed.keys.length} pixels changed`);
+    return {available: true, count: changed.keys.length, sameAsCanvas: B.sameList(data, first),
+            blobEqual: B.sameList(png, data),
+            set: changed.keys.length ? B.whichSet(changed.keys, SIZE, SIZE, FILL[0]) : null};
+  });
+
+  // 7. A WebGL canvas: readPixels, and toDataURL.
+  await attempt('webgl', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = SIZE;
+    const gl = canvas.getContext('webgl', {preserveDrawingBuffer: true, alpha: false,
+                                           antialias: false});
+    if (!gl) return {available: false};
+    gl.clearColor(FILL[0] / 255, FILL[1] / 255, FILL[2] / 255, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const pixels = new Uint8Array(SIZE * SIZE * 4);
+    gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const viaRead = B.changedPixels(expected, pixels, SIZE);
+    const viaUrl = B.changedPixels(expected, await pngOf(canvas.toDataURL('image/png')), SIZE);
+    if (noised) say('WebGL', `readPixels: ${viaRead.keys.length} pixels changed; ` +
+                    `toDataURL: ${viaUrl.keys.length} pixels changed`);
+    return {available: true, readPixels: viaRead.keys.length, dataurl: viaUrl.keys.length,
+            dataurlSet: viaUrl.keys.length ? B.whichSet(viaUrl.keys, SIZE, SIZE, FILL[0]) : null};
+  });
+
+  // 8 and 9. Known images put on a canvas: all textured, then mixed.
+  const image = (name, label, width, height, img) => attempt(name, async () => {
+    const c = drawn(img, width, height);
+    const out = read(c, width, height);
+    const found = B.findLow5(img, out, width, height, 0, 0);
+    const png = await pngOf(c.canvas.toDataURL('image/png'));
+    const best = found.best;
+    if (best.changed) {
+      say(label, found.fits.length === 1 ?
+          `the token's low five bits are ${found.fits[0]}: every one of ${best.smooth} smooth ` +
+          `pixels and ${best.constraints} textured channel steps is as they predict` :
+          found.fits.length === 0 ?
+          `no value of five bits predicts it (the closest misses ${best.wrong})` :
+          `${found.fits.length} values of five bits fit`);
+    }
+    return {exact: B.sameList(img, out), changed: best.changed, smooth: best.smooth,
+            textured: best.textured, constraints: best.constraints, fits: found.fits,
+            closest: best.low5, closestWrong: best.wrong, tooFar: best.tooFar,
+            alphaChanged: best.alphaChanged, dataurlEqual: B.sameList(png, out)};
+  });
+  await image('textured', 'A textured image of known pixels', 48, 48,
+              B.randomImage(48, 48, 20261111));
+  await image('mixed', 'A part flat, part gradient, part textured image', 96, 48,
+              B.mixedImage(96, 48, 20261112));
+
+  // Send, then go on to the next site.
+  let sent = true;
+  try {
+    await fetch('/result', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({run, index, report})});
+  } catch (e) { sent = false; }
+  const next = document.getElementById('next');
+  if (index + 1 < ports.length) {
+    const forward = new URLSearchParams(params);
+    forward.set('ports', ports.join(','));
+    forward.set('index', String(index + 1));
+    forward.set('run', run);
+    next.textContent = `Site ${index + 1} of ${ports.length} done; going on to the next.`;
+    location.replace(`http://127.0.0.1:${ports[index + 1]}/battery.html#${forward}`);
+  } else {
+    try { await fetch('/done', {method: 'POST', body: JSON.stringify({run})}); } catch (e) {}
+    next.textContent = `Site ${index + 1} of ${ports.length} done. ` +
+      (sent ? 'All results are with the battery; this tab can be closed.' :
+              'The results could not be sent (is the battery still running?).');
+  }
+})();
+</script>
+</html>
