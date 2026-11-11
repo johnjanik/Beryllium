@@ -46,8 +46,10 @@ Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   file compiled alone with stub headers (g++ and clang++, C++20) and run
   against a flat fill: nine tokens gave nine different pixel sets of 981 to
   1083 pixels (about one in four of 4096). Compiled in the tree and
-  released in 0.20.3.17 (10 November 2026); the suite's two tests for it
-  have not been reported on that build yet.
+  released in 0.20.3.17 (10 November 2026). The owner's two full suite
+  runs on it (11 November 2026) pass both tests: 1016 and 994 pixels on
+  the two origins in one session, 1022 and 1000 in the other, none of the
+  four old sets.
 Test: freebsd/tests/browser/tests/test_60_privacy.py CanvasNoise:
   test_moved_pixels_depend_on_the_whole_token (the moved pixels are none
   of the four sets of the old hash) and test_noise_differs_per_site. The
