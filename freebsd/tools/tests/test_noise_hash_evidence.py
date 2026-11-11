@@ -90,6 +90,38 @@ class Model(unittest.TestCase):
             sets.add(frozenset(pixels))
         self.assertEqual(len(sets), 40)
 
+    def test_webgl_readback_spares_what_is_one_exact_colour(self):
+        """Beryllium's rule for readPixels: a pixel whose neighbourhood in
+        the read is one colour comes back as read, so a page that picks an
+        object by the colour under the pointer gets that colour."""
+        rng = random.Random(8)
+        for _ in range(20):
+            token = rng.getrandbits(64)
+            for size in ((1, 1), (3, 3), (16, 9)):
+                flat = model.flat(*size, (10, 20, 30, 255))
+                self.assertEqual(model.webgl_readback(token, flat, *size, 5, 7), flat)
+            pixel = [(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), 255)]
+            self.assertEqual(model.webgl_readback(token, pixel, 1, 1, 3, 4), pixel)
+        # two colours side by side: only the pixels along the border may move
+        w, h = 12, 6
+        two = [(10, 20, 30, 255) if x < 6 else (200, 100, 50, 255)
+               for _ in range(h) for x in range(w)]
+        moved = set()
+        for token in (rng.getrandbits(64) for _ in range(30)):
+            out = model.webgl_readback(token, two, w, h)
+            moved |= {i % w for i, (a, b) in enumerate(zip(two, out)) if a != b}
+        self.assertTrue(moved)
+        self.assertLessEqual(moved, {5, 6})
+
+    def test_webgl_readback_noises_a_textured_read_as_getimagedata_is_noised(self):
+        rng = random.Random(9)
+        before = [(rng.randint(2, 253), rng.randint(2, 253), rng.randint(2, 253), 255)
+                  for _ in range(10 * 10)]
+        token = rng.getrandbits(64)
+        self.assertEqual(model.webgl_readback(token, before, 10, 10),
+                         model.noise_pixels(token, before, 10, 10, finalize=True))
+        self.assertNotEqual(model.webgl_readback(token, before, 10, 10), before)
+
     def test_fully_transparent_pixels_are_left_alone(self):
         before = model.flat(6, 6, (0, 0, 0, 0))
         self.assertEqual(model.noise_pixels(0x1234, before, 6, 6), before)

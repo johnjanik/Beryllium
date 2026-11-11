@@ -111,6 +111,7 @@ class State:
         self.done = set()
         self.expected = set()    # runs this program started
         self.accept_manual = accept_manual
+        self.refused = set()     # paths asked for that are not served (a few)
 
     def wanted(self, run):
         return run in self.expected or (self.accept_manual and str(run).startswith("manual-"))
@@ -128,7 +129,14 @@ def handler_for(state):
                 self.send_header("Location", "/battery.html")
                 self.end_headers()
                 return
+            if path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return
             if path not in FILES:
+                with state.lock:
+                    if len(state.refused) < 20:
+                        state.refused.add(path[:120])
                 self.send_error(404)
                 return
             name, kind = FILES[path]
@@ -166,11 +174,22 @@ def handler_for(state):
     return Handler
 
 
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """A browser that closes a connection before the answer is written
+        (it does, for things it asks for and does not wait on) is not an
+        error here and gets no traceback."""
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
+
+
 def start_servers(state, count):
     servers = []
     for _ in range(count):
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler_for(state))
-        server.daemon_threads = True
+        server = Server(("127.0.0.1", 0), handler_for(state))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         servers.append(server)
     return servers
@@ -382,6 +401,13 @@ def evaluate(report):
         e[name + "_exact"] = (copy.get("changed") == 0) if copy.get("available") else None
         e[name + "_as_getimagedata"] = (copy.get("sameAsGetImageData")
                                         if copy.get("available") else None)
+    reads = t.get("webglReads") or {}
+    there = bool(reads.get("available"))
+    e["webgl_picks_exact"] = (reads.get("picksExact") == reads.get("picks")
+                              and reads.get("blocksExact") == reads.get("picks")) if there else None
+    e["webgl_singles_exact"] = (reads.get("singlesExact") == reads.get("singles")
+                                if there else None)
+    e["webgl_flat_changed"] = reads.get("flatWholeChanged") if there else None
     noiseless = (which == "none" and e["textured_exact"] and e["mixed_exact"]
                  and e["dataurl_equal"] is not False and e["textured_dataurl_equal"] is not False)
     e["exact_everywhere"] = bool(noiseless)
@@ -440,7 +466,7 @@ def summarise(data):
          share(noised, "offscreen_blob_equal")),
         ("  convertToBlob: or those pixels with red and blue exchanged",
          share(noised, "offscreen_blob_exchanged")),
-        ("WebGL readPixels is noised",
+        ("WebGL readPixels changes a canvas cleared to one colour",
          share([dict(s, n=bool(s["webgl_readpixels"])) for s in noised if s["webgl"]], "n")),
         ("WebGL toDataURL changes one of the four sets",
          share([dict(s, n=s["webgl_dataurl_set"] is not None) for s in noised if s["webgl"]], "n")),
@@ -456,6 +482,12 @@ def summarise(data):
         ("A canvas copied into a WebGL texture reads back exact, without noise",
          share(noised, "webgl_texture_exact")
          + (f" (control: {share(controls, 'webgl_texture_exact')})" if controls else "")),
+        ("  or reads back with the noise of getImageData",
+         share(noised, "webgl_texture_as_getimagedata")),
+        ("WebGL: single pixels and 3 by 3 blocks of a flat colour read back exact",
+         share(noised, "webgl_picks_exact")),
+        ("WebGL: read one pixel at a time, a canvas comes back exact",
+         share(noised, "webgl_singles_exact")),
         ("A canvas copied into a video frame reads back exact, without noise",
          share(noised, "video_frame_exact")
          + (f" (control: {share(controls, 'video_frame_exact')})" if controls else "")),
@@ -604,6 +636,9 @@ def run(o):
             break
     for s in servers:
         s.shutdown()
+    with state.lock:
+        # what the browser asked this server for besides the battery's files
+        data["other_requests"] = sorted(state.refused)
     out = o.out or f"noise-battery-{data['label']}.json"
     with open(out, "w") as f:
         json.dump(data, f, indent=1)
@@ -615,7 +650,8 @@ def run(o):
 
 def selftest(o):
     """The battery against the stand-in noise: it must call the weak hash
-    weak, the good hash good and no noise none."""
+    weak, the good hash good and no noise none, and find each stand-in's
+    snapshots and WebGL reads as that stand-in makes them."""
     binary = need_browser(o)
     state = State()
     servers = start_servers(state, 3)
@@ -643,9 +679,25 @@ def selftest(o):
                 ("mixed image", "mixed_agrees_textured"))]
             checks.append(("offset follows the canvas",
                            all(s["offset_follows"] == "canvas" for s in samples) and bool(samples)))
+            checks.append(("a canvas through a WebGL texture is exact, as on Helium",
+                           all(s["webgl_texture_exact"] for s in samples) and bool(samples)))
         if name == "fixed":
             checks.append(("no five bits fit", all(not s["textured_fits"] for s in samples)
                            and bool(samples)))
+            checks += [(label, all(s[key] for s in samples) and bool(samples)) for label, key in (
+                ("toDataURL carries the noise of getImageData", "dataurl_equal"),
+                ("toBlob carries it", "blob_equal"),
+                ("convertToBlob carries it", "offscreen_blob_equal"),
+                ("the textured snapshot carries it", "textured_dataurl_equal"),
+                ("a canvas through a WebGL texture carries it",
+                 "webgl_texture_as_getimagedata"))]
+            checks.append(("a canvas through a WebGL texture is not exact",
+                           all(s["webgl_texture_exact"] is False for s in samples)
+                           and bool(samples)))
+        if name in ("weak", "fixed"):
+            checks += [(label, all(s[key] for s in samples) and bool(samples)) for label, key in (
+                ("one-pixel and 3 by 3 reads of flat colour exact", "webgl_picks_exact"),
+                ("one pixel at a time is exact", "webgl_singles_exact"))]
         if name == "none":
             checks.append(("every readback exact", all(s["exact_everywhere"] for s in samples)
                            and bool(samples)))
@@ -733,7 +785,8 @@ def main(argv=None):
                    help="skip the control profile with the noise switched off")
     p.add_argument("--simulate", choices=("weak", "fixed"),
                    help="a rehearsal, not a measurement: switch the browser's noise off and "
-                        "use the stand-in noise of sim.js (Helium's hash, or a fixed one)")
+                        "use the stand-in noise of sim.js: weak is Helium as measured, fixed "
+                        "is Beryllium as its patches for 0.20.3.18 intend")
     p = sub.add_parser("selftest", help="test the battery itself against stand-in noise")
     common(p, 3)
     p = sub.add_parser("serve", help="serve the page for a browser you open yourself")

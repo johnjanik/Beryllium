@@ -9,8 +9,10 @@ BATTERY_TEST_BROWSER set to a Chromium-family binary, the whole battery
 runs its self-test against it."""
 
 import ast
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -156,6 +158,47 @@ class Arithmetic(unittest.TestCase):
         self.assertEqual(out["exchanged"], [14])
         self.assertTrue(out["twice"])
 
+    def test_the_stand_ins_webgl_readback_is_the_python_models(self):
+        rng = random.Random(11)
+        cases = []
+        for n in range(40):
+            w, h = rng.randint(1, 9), rng.randint(1, 9)
+            pixels = []
+            for i in range(w * h):
+                x = i % w
+                if n % 4 == 0:      # flat
+                    pixels.append((100, 100, 100, 255))
+                elif n % 4 == 1:    # blocks of exact colours
+                    pixels.append(((x // 3) * 60, 7, 200, 255))
+                elif n % 4 == 2:    # textured
+                    pixels.append((rng.randint(2, 253), rng.randint(2, 253),
+                                   rng.randint(2, 253), 255))
+                else:               # half flat, half textured
+                    pixels.append((9, 9, 9, 255) if x < w // 2 else
+                                  (rng.randint(0, 255), rng.randint(0, 255),
+                                   rng.randint(0, 255), 255))
+            token, x, y = rng.getrandbits(64), rng.randint(0, 30), rng.randint(0, 30)
+            want = model.webgl_readback(token, pixels, w, h, x, y)
+            cases.append({"token": str(token), "w": w, "h": h, "x": x, "y": y,
+                          "src": [c for p in pixels for c in p],
+                          "want": [c for p in want for c in p],
+                          "flat": n % 4 == 0})
+        out = node("""
+            const sim = require(process.argv[1] + '/sim.js');
+            const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+            const bad = [];
+            cases.forEach((c, n) => {
+              const got = sim.webglReadback(BigInt(c.token), new Uint8ClampedArray(c.src),
+                                            c.w, c.h, c.x, c.y, true);
+              if (JSON.stringify([...got]) !== JSON.stringify(c.want)) bad.push(n);
+            });
+            console.log(JSON.stringify(bad));""", json.dumps(cases))
+        self.assertEqual(out, [])
+        for c in cases:
+            if c["flat"]:
+                self.assertEqual(c["want"], c["src"], "a flat read must come back exact")
+        self.assertTrue(any(c["want"] != c["src"] for c in cases if not c["flat"]))
+
     def test_an_exact_readback_fits_nothing_in_a_smooth_image(self):
         out = node("""
             const B = require(process.argv[1] + '/battery.js');
@@ -199,6 +242,9 @@ def page_report(which, origin="http://127.0.0.1:1", low5=None, simulated=None):
                 "offscreen": {"available": True, "sameAsCanvas": True,
                               "blobEqual": green or not weak, "blobExchanged": True},
                 "copies": {"webglTexture": copy, "videoFrame": dict(copy, format="RGBA")},
+                "webglReads": {"available": True, "singles": 96, "singlesExact": 96,
+                               "picks": 4, "picksExact": 4, "blocksExact": 4,
+                               "flatWholeChanged": 0},
                 "webgl": {"available": True, "readPixels": 0, "dataurl": count,
                           "dataurlSet": which if weak else None},
                 "textured": image, "mixed": dict(image, smooth=2390)}}
@@ -247,6 +293,46 @@ class Evaluate(unittest.TestCase):
         self.assertTrue(e["webgl_texture_exact"])
         self.assertTrue(e["video_frame_exact"])
         self.assertFalse(e["webgl_texture_as_getimagedata"])
+        self.assertTrue(e["webgl_picks_exact"])
+        self.assertTrue(e["webgl_singles_exact"])
+        self.assertEqual(e["webgl_flat_changed"], 0)
+
+    def test_a_pick_that_comes_back_wrong_is_seen(self):
+        """What noise on every WebGL read would do to a page that picks
+        objects by colour."""
+        report = page_report(3)
+        report["tests"]["webglReads"]["picksExact"] = 3
+        self.assertFalse(battery.evaluate(report)["webgl_picks_exact"])
+        report = page_report(3)
+        report["tests"]["webglReads"]["blocksExact"] = 2
+        self.assertFalse(battery.evaluate(report)["webgl_picks_exact"])
+
+    def test_a_site_as_the_patches_for_0_20_3_18_intend(self):
+        report = page_report("other")
+        t = report["tests"]
+        for name in ("dataurl", "blob"):
+            t[name]["equal"] = True
+        t["offscreen"]["blobEqual"] = True
+        for name in ("textured", "mixed"):
+            t[name]["dataurlEqual"] = True
+        t["copies"]["webglTexture"] = {"available": True, "changed": 2200,
+                                       "sameAsGetImageData": True}
+        t["webglReads"]["flatWholeChanged"] = 121
+        e = battery.evaluate(report)
+        self.assertTrue(e["dataurl_equal"] and e["blob_equal"] and e["offscreen_blob_equal"])
+        self.assertTrue(e["textured_dataurl_equal"])
+        self.assertFalse(e["webgl_texture_exact"])
+        self.assertTrue(e["webgl_texture_as_getimagedata"])
+        self.assertTrue(e["webgl_picks_exact"])
+        rows = dict(battery.summarise({"profiles": [{"kind": "measure", "samples": [e]}],
+                                       "machine": {}})[0])
+        self.assertEqual(
+            rows["A canvas copied into a WebGL texture reads back exact, without noise"],
+            "0 of 1")
+        self.assertEqual(rows["  or reads back with the noise of getImageData"], "1 of 1")
+        self.assertEqual(
+            rows["WebGL: single pixels and 3 by 3 blocks of a flat colour read back exact"],
+            "1 of 1")
 
     def test_a_snapshot_that_five_other_bits_explain_is_not_the_exchange(self):
         report = page_report(3)
@@ -266,6 +352,10 @@ class Evaluate(unittest.TestCase):
         self.assertIsNone(e["dataurl_exchanged"])
         self.assertIsNone(e["textured_dataurl_exchanged"])
         self.assertIsNone(e["webgl_texture_exact"])
+        del report["tests"]["webglReads"]
+        e = battery.evaluate(report)
+        self.assertIsNone(e["webgl_picks_exact"])
+        self.assertIsNone(e["webgl_singles_exact"])
         data = {"profiles": [{"kind": "measure", "samples": [e]}], "machine": {}}
         rows = dict(battery.summarise(data)[0])
         self.assertEqual(rows["  toDataURL: or those pixels with red and blue exchanged"],
@@ -453,6 +543,28 @@ class Server(unittest.TestCase):
         self.assertEqual(self.get("/sim.js")[0], 200)
         self.assertEqual(self.get("/battery")[0], 404)
         self.assertEqual(self.get("/../../README.md")[0], 404)
+
+    def test_a_request_for_something_else_is_refused_and_remembered(self):
+        self.assertEqual(self.get("/apple-touch-icon.png")[0], 404)
+        self.assertEqual(self.state.refused, {"/apple-touch-icon.png"})
+        self.assertEqual(self.get("/favicon.ico")[0], 204)
+        self.assertEqual(self.state.refused, {"/apple-touch-icon.png"})
+
+    def test_a_connection_the_browser_drops_prints_no_traceback(self):
+        """Helium on Fedora closed a connection while a 404 was being
+        written; the default handler printed a BrokenPipeError traceback
+        into the middle of the run (11 November 2026)."""
+        server = self.servers[0]
+        for error, printed in ((BrokenPipeError(32, "Broken pipe"), False),
+                               (ConnectionResetError(104, "reset"), False),
+                               (ValueError("a real fault"), True)):
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                try:
+                    raise error
+                except Exception:
+                    server.handle_error(None, ("127.0.0.1", 1))
+            self.assertEqual("Traceback" in captured.getvalue(), printed, repr(error))
 
     def test_results_arrive_on_every_port_for_a_run_it_started(self):
         self.assertEqual(self.post(self.ports[0], "/result",

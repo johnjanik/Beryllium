@@ -11,11 +11,19 @@
 // "simulated" and are never counted as measurements.
 //
 // heliumNoise() is model.py's noise_pixels() in JavaScript; the tests hold
-// the two together. A canvas snapshot (toDataURL, toBlob, convertToBlob)
-// is noised with red and blue exchanged, as Helium does where a snapshot
-// is stored blue, green, red: its source accepts that byte order as it is,
-// and Helium 0.21.2.1 was measured doing so on macOS and Linux on 11
-// November 2026. WebGL and video frames are not simulated.
+// the two together. The stand-in has two characters:
+//
+//   weak   Helium as measured on 11 November 2026 (0.21.2.1, macOS and
+//          Linux): its hash; a canvas snapshot (toDataURL, toBlob,
+//          convertToBlob) noised with red and blue exchanged; WebGL
+//          untouched.
+//   fixed  Beryllium as its patches for 0.20.3.18 intend: the hash
+//          finalized before each draw; a snapshot noised as getImageData
+//          is; and WebGL readPixels of four bytes a pixel noised too,
+//          except where a pixel's whole neighbourhood is one exact colour
+//          (model.py, webgl_readback).
+//
+// Video frames are not simulated in either.
 'use strict';
 
 (function () {
@@ -111,6 +119,29 @@
     return exchange(heliumNoise(token, exchange(src), width, height, 0, 0, finalize));
   }
 
+  // Beryllium's WebGL readback: the noise, and uniform neighbourhoods put
+  // back as they were read.
+  function webglReadback(token, src, width, height, x, y, finalize) {
+    const out = heliumNoise(token, src, width, height, x, y, finalize);
+    const at = (px, py) => 4 * (Math.min(Math.max(px, 0), width - 1) +
+                                Math.min(Math.max(py, 0), height - 1) * width);
+    for (let py = 0; py < height; py++) {
+      for (let px = 0; px < width; px++) {
+        const i = at(px, py);
+        let uniform = true;
+        for (let dy = -1; dy <= 1 && uniform; dy++) {
+          for (let dx = -1; dx <= 1 && uniform; dx++) {
+            const j = at(px + dx, py + dy);
+            uniform = src[j] === src[i] && src[j + 1] === src[i + 1] &&
+                      src[j + 2] === src[i + 2] && src[j + 3] === src[i + 3];
+          }
+        }
+        if (uniform) for (let c = 0; c < 4; c++) out[i + c] = src[i + c];
+      }
+    }
+    return out;
+  }
+
   // A token for this origin from a seed, as Helium derives one per origin.
   function tokenFor(seed, origin) {
     let h = BigInt.asUintN(64, BigInt(seed)) ^ 0xcbf29ce484222325n;
@@ -142,7 +173,9 @@
       const real = realGet.get(Object.getPrototypeOf(context).constructor) ||
                    realGet.get(CanvasRenderingContext2D);
       const image = real.call(context, 0, 0, canvas.width, canvas.height);
-      image.data.set(snapshotNoise(token, image.data, image.width, image.height, finalize));
+      image.data.set(finalize ?
+        heliumNoise(token, image.data, image.width, image.height, 0, 0, true) :
+        snapshotNoise(token, image.data, image.width, image.height, false));
       const copy = make(canvas.width, canvas.height);
       copy.getContext('2d').putImageData(image, 0, 0);
       return copy;
@@ -162,10 +195,27 @@
         return realConvert.apply(copyOf(this, (w, h) => new OffscreenCanvas(w, h)) || this, args);
       };
     }
+    if (finalize) {
+      // readPixels into an array, with the default pack parameters
+      const kinds = [];
+      if (typeof WebGLRenderingContext !== 'undefined') kinds.push(WebGLRenderingContext);
+      if (typeof WebGL2RenderingContext !== 'undefined') kinds.push(WebGL2RenderingContext);
+      for (const kind of kinds) {
+        const realRead = kind.prototype.readPixels;
+        kind.prototype.readPixels = function (x, y, w, h, format, type, pixels, ...rest) {
+          realRead.call(this, x, y, w, h, format, type, pixels, ...rest);
+          if (format === this.RGBA && type === this.UNSIGNED_BYTE && w > 0 && h > 0 &&
+              pixels && !rest.length && pixels.byteLength >= w * h * 4) {
+            const block = new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, w * h * 4);
+            block.set(webglReadback(token, new Uint8ClampedArray(block), w, h, x, y, true));
+          }
+        };
+      }
+    }
     return token;
   }
 
-  const NoiseSim = {heliumNoise, snapshotNoise, tokenFor, install};
+  const NoiseSim = {heliumNoise, snapshotNoise, webglReadback, tokenFor, install};
   if (typeof module !== 'undefined') module.exports = NoiseSim;
   else globalThis.NoiseSim = NoiseSim;
 })();
