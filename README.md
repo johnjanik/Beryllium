@@ -196,13 +196,16 @@ into a gate that fails on any unconfined renderer.
 
 #### Still to finish
 
-In the order they are planned ([plan/14](plan/14-RENDERER-SANDBOX.md)
-has the detail and the results of each build):
+In the order they are planned.
+[plan/18](plan/18-REMAINING-WORK.md) takes each item in turn: where it
+stands, the design, the work, the tests, and how it is to be attacked.
+[plan/14](plan/14-RENDERER-SANDBOX.md) has the results of each build.
 
-1. **What the GPU process sends a renderer** is cut by the receiver
+1. **What other child processes send a renderer** is cut by the receiver
    only. The browser cuts every descriptor it sends a confined renderer
-   before sending it, but the transports between a renderer and the GPU
-   process carry no sender-side cut yet.
+   before sending it, but the direct connections between a renderer and
+   the GPU process, the network service and the storage service carry no
+   sender-side cut yet.
 2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
    a `beryllium://sandbox` page shows the answer per process.
@@ -212,12 +215,16 @@ has the detail and the results of each build):
    runs made so far.
 4. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
-5. **Signed releases.** Signing `SHA256SUMS` with a key kept off GitHub,
-   verified by `install.sh`; the proposal is in plan/16.
+5. **Signed releases.** Signing each release with a key kept off GitHub,
+   verified by `install.sh`; the proposal is in plan/16 and its tests and
+   gaps (replay of an old signed release among them) in plan/18.
 6. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
-7. **WebGPU** finds no adapter.
+7. **WebGPU** finds no adapter. Chromium gives Linux and BSD a WebGPU
+   adapter only when the GPU process uses Vulkan, which it does not here;
+   plan/18 recommends turning WebGPU off deliberately until the GPU
+   process has a policy.
 
 ## Install
 

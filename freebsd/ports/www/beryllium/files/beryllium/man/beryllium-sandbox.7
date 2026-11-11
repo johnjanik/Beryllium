@@ -214,8 +214,10 @@ sandbox.
 .It
 The browser, GPU, network, storage and audio processes are not confined.
 .It
-What the GPU process sends a renderer directly is limited by the
+What another child process sends a renderer directly is limited by the
 receiving renderer only.
+The GPU process, the network service and the storage service each hold
+a direct connection to a renderer.
 .It
 The browser does not yet ask the kernel whether a renderer is confined
 before giving it a page; the checks in

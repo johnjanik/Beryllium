@@ -732,8 +732,18 @@ FreeBSD test bed, so an increment must be worth a build.
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
    shows the kernel's answer per process; the release's sandbox table
    changes from "not confined".
+   [18-REMAINING-WORK.md](18-REMAINING-WORK.md) section 2 has the design
+   (the check is made when the renderer's channel connects and takes
+   nothing from the renderer's own report), the tests and the attacks.
 6. **Default on, fail closed** in the production package; the devel package
-   keeps the switch.
+   keeps the switch. What has to be true first, and how the default
+   changes in two steps, is in 18-REMAINING-WORK.md section 3.
+
+Everything still to do after 0.20.3.17 (the sender-side cut on every
+link to a renderer, attestation, the default, the other processes,
+signing, assurance, WebGPU) is planned in
+[18-REMAINING-WORK.md](18-REMAINING-WORK.md), with a test plan and a
+red-team plan for each.
 
 ## 4. Open items
 
