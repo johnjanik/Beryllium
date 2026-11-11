@@ -231,9 +231,9 @@ priority = "should"
 phase = 1
 implemented = "inherited"
 built = "v0.20.3.1-1"
-tested = "manual"
+tested = "failing"
 tests = ["freebsd/tests/browser/tests/test_80_youtube.py::test_watch_video"]
-evidence = "owner, 0.20.3.1, 4 Nov 2026; the --network test has not been rerun"
+evidence = "owner, 0.20.3.1, 4 Nov 2026, by hand; owner, 0.20.3.17, 11 Nov 2026, the suite's first run with the network since 3 Nov: the player showed 'Something went wrong. Refresh or try again later.' through 58 s, the video element at time 0 with no data (readyState 0) and no media error, AV1 480p and Opus chosen; everything else in that run passed, local playback of every codec included. Cause unknown: the suite's profile is new and driven over DevTools; the bundled uBlock Origin's lists are as old as the build, its updates going through the online services, which are off; or the build. The test recorded nothing that tells these apart and from this date reports YouTube's playability status, the player's error fields, failed requests and error responses by host, and console errors, and skips when YouTube itself refuses the session (tried from a data centre address, where YouTube answered LOGIN_REQUIRED). Not yet checked: the same video by hand in 0.20.3.17"
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11"]
 
 [[feature]]
@@ -2404,6 +2404,6 @@ built = "no"
 tested = "passing"
 where = ["man/beryllium.1", "man/beryllium-sandbox.7", "freebsd/tools/check-man", "freebsd/ports/www/beryllium/Makefile (BERYLLIUM_MANPAGES)"]
 tests = ["freebsd/tools/tests/test_check_man.py"]
-evidence = "cloud session, 10 Nov 2026: both pages pass check-man and mandoc -T lint -W warning; CI runs the same on every push. Not yet read from an installed package; 0.20.3.17 (released 10 Nov 2026) is the first package built with them; still not confirmed read from an installed package"
+evidence = "cloud session, 10 Nov 2026: both pages pass check-man and mandoc -T lint -W warning; CI runs the same on every push. Not yet read from an installed package; 0.20.3.17 (released 10 Nov 2026) is the first package built with them; still not confirmed read from an installed package; owner, 11 Nov 2026: the manual page works from the installed 0.20.3.17 package"
 source = ["plan/17-DOCUMENTATION.md"]
 notes = "Releases up to 0.20.3.12 installed Chromium's generic page with its placeholders unreplaced (the port's substitution no longer matches Chromium's file). From revision 17 the port installs beryllium(1) and beryllium-sandbox(7) from man/ with the version and prefix filled in. Still to write: beryllium-policies(5), beryllium-privacy(7), the handbook under share/doc."
