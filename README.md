@@ -34,8 +34,8 @@ Current release: **Beryllium 0.20.3.17**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole offline test suite passes on 0.20.3.17, with the renderer lockdown on and without it (11 November 2026). The one test that needs the network, YouTube playback, failed in its run; see [Known issues](#known-issues).
-- **Works:** browsing; video playback in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole offline test suite passes on 0.20.3.17, with the renderer lockdown on and without it (11 November 2026). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
 
@@ -293,17 +293,16 @@ set it, and the launcher will not start the browser without it.
   package. (Releases up to 0.20.3.12 brought no font for Chinese,
   Japanese, Korean or emoji: `pkg install noto-sans-sc noto-emoji` there.)
 - **WebGPU** finds no adapter.
-- **YouTube in the test suite.** In the suite's run with the network on
-  0.20.3.17 (11 November 2026), YouTube's player showed "Something went
-  wrong. Refresh or try again later." and the video never started. The
-  cause is not known yet. The suite uses a new, empty profile driven over
-  DevTools, which YouTube may refuse where it would serve a person's
-  browser; YouTube was last confirmed playing, by hand, on 0.20.3.1. One
-  thing can break YouTube as a build ages: the bundled uBlock Origin gets
-  its filter lists through the online services, and with those off (the
-  default) its lists stay as old as the build. The test now reports
-  YouTube's own answer, the failed requests and the console errors when a
-  video does not play.
+- **YouTube under the test suite.** YouTube plays in ordinary use
+  (checked by hand on 0.20.3.17). In the suite's session, a new profile
+  driven over DevTools, the video plays for about 45 seconds and then
+  YouTube's streaming server rejects the session: the player shows
+  "Something went wrong. Refresh or try again later." (error code
+  `ump.spsrejectfailure`), which is what that server does to a session it
+  cannot attest as an ordinary browser. The test judges playback up to
+  that point and notes the rejection. If you see that message in ordinary
+  use, it is worth reporting, with the "Copy debug info" text from the
+  player's right-click menu.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
   compositor announces as its own. `--render-node-override` names another,
   and that works only if the compositor can import that GPU's buffers. On

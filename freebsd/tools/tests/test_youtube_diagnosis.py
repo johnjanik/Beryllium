@@ -139,6 +139,43 @@ class DescribeFailure(unittest.TestCase):
         self.assertFalse(youtube.refused_by_youtube({"status": None}))
 
 
+# The player's own error from the owner's 0.20.3.17 run of 11 November 2026,
+# as the report printed it (the test keeps the first 300 characters).
+REJECTED = ('{"errorCode":"ump.spsrejectfailure","errorMessage":"Something went wrong. Refresh '
+            'or try again later. $BEGIN_LINKLearn more$END_LINK","FL":"HTML5_SPS_UMP_STATUS_REJECTED",'
+            '"nn":"","sI":"rn.16;rt.54;lb.123;stall.0;ht.53;elt.NaN;elb.0;ulb.0;ult.0;pb.1;pt.44;'
+            'se.0;shost.rr1---sn-h5bupjvh-ucnr.googlevideo')
+
+
+class StreamProtection(unittest.TestCase):
+    def test_the_rejection_of_11_november(self):
+        d = {"status": "OK", "reason": None,
+             "debug": {"debug_error": REJECTED, "debug_playbackQuality": "large", "state": "80"}}
+        self.assertTrue(youtube.rejected_by_stream_protection(d))
+        # YouTube had answered OK for the video: not a refusal of the session up front
+        self.assertFalse(youtube.refused_by_youtube(d))
+
+    def test_either_code_is_enough(self):
+        for text in ('{"errorCode":"ump.spsrejectfailure"}', '{"FL":"HTML5_SPS_UMP_STATUS_REJECTED"}'):
+            self.assertTrue(youtube.rejected_by_stream_protection({"debug": {"debug_error": text}}))
+
+    def test_other_errors_are_not_it(self):
+        for d in (None, {}, {"debug": {}}, {"debug": {"debug_error": '{"errorCode":"fmt.decode"}'}},
+                  {"debug": {"vec": "3"}}):
+            self.assertFalse(youtube.rejected_by_stream_protection(d))
+
+
+class BestSample(unittest.TestCase):
+    def test_furthest_into_the_video(self):
+        samples = [{"t": 0, "dropped": 0}, {"t": 12.5, "dropped": 1}, {"t": 44.1, "dropped": 2},
+                   {"t": 0, "dropped": 0, "playerError": "Something went wrong"}]
+        self.assertEqual(youtube.best_sample(samples)["dropped"], 2)
+
+    def test_nothing_played(self):
+        self.assertIsNone(youtube.best_sample([]))
+        self.assertIsNone(youtube.best_sample([{"t": 0}, {"t": None}]))
+
+
 class Probe(unittest.TestCase):
     def test_the_page_script_reads_the_answer_and_the_error_fields(self):
         for needle in ("getPlayerResponse", "playabilityStatus", "getDebugText", "debug_error"):

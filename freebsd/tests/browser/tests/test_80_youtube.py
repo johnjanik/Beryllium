@@ -10,7 +10,19 @@ fields, the requests that failed or came back with an error status, by
 host, and the page's console errors. A session YouTube asks to sign in
 ("confirm you're not a bot") is skipped, not failed: the suite's profile is
 new and driven over DevTools, and that refusal says nothing about the
-browser."""
+browser.
+
+The same goes for YouTube's stream protection. Its streaming server serves
+a session it cannot attest as an ordinary browser for a while and then
+rejects it: the player shows "Something went wrong. Refresh or try again
+later." with error code ump.spsrejectfailure. On 0.20.3.17 (11 November
+2026) that came after 44 s of normal playback in the suite, while the same
+video played on in the owner's own session of the same build. So playback
+is judged up to that rejection: enough of it passes, with the rejection
+noted; too little is skipped. Any other player error, a media error or a
+crash still fails. The page gets no Runtime domain, the one DevTools
+domain a page can notice; whether that changes YouTube's verdict is not
+known."""
 
 import collections
 import json
@@ -152,6 +164,24 @@ def describe_failure(diagnosis, failed, refused, errors):
     return lines
 
 
+# The player's codes for its streaming server ending a session it would not
+# attest (ump: the streaming protocol; sps: stream protection status).
+STREAM_PROTECTION = ("ump.spsrejectfailure", "HTML5_SPS_UMP_STATUS_REJECTED")
+
+
+def rejected_by_stream_protection(diagnosis):
+    """The player's error is YouTube's streaming server rejecting the session,
+    not something the browser failed to do."""
+    error = ((diagnosis or {}).get("debug") or {}).get("debug_error", "")
+    return any(code in error for code in STREAM_PROTECTION)
+
+
+def best_sample(samples):
+    """The sample furthest into the video, or None."""
+    playing = [s for s in samples if s.get("t")]
+    return max(playing, key=lambda s: s["t"]) if playing else None
+
+
 def refused_by_youtube(diagnosis):
     """YouTube declined to serve this session at all (it wants a sign-in, or
     says the video cannot be played here): the browser's playback was never
@@ -166,7 +196,7 @@ class YouTube(BrowserTest):
     def test_watch_video(self):
         """A YouTube video plays for the watch period without a crash."""
         opts = self.ctx.options
-        page = self.browser.new_page()
+        page = self.browser.new_page(domains=("Page", "Inspector"))
         samples = []
         mark = self.browser.conn.mark()
         for domain in ("Network", "Log"):
@@ -218,6 +248,20 @@ class YouTube(BrowserTest):
                               f"{diagnosis.get('status')} ({diagnosis.get('reason')}); the "
                               "suite's profile is new and driven over DevTools. Play the "
                               "video in Beryllium by hand to check playback itself")
+            media_errors = [s["mediaError"] for s in samples if s.get("mediaError")]
+            if rejected_by_stream_protection(diagnosis) and not media_errors:
+                best = best_sample(samples)
+                verdict = (f"played {played:.0f} s"
+                           + (f" ({best.get('resolution')}, {best.get('dropped')} frames dropped)"
+                              if best else "")
+                           + ", then YouTube's stream protection rejected the session "
+                           "(ump.spsrejectfailure): its server would not attest a new profile "
+                           "driven over DevTools. Not a playback fault; the video plays on in "
+                           "an ordinary session")
+                self.note(verdict)
+                if played > opts.watch / 3:
+                    return  # enough playback, without a crash or a media error
+                self.skipTest(verdict + f". {played:.0f} s is too little to judge playback by")
         self.assertTrue(samples and samples[-1]["video"], "no video element found")
         self.assertEqual(errors[:1], [], "the player reported an error")
         self.assertGreater(played, opts.watch / 3, "playback did not advance")
