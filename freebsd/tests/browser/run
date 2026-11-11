@@ -10,12 +10,17 @@ throwaway profiles (your own profile is never used), and writes a report.
   freebsd/tests/browser/run --lockdown      with the renderer lockdown on
   freebsd/tests/browser/run media pages     only some groups (test file names)
   freebsd/tests/browser/run --list          list the tests
+  freebsd/tests/browser/run --lockdown --repeat 100
+                                            a hundred runs, one after another
+  freebsd/tests/browser/run --tally         how many clean lockdown runs in a
+                                            row, from the ledger of every run
 
 Windows open while it runs unless you pass --headless (tests that inspect
 the browser's own toolbar need a window and are skipped headless).
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -25,7 +30,10 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from berytest import capsicum, context, runner  # noqa: E402
+from berytest import capsicum, context, runner, soak  # noqa: E402
+
+# Set for the runs a --repeat makes, so that each makes one run and no more.
+REPEAT_CHILD = "BERYTEST_REPEAT_CHILD"
 
 LOCKDOWN_SWITCH = "--enable-features=BerylliumCapsicumRenderer"
 
@@ -115,7 +123,19 @@ def options(argv):
                          "~/.config/beryllium; copied into a throwaway profile, your profile "
                          "is not opened)")
     ap.add_argument("--list", action="store_true", help="list the tests and exit")
+    ap.add_argument("--repeat", type=int, metavar="N", default=0,
+                    help="make N runs, one after another, each in its own directory under "
+                         "the results directory")
+    ap.add_argument("--tally", action="store_true",
+                    help="say how many whole-suite lockdown runs in a row were clean, per "
+                         "package version, from the ledger, and exit")
+    ap.add_argument("--ledger", default=soak.default_ledger(),
+                    help="the file every run adds one line to (default: %(default)s)")
     o = ap.parse_args(argv)
+    if o.repeat < 0:
+        ap.error("--repeat needs a number of runs")
+    if os.environ.get(REPEAT_CHILD):
+        o.repeat = 0
     if o.lockdown and not capsicum.lockdown_requested(o):
         add_lockdown(o.browser_args)
     if not o.results:
@@ -156,20 +176,71 @@ def tests_of(suite):
             yield t
 
 
+def record(o):
+    """Add this run's line to the ledger. A ledger that cannot be written
+    is said and does not change the run's result."""
+    try:
+        with open(os.path.join(o.results, "report.json")) as f:
+            report = json.load(f)
+        soak.append(o.ledger, soak.entry_from_report(report, soak.boot_time(), o.results))
+    except (OSError, ValueError) as e:
+        print(f"This run was not added to the ledger ({o.ledger}): {e}")
+
+
+def repeat_lines(o):
+    lines = [f"Repeat: {o.repeat} runs, one after another, under {o.results}",
+             f"Ledger: {o.ledger}"]
+    if not capsicum.lockdown_requested(o) or o.groups:
+        lines.append("These runs are recorded and do not count toward the bar for turning "
+                     "the lockdown on by default: that takes --lockdown and no group names")
+    return lines
+
+
+def repeat_runs(o, argv):
+    """Make o.repeat runs of this same command line, each a process of its
+    own, so that a run that hangs or dies does not end the night."""
+    print("\n".join(repeat_lines(o)))
+    env = dict(os.environ, **{REPEAT_CHILD: "1"})
+    package = runner.system_info()["beryllium_package"]
+
+    def launch(results):
+        command = [sys.executable, os.path.abspath(__file__), *argv,
+                   "--results", results, "--ledger", o.ledger]
+        return soak.run_once(lambda: subprocess.Popen(command, env=env,
+                                                      start_new_session=True))
+
+    def describe(outcome, started, seconds, results):
+        return soak.entry_without_report(
+            outcome, started, seconds, soak.boot_time(), package,
+            capsicum.lockdown_requested(o), not o.groups, o.headless, results)
+
+    status = soak.repeat(o.repeat, o.results, o.ledger, launch, describe)
+    print("\n".join(soak.tally_lines(soak.read(o.ledger))))
+    return status
+
+
 def main(argv=None):
-    o = options(argv if argv is not None else sys.argv[1:])
+    argv = list(argv if argv is not None else sys.argv[1:])
+    o = options(argv)
+    if o.tally:
+        print("\n".join(soak.tally_lines(soak.read(o.ledger))))
+        return 0
     suite = load(o.groups)
     if o.list:
         for t in tests_of(suite):
             doc = (t.shortDescription() or "").strip()
             print(f"{t.id()}" + (f"\n    {doc}" if doc else ""))
         return 0
+    if o.repeat:
+        return repeat_runs(o, argv)
     context.CTX = ctx = context.Context(o)
     print("\n".join(start_lines(o, proc_debug_setting())))
     try:
-        return runner.run(ctx, suite)
+        status = runner.run(ctx, suite)
     finally:
         ctx.close()
+    record(o)
+    return status
 
 
 if __name__ == "__main__":

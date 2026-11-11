@@ -52,7 +52,7 @@ jobs:
       - name: Shell syntax
         run: sh -n freebsd/tests/capsicum-standalone/run-oracle.sh && sh -n freebsd/tools/baseline-collect.sh
       - name: ShellCheck on the installer and release tool
-        run: shellcheck -s sh install.sh freebsd/tools/publish-release
+        run: shellcheck -s sh install.sh freebsd/tools/publish-release freebsd/tools/gpu-probe
       - name: Browser test suite harness (against the runner's Chrome)
         # The Beryllium-specific checks need Beryllium; these groups pass on
         # any Chromium and keep the harness itself working.
