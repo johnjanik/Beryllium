@@ -707,6 +707,25 @@ FreeBSD test bed, so an increment must be worth a build.
    manual pages read from the installed package. The whole suite last ran
    on 0.20.3.16, from which this build differs by those three patches and
    the manual pages.
+   **The whole suite on 0.20.3.17 (11 November 2026, two runs,
+   `unprivileged_proc_debug=1`): everything passes, without the lockdown
+   and with it.** With the lockdown: the gate passes a second time, four
+   lockdown reports with `threads=1` and `CrRendererMain`, 20 to 36
+   descriptors per renderer and none outside the policy, the browser
+   cutting 1 to 83 per renderer, and the thread probe again finding one
+   thread at both moments. Canvas noise, the hash patch's first test:
+   1016 and 994 pixels moved on the two origins in one session, 1022 and
+   1000 in the other, different pixels each time, and none of the four
+   sets the old hash chose from; a channel and direction that differ
+   between the sessions (red up, blue down). The counts are no longer
+   982, 998, 1031 or 1085. Media, pages, fonts, the toolbar, the idle
+   network checks and the stability tests as before, in both runs. One
+   change in the machine since the 0.20.3.16 runs: both displays now
+   report HDR (PQ transfer, 10 bits per component, `screen` depth 30),
+   and the canvas sweeps are still exact on the CPU and the default
+   canvas. Skipped as always without their switches: the YouTube test
+   (`--network`) and the two diagnostic groups. Still not seen: the
+   manual pages read from the installed package.
    **Then attestation** (next, build 0.20.3.18): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
