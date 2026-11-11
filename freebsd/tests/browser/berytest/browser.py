@@ -338,12 +338,15 @@ class Browser:
 
     # -- pages -----------------------------------------------------------------
 
-    def new_page(self, url=None, timeout=45):
+    def new_page(self, url=None, timeout=45, domains=("Page", "Runtime", "Inspector")):
+        """A new tab with a DevTools session. domains are the DevTools domains
+        switched on for it; scripts can be evaluated without the Runtime
+        domain, which is the one a page can notice."""
         tid = self.conn.send("Target.createTarget", {"url": "about:blank"})["targetId"]
         sid = self.conn.send("Target.attachToTarget",
                              {"targetId": tid, "flatten": True})["sessionId"]
         page = Page(self.conn, tid, sid)
-        for domain in ("Page", "Runtime", "Inspector"):
+        for domain in domains:
             try:
                 page.send(f"{domain}.enable")
             except CDPError:
