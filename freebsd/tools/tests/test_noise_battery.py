@@ -131,6 +131,31 @@ class Arithmetic(unittest.TestCase):
         self.assertGreater(fixed["closestWrong"], 1000)
         self.assertIsNone(fixed["canvas"])
 
+    def test_a_snapshot_is_the_same_arithmetic_with_red_and_blue_exchanged(self):
+        out = node("""
+            const B = require(process.argv[1] + '/battery.js');
+            const sim = require(process.argv[1] + '/sim.js');
+            const token = 0x0123456789ABCDEEn;
+            const grey = new Uint8ClampedArray(20 * 20 * 4);
+            for (let i = 0; i < grey.length; i += 4) { grey[i] = grey[i+1] = grey[i+2] = 100; grey[i+3] = 255; }
+            const image = B.randomImage(48, 48, 20261111);
+            const direct = sim.heliumNoise(token, image, 48, 48, 0, 0, false);
+            const snapshot = sim.snapshotNoise(token, image, 48, 48, false);
+            console.log(JSON.stringify({
+              greyIsTheExchange: B.sameList(sim.snapshotNoise(token, grey, 20, 20, false),
+                                            B.exchanged(sim.heliumNoise(token, grey, 20, 20, 0, 0, false))),
+              texturedDiffers: !B.sameList(direct, snapshot),
+              direct: B.findLow5(image, direct, 48, 48).fits,
+              asRead: B.findLow5(image, snapshot, 48, 48).fits,
+              exchanged: B.findLow5(B.exchanged(image), B.exchanged(snapshot), 48, 48).fits,
+              twice: B.sameList(B.exchanged(B.exchanged(image)), image)}));""")
+        self.assertTrue(out["greyIsTheExchange"])
+        self.assertTrue(out["texturedDiffers"])
+        self.assertEqual(out["direct"], [14])
+        self.assertEqual(out["asRead"], [], "read as it stands, no five bits explain a snapshot")
+        self.assertEqual(out["exchanged"], [14])
+        self.assertTrue(out["twice"])
+
     def test_an_exact_readback_fits_nothing_in_a_smooth_image(self):
         out = node("""
             const B = require(process.argv[1] + '/battery.js');
@@ -157,7 +182,11 @@ def page_report(which, origin="http://127.0.0.1:1", low5=None, simulated=None):
              "textured": 2304, "constraints": 0 if which == "none" else 4500,
              "fits": [low5] if weak else ([] if which == "other" else list(range(32))),
              "closest": 0, "closestWrong": 0 if which != "other" else 2200, "tooFar": 0,
-             "alphaChanged": 0, "dataurlEqual": True}
+             "alphaChanged": 0, "dataurlEqual": not weak,
+             # Helium noises a snapshot with red and blue exchanged
+             "dataurlExchangedFits": [low5] if weak else None}
+    green = bool(step) and step[0].split()[1] != "0"
+    copy = {"available": True, "changed": 0, "sameAsGetImageData": which == "none"}
     return {"battery": 1, "origin": origin, "ua": "Mozilla/5.0 Chrome/156", "brands": [],
             "cores": 8, "simulated": simulated, "errors": {}, "tests": {
                 "flat": {"count": count, "steps": step, "set": which if weak else None,
@@ -165,8 +194,11 @@ def page_report(which, origin="http://127.0.0.1:1", low5=None, simulated=None):
                 "fills": [{"same": True if weak else None, "steps": step}] * 5,
                 "direction": {"applies": weak, "ok": True},
                 "offset": {"applies": weak, "follows": "canvas"},
-                "dataurl": {"equal": True, "count": count}, "blob": {"equal": True},
-                "offscreen": {"available": True, "sameAsCanvas": True, "blobEqual": True},
+                "dataurl": {"equal": green or not weak, "exchanged": True, "count": count},
+                "blob": {"equal": green or not weak, "exchanged": True},
+                "offscreen": {"available": True, "sameAsCanvas": True,
+                              "blobEqual": green or not weak, "blobExchanged": True},
+                "copies": {"webglTexture": copy, "videoFrame": dict(copy, format="RGBA")},
                 "webgl": {"available": True, "readPixels": 0, "dataurl": count,
                           "dataurlSet": which if weak else None},
                 "textured": image, "mixed": dict(image, smooth=2390)}}
@@ -205,6 +237,39 @@ class Evaluate(unittest.TestCase):
         self.assertTrue(e["low5_agrees_flat"])
         self.assertTrue(e["mixed_agrees_textured"])
         self.assertFalse(e["exact_everywhere"])
+        # a step on red or blue: the snapshot differs, and is the exchange
+        self.assertFalse(e["dataurl_equal"])
+        self.assertTrue(e["dataurl_exchanged"])
+        self.assertTrue(e["blob_exchanged"])
+        self.assertTrue(e["offscreen_blob_exchanged"])
+        self.assertFalse(e["textured_dataurl_equal"])
+        self.assertTrue(e["textured_dataurl_exchanged"])
+        self.assertTrue(e["webgl_texture_exact"])
+        self.assertTrue(e["video_frame_exact"])
+        self.assertFalse(e["webgl_texture_as_getimagedata"])
+
+    def test_a_snapshot_that_five_other_bits_explain_is_not_the_exchange(self):
+        report = page_report(3)
+        report["tests"]["textured"]["dataurlExchangedFits"] = [1]
+        self.assertFalse(battery.evaluate(report)["textured_dataurl_exchanged"])
+
+    def test_a_report_of_the_first_battery_still_reads(self):
+        """Result files made before the snapshot and copy tests were added."""
+        report = page_report(2)
+        del report["tests"]["copies"]
+        for name in ("dataurl", "blob"):
+            del report["tests"][name]["exchanged"]
+        del report["tests"]["offscreen"]["blobExchanged"]
+        del report["tests"]["textured"]["dataurlExchangedFits"]
+        e = battery.evaluate(report)
+        self.assertEqual(e["set"], 2)
+        self.assertIsNone(e["dataurl_exchanged"])
+        self.assertIsNone(e["textured_dataurl_exchanged"])
+        self.assertIsNone(e["webgl_texture_exact"])
+        data = {"profiles": [{"kind": "measure", "samples": [e]}], "machine": {}}
+        rows = dict(battery.summarise(data)[0])
+        self.assertEqual(rows["  toDataURL: or those pixels with red and blue exchanged"],
+                         "does not apply")
 
     def test_five_bits_that_contradict_the_flat_fill_are_seen(self):
         e = battery.evaluate(page_report(3, low5=6))
@@ -260,6 +325,16 @@ class Summary(unittest.TestCase):
                          "6 of 6")
         self.assertTrue(rows["Pairs of sites in one profile with the same changed pixels"]
                         .startswith("2 of 6"))
+        # the canned reports all step on red: no snapshot equals
+        # getImageData, and every one is the exchange
+        self.assertEqual(rows["toDataURL gives the same pixels as getImageData"], "0 of 6")
+        self.assertEqual(rows["  toDataURL: or those pixels with red and blue exchanged"],
+                         "6 of 6")
+        self.assertEqual(rows["  or the same five bits explain it with red and blue exchanged"],
+                         "6 of 6")
+        self.assertEqual(
+            rows["A canvas copied into a WebGL texture reads back exact, without noise"],
+            "6 of 6 (control: 1 of 1)")
 
     def test_results_made_with_the_stand_in_noise_say_so(self):
         data = result_file("x", [])

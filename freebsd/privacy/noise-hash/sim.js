@@ -11,7 +11,11 @@
 // "simulated" and are never counted as measurements.
 //
 // heliumNoise() is model.py's noise_pixels() in JavaScript; the tests hold
-// the two together.
+// the two together. A canvas snapshot (toDataURL, toBlob, convertToBlob)
+// is noised with red and blue exchanged, as Helium does where a snapshot
+// is stored blue, green, red: its source accepts that byte order as it is,
+// and Helium 0.21.2.1 was measured doing so on macOS and Linux on 11
+// November 2026. WebGL and video frames are not simulated.
 'use strict';
 
 (function () {
@@ -96,6 +100,17 @@
     return out;
   }
 
+  function exchange(data) {
+    const out = new Uint8ClampedArray(data);
+    for (let i = 0; i < out.length; i += 4) { out[i] = data[i + 2]; out[i + 2] = data[i]; }
+    return out;
+  }
+
+  // What a snapshot of the whole canvas comes back as.
+  function snapshotNoise(token, src, width, height, finalize) {
+    return exchange(heliumNoise(token, exchange(src), width, height, 0, 0, finalize));
+  }
+
   // A token for this origin from a seed, as Helium derives one per origin.
   function tokenFor(seed, origin) {
     let h = BigInt.asUintN(64, BigInt(seed)) ^ 0xcbf29ce484222325n;
@@ -126,7 +141,8 @@
       if (!context) return null;                 // WebGL: not simulated
       const real = realGet.get(Object.getPrototypeOf(context).constructor) ||
                    realGet.get(CanvasRenderingContext2D);
-      const image = noised(real.call(context, 0, 0, canvas.width, canvas.height), 0, 0);
+      const image = real.call(context, 0, 0, canvas.width, canvas.height);
+      image.data.set(snapshotNoise(token, image.data, image.width, image.height, finalize));
       const copy = make(canvas.width, canvas.height);
       copy.getContext('2d').putImageData(image, 0, 0);
       return copy;
@@ -149,7 +165,7 @@
     return token;
   }
 
-  const NoiseSim = {heliumNoise, tokenFor, install};
+  const NoiseSim = {heliumNoise, snapshotNoise, tokenFor, install};
   if (typeof module !== 'undefined') module.exports = NoiseSim;
   else globalThis.NoiseSim = NoiseSim;
 })();

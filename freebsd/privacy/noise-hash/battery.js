@@ -198,6 +198,16 @@ function findLow5(img, out, width, height, ox, oy) {
   return {fits, best};
 }
 
+// The same RGBA bytes with red and blue exchanged. Helium noises a canvas
+// snapshot (toDataURL, toBlob, convertToBlob) in the snapshot's own byte
+// order, which on most machines is blue, green, red, alpha: the same
+// arithmetic, seen from the page with red and blue exchanged.
+function exchanged(data) {
+  const out = new Uint8ClampedArray(data);
+  for (let i = 0; i < out.length; i += 4) { out[i] = data[i + 2]; out[i + 2] = data[i]; }
+  return out;
+}
+
 // xorshift32: the same test images on every machine.
 function generator(seed) {
   let s = (seed >>> 0) || 1;
@@ -306,5 +316,5 @@ async function decodePng(bytes) {
 
 const NoiseBattery = {mix64, mixLow, step, at, isSmooth, contentLow, smoothChanges, direction,
                       texturedSigns, flatSet, changedPixels, sameList, whichSet, check, findLow5,
-                      generator, randomImage, mixedImage, decodePng};
+                      exchanged, generator, randomImage, mixedImage, decodePng};
 if (typeof module !== 'undefined') module.exports = NoiseBattery;

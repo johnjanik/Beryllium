@@ -341,9 +341,12 @@ def evaluate(report):
     e["offset_follows"] = offset.get("follows") if offset.get("applies") else None
     for name in ("dataurl", "blob"):
         e[name + "_equal"] = (t.get(name) or {}).get("equal")
+        e[name + "_exchanged"] = (t.get(name) or {}).get("exchanged")
     offscreen = t.get("offscreen") or {}
     e["offscreen_same"] = offscreen.get("sameAsCanvas") if offscreen.get("available") else None
     e["offscreen_blob_equal"] = offscreen.get("blobEqual") if offscreen.get("available") else None
+    e["offscreen_blob_exchanged"] = (offscreen.get("blobExchanged")
+                                     if offscreen.get("available") else None)
     webgl = t.get("webgl") or {}
     e["webgl"] = bool(webgl.get("available"))
     e["webgl_readpixels"] = webgl.get("readPixels") if e["webgl"] else None
@@ -361,12 +364,24 @@ def evaluate(report):
         e[name + "_closest_wrong"] = image.get("closestWrong")
         e[name + "_constraints"] = image.get("constraints", 0)
         e[name + "_dataurl_equal"] = image.get("dataurlEqual")
+        # toDataURL of the image, read with red and blue exchanged: do the
+        # same five bits explain it? (None where toDataURL was equal, or
+        # the page did not ask.)
+        swapped = image.get("dataurlExchangedFits")
+        e[name + "_dataurl_exchanged"] = (swapped == fits if swapped is not None
+                                          and e[name + "_unique"] else None)
     low5 = e["textured_fits"][0] if e["textured_unique"] else None
     e["low5"] = low5
     e["low5_agrees_flat"] = (low5 & 3) == which if (low5 is not None and weak) else None
     e["mixed_agrees_textured"] = (e["mixed_fits"] == e["textured_fits"]
                                   if e["textured_unique"] and e["mixed_unique"] is not None
                                   else None)
+    copies = t.get("copies") or {}
+    for key, name in (("webglTexture", "webgl_texture"), ("videoFrame", "video_frame")):
+        copy = copies.get(key) or {}
+        e[name + "_exact"] = (copy.get("changed") == 0) if copy.get("available") else None
+        e[name + "_as_getimagedata"] = (copy.get("sameAsGetImageData")
+                                        if copy.get("available") else None)
     noiseless = (which == "none" and e["textured_exact"] and e["mixed_exact"]
                  and e["dataurl_equal"] is not False and e["textured_dataurl_equal"] is not False)
     e["exact_everywhere"] = bool(noiseless)
@@ -415,8 +430,16 @@ def summarise(data):
               for v in {s["offset_follows"] for s in weak if s["offset_follows"]}}.items()))
          or "does not apply"),
         ("toDataURL gives the same pixels as getImageData", share(noised, "dataurl_equal")),
+        ("  toDataURL: or those pixels with red and blue exchanged",
+         share(noised, "dataurl_exchanged")),
         ("toBlob gives the same pixels as getImageData", share(noised, "blob_equal")),
+        ("  toBlob: or those pixels with red and blue exchanged",
+         share(noised, "blob_exchanged")),
         ("OffscreenCanvas gives the same pixels as a canvas", share(noised, "offscreen_same")),
+        ("OffscreenCanvas convertToBlob gives the pixels of its getImageData",
+         share(noised, "offscreen_blob_equal")),
+        ("  convertToBlob: or those pixels with red and blue exchanged",
+         share(noised, "offscreen_blob_exchanged")),
         ("WebGL readPixels is noised",
          share([dict(s, n=bool(s["webgl_readpixels"])) for s in noised if s["webgl"]], "n")),
         ("WebGL toDataURL changes one of the four sets",
@@ -426,6 +449,16 @@ def summarise(data):
         ("  and its two low bits are the flat fill's", share(noised, "low5_agrees_flat")),
         ("Mixed image: the same five bits explain every pixel",
          share(noised, "mixed_agrees_textured")),
+        ("Textured image through toDataURL gives the pixels of getImageData",
+         share(noised, "textured_dataurl_equal")),
+        ("  or the same five bits explain it with red and blue exchanged",
+         share(noised, "textured_dataurl_exchanged")),
+        ("A canvas copied into a WebGL texture reads back exact, without noise",
+         share(noised, "webgl_texture_exact")
+         + (f" (control: {share(controls, 'webgl_texture_exact')})" if controls else "")),
+        ("A canvas copied into a video frame reads back exact, without noise",
+         share(noised, "video_frame_exact")
+         + (f" (control: {share(controls, 'video_frame_exact')})" if controls else "")),
     ]
     pairs = same = 0
     for p in measured:
@@ -516,8 +549,10 @@ def compare(files):
 # -- the commands ------------------------------------------------------------
 
 def machine():
+    """What kind of machine, and not which: the result file is made to be
+    shown to others. Its label names it (--label; by default the host name)."""
     return {"system": platform.system(), "release": platform.release(),
-            "machine": platform.machine(), "node": platform.node()}
+            "machine": platform.machine()}
 
 
 def default_label():
@@ -542,7 +577,7 @@ def run(o):
     print(f"Browser: {binary}" + (f" ({version})" if version else ""))
     print(f"Sites: {o.sites} ports on 127.0.0.1; new profiles: {o.profiles}"
           + ("" if o.no_control else ", and one control with the canvas noise switched off"))
-    data = {"battery": 1, "label": o.label or default_label(),
+    data = {"battery": 2, "label": o.label or default_label(),
             "started": time.strftime("%Y-%m-%d %H:%M:%S"), "machine": machine(),
             "browser": {"path": binary, "version": version, "arguments": o.browser_args},
             "profiles": []}
@@ -601,7 +636,9 @@ def selftest(o):
         if name == "weak":
             checks += [(label, all(s[key] for s in samples) and bool(samples)) for label, key in (
                 ("other fills predicted", "fills_exact"), ("direction", "direction_ok"),
-                ("toDataURL equal", "dataurl_equal"), ("toBlob equal", "blob_equal"),
+                ("toDataURL as Helium noises it", "dataurl_exchanged"),
+                ("toBlob as Helium noises it", "blob_exchanged"),
+                ("toDataURL of the textured image", "textured_dataurl_exchanged"),
                 ("five bits found", "textured_unique"), ("five bits agree", "low5_agrees_flat"),
                 ("mixed image", "mixed_agrees_textured"))]
             checks.append(("offset follows the canvas",
@@ -635,7 +672,7 @@ def serve(o):
     print("Open this address in the browser to test. Each time you open it (a normal window,\n"
           "a private window, another profile) counts as one profile; the page walks through\n"
           f"{o.sites} sites by itself. Press Ctrl-C here when you are done.\n\n  {address}\n")
-    data = {"battery": 1, "label": o.label or default_label() + "-by-hand",
+    data = {"battery": 2, "label": o.label or default_label() + "-by-hand",
             "started": time.strftime("%Y-%m-%d %H:%M:%S"), "machine": machine(),
             "browser": {"path": "opened by hand", "version": ""}, "profiles": []}
     told = set()

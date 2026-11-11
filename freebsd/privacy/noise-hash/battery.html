@@ -38,7 +38,7 @@ results only there, and stores nothing.</p>
   };
 
   const report = {
-    battery: 1, origin: location.origin, ua: navigator.userAgent,
+    battery: 2, origin: location.origin, ua: navigator.userAgent,
     brands: ((navigator.userAgentData && navigator.userAgentData.brands) || [])
       .map(b => b.brand + ' ' + b.version),
     cores: navigator.hardwareConcurrency, simulated: null, tests: {}, errors: {},
@@ -167,9 +167,11 @@ results only there, and stores nothing.</p>
     const data = await bytesOf();
     const changed = B.changedPixels(expected, data, SIZE);
     const equal = B.sameList(data, first);
+    const swapped = B.sameList(data, B.exchanged(first));
     if (noised) say(label, equal ? 'the same pixels as getImageData' :
+                    swapped ? 'the pixels of getImageData with red and blue exchanged' :
                     `differs from getImageData (${changed.keys.length} pixels changed)`);
-    return {count: changed.keys.length, equal,
+    return {count: changed.keys.length, equal, exchanged: swapped,
             set: changed.keys.length ? B.whichSet(changed.keys, SIZE, SIZE, FILL[0]) : null};
   });
   await encoded('dataurl', 'toDataURL', () => pngOf(main.canvas.toDataURL('image/png')));
@@ -192,7 +194,7 @@ results only there, and stores nothing.</p>
     if (noised) say('OffscreenCanvas', B.sameList(data, first) ?
                     'the same pixels as a canvas element' : `${changed.keys.length} pixels changed`);
     return {available: true, count: changed.keys.length, sameAsCanvas: B.sameList(data, first),
-            blobEqual: B.sameList(png, data),
+            blobEqual: B.sameList(png, data), blobExchanged: B.sameList(png, B.exchanged(data)),
             set: changed.keys.length ? B.whichSet(changed.keys, SIZE, SIZE, FILL[0]) : null};
   });
 
@@ -216,11 +218,17 @@ results only there, and stores nothing.</p>
   });
 
   // 8 and 9. Known images put on a canvas: all textured, then mixed.
+  const canvases = {};
   const image = (name, label, width, height, img) => attempt(name, async () => {
     const c = drawn(img, width, height);
     const out = read(c, width, height);
+    canvases[name] = {c, img, out};
     const found = B.findLow5(img, out, width, height, 0, 0);
     const png = await pngOf(c.canvas.toDataURL('image/png'));
+    const pngEqual = B.sameList(png, out);
+    // If toDataURL differs: is it the same arithmetic on blue, green, red?
+    const swapped = pngEqual ? null :
+      B.findLow5(B.exchanged(img), B.exchanged(png), width, height, 0, 0).fits;
     const best = found.best;
     if (best.changed) {
       say(label, found.fits.length === 1 ?
@@ -233,12 +241,76 @@ results only there, and stores nothing.</p>
     return {exact: B.sameList(img, out), changed: best.changed, smooth: best.smooth,
             textured: best.textured, constraints: best.constraints, fits: found.fits,
             closest: best.low5, closestWrong: best.wrong, tooFar: best.tooFar,
-            alphaChanged: best.alphaChanged, dataurlEqual: B.sameList(png, out)};
+            alphaChanged: best.alphaChanged, dataurlEqual: pngEqual,
+            dataurlExchangedFits: swapped};
   });
   await image('textured', 'A textured image of known pixels', 48, 48,
               B.randomImage(48, 48, 20261111));
   await image('mixed', 'A part flat, part gradient, part textured image', 96, 48,
               B.mixedImage(96, 48, 20261112));
+
+  // 10. Two other ways to the pixels of the textured canvas: as a WebGL
+  // texture read with readPixels, and as a video frame copied out.
+  function textureCopy(source, width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const gl = canvas.getContext('webgl', {premultipliedAlpha: false, antialias: false});
+    if (!gl) return null;
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gl.createFramebuffer());
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D,
+                            gl.getParameter(gl.TEXTURE_BINDING_2D), 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return null;
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    return pixels;
+  }
+  async function frameCopy(source, width, height) {
+    if (typeof VideoFrame === 'undefined') return null;
+    const frame = new VideoFrame(source, {timestamp: 0});
+    try {
+      const options = {format: 'RGBA', rect: {x: 0, y: 0, width, height}};
+      const buffer = new Uint8Array(frame.allocationSize(options));
+      const layout = await frame.copyTo(buffer, options);
+      const data = new Uint8ClampedArray(width * height * 4);
+      for (let y = 0; y < height; y++) {
+        const start = layout[0].offset + y * layout[0].stride;
+        data.set(buffer.subarray(start, start + width * 4), y * width * 4);
+      }
+      return {format: frame.format, data};
+    } finally {
+      frame.close();
+    }
+  }
+  await attempt('copies', async () => {
+    if (!canvases.textured) throw new Error('the textured canvas was not made');
+    const {c, img, out} = canvases.textured;
+    const held = data => ({available: true,
+                           changed: B.changedPixels(img, data, 48).keys.length,
+                           sameAsGetImageData: B.sameList(data, out)});
+    const result = {webglTexture: {available: false}, videoFrame: {available: false}};
+    const texture = textureCopy(c.canvas, 48, 48);
+    if (texture) result.webglTexture = held(texture);
+    try {
+      const frame = await frameCopy(c.canvas, 48, 48);
+      if (frame) result.videoFrame = Object.assign(held(frame.data), {format: frame.format});
+    } catch (e) {
+      result.videoFrame = {available: false, error: String((e && e.message) || e)};
+    }
+    const told = r => !r.available ? 'not available' : r.changed === 0 ?
+      'every pixel exact, no noise' : `${r.changed} of 2304 pixels changed`;
+    if (noised) say('The textured canvas by other routes',
+                    `as a WebGL texture: ${told(result.webglTexture)}; ` +
+                    `as a video frame: ${told(result.videoFrame)}`);
+    return result;
+  });
 
   // Send, then go on to the next site.
   let sent = true;
