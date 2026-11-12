@@ -909,8 +909,19 @@ FreeBSD test bed, so an increment must be worth a build.
    GitHub serves has the SHA-256 above, the signed manifest lists it, and
    the build manifest says `"compiler_cache": "none"`
    (18-REMAINING-WORK.md section 5.1 has what was checked).
-   **Then attestation** (next, build 0.20.3.20; 0.20.3.18 carried the
-   two noise patches only and 0.20.3.19 no code change): the browser checks
+   **0.20.3.20, built and published the same day** (release
+   `v0.20.3.20`, 14:33 UTC, source commit 18cc375): the same sources
+   built a third time, with the version raised. Its build manifest and
+   that of 0.20.3.19 have 157 fields and differ in one, the version: the
+   same 20 patches with the same digests, the same build arguments, the
+   same Chromium, Helium and imported patch set. No test report of this
+   build was sent, so nothing above is a result of 0.20.3.20; the runs
+   on 0.20.3.18 and 0.20.3.19 are what there is for this code. The
+   release is signed and verifies as GitHub serves it
+   (18-REMAINING-WORK.md section 5.1).
+   **Then attestation** (next, build 0.20.3.21; 0.20.3.18 carried the
+   two noise patches only, and 0.20.3.19 and 0.20.3.20 no code change):
+   the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

@@ -870,6 +870,20 @@ the files before it uploads them and publishes nothing that fails; its
 output on the build machine was not sent, and the second run, on what
 GitHub serves, is what the checks above repeat from elsewhere.
 
+**The second, 0.20.3.20** (release `v0.20.3.20`, published 12 November
+2026 at 14:33 UTC, source commit 18cc375), checked the same way the same
+day: the signature is good with the same key, for the tag's files and
+for the latest release's; `RELEASE` names 0.20.3.20, `v0.20.3.20` and
+that commit; the package downloaded has the SHA-256 it lists,
+`45beeec3a69e0d8f54854c49df7dafd141eb6549cc11615c9ca6d5d1fff590e4`, and
+the build manifest the digest it lists; `check-provenance` accepts the
+manifest against that commit; and `install.sh` at that commit, the first
+that takes nothing unsigned as the latest, accepts the release as the
+latest and by its tag, refuses it as a downgrade and refuses it when
+`v0.20.3.19` was asked for. The owner did not send the package's digest
+from the build machine this time, so the comparison with the file there,
+made for 0.20.3.19, was not made.
+
 Three things were added to the design while writing it:
 
 - **The last unsigned release is known by its digest.** If `latest`
@@ -1371,14 +1385,20 @@ as a defect with its cause. README item 7 goes.
 |---|---|---|
 | 0.20.3.18, built and published 12 November 2026 | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, two runs of 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md); the suite passing in six runs, three of them with the lockdown |
 | 0.20.3.19, built and published 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. The first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). The signing ran for the first time on the owner's machine, and the release verifies as GitHub serves it (5.1) |
-| 0.20.3.20 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
-| 0.20.3.21 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
-| 0.20.3.22 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
+| 0.20.3.20, built and published 12 November 2026 | no change to the browser: the sources of 0.20.3.19 with the version raised (the two build manifests differ in the version alone). The second signed release, and the first published from a commit whose installer takes nothing unsigned as the latest. The sandbox patches this row listed were not written before the build and moved one build down again | that the signing and the installer's checks work a second time on a real release (5.1). No test report of this build was sent |
+| 0.20.3.21 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
+| 0.20.3.22 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
+| 0.20.3.23 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
 | separate spikes | allocator, BackupRefPtr, control-flow integrity (6.3); the storage service in its restricted mode (4.2 tier 2); item 2 stage B | an answer each |
 
 A build that fails to compile costs a build. Each row keeps its patches
 small and of a kind already compiled once in this tree where possible.
+
+A build made before its row's patches are written is the previous build
+with another number: 0.20.3.19 and 0.20.3.20 are both the code of
+0.20.3.18. The patches of the 0.20.3.21 row are not written yet (12
+November 2026), so a build started now would be a fourth copy.
 
 ### 8.3 The owner's decisions, 11 November 2026
 

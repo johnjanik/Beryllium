@@ -30,14 +30,35 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.19**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.20**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.19 in two runs, one with the renderer lockdown on and one without it (12 November 2026). 0.20.3.19 is the browser of 0.20.3.18 built again, and on 0.20.3.18 the suite passed in seven runs that day: four with the lockdown, and three without it, of which one with the network and one with the diagnostics. What the first three of those lockdown runs did not check, and the later ones did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. No test run of 0.20.3.20 itself is recorded: it is the browser of 0.20.3.18 and 0.20.3.19 built a third time, and the runs were made on those two. On 0.20.3.19 the whole test suite passes in two runs, one with the renderer lockdown on and one without it (12 November 2026). On 0.20.3.18 it passed in seven runs that day: four with the lockdown, and three without it, of which one with the network and one with the diagnostics. What the first three of those lockdown runs did not check, and the later ones did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
 - **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
+
+### New in 0.20.3.20 (since 0.20.3.19)
+
+Nothing in the browser. 0.20.3.20 was built from the same sources as
+0.20.3.19 with the version number raised: the two packages' build
+manifests list the same 20 patches with the same digests, the same build
+arguments and the same Chromium, Helium and FreeBSD patch set, and differ
+in the version alone. If 0.20.3.19 is installed there is no reason to
+hurry the update.
+
+It is the second signed release. Checked as GitHub serves it, the day it
+was published (12 November 2026): the signature verifies against
+[freebsd/release-keys](freebsd/release-keys/README.md), the package has
+the SHA-256 the signed file lists, and `install.sh` accepts the release
+and refuses it as a downgrade or under another tag (off FreeBSD, with
+stand-ins for `pkg` and `fetch`, as for 0.20.3.19).
+
+In the repository since 0.20.3.19, and not part of the package: the
+installer takes nothing unsigned as the latest release. Until a signed
+release existed it accepted 0.20.3.18 that way, known by its SHA-256;
+0.20.3.18 still installs by name (`sh install.sh --release v0.20.3.18`).
 
 ### New in 0.20.3.19 (since 0.20.3.18)
 
@@ -412,7 +433,8 @@ set it, and the launcher will not start the browser without it.
   canvas noise when a page reads a canvas through `getImageData`,
   `toDataURL`, `toBlob` or `convertToBlob`. 0.20.3.18 adds WebGL
   `readPixels` in its usual format. Still without noise in 0.20.3.18 and
-  in 0.20.3.19, which has the same code, measured on 0.20.3.18 in 60
+  in 0.20.3.19 and 0.20.3.20, which have the same code, measured on
+  0.20.3.18 in 60
   readbacks of 60 each (12 November 2026): a canvas copied
   into a video frame, and a canvas read through WebGL one pixel at a
   time, which is exact because an area of one colour is left exact. Not
@@ -580,7 +602,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.19 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.20 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -594,7 +616,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.19, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.20, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |
