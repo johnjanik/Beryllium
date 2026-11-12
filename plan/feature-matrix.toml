@@ -2157,7 +2157,7 @@ implemented = "todo"
 built = "no"
 tested = "none"
 source = ["plan/11-MAINTENANCE-AND-RELEASE.md §5", "helium-freebsd-security-port-spec.md §11.3"]
-notes = "Today: SHA256SUMS over HTTPS, checked by install.sh; from 7 Nov 2026 publish-release binds the package to the source commit through its build manifest (R-REL-01). Proposed (plan/16 BER-06): SHA256SUMS signed with an SSH key kept off GitHub (ssh-keygen -Y sign), the public key in the repository, install.sh verifying with ssh-keygen -Y verify; waiting for the owner's decision on the key."
+notes = "Until 0.20.3.18: SHA256SUMS over HTTPS, checked by install.sh; from 7 Nov 2026 publish-release binds the package to the source commit through its build manifest (R-REL-01). Written 12 Nov 2026 (plan/18 section 5, review finding BER-06): each release carries a manifest, RELEASE, naming it and listing its files' SHA-256, signed with an SSH key that is not on GitHub (ssh-keygen -Y sign, namespace beryllium-release); install.sh verifies the signature against the keys it carries (freebsd/release-keys), then the tag, the version, against a downgrade, and the digest; publish-release refuses to publish unsigned and verifies with the installer before and after uploading; freebsd/tools/tests/test_install_sh.py has every refusal as a test with real signatures. The first signed release is to be 0.20.3.19; the key is a file on the build machine until two hardware tokens replace it (accepted until the end of 2026). This row, a signed pkg repository, is the stage after that and is not started."
 
 [[feature]]
 id = "B-PKG-08"

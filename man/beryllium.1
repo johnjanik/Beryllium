@@ -380,3 +380,26 @@ not contained, as with the Chromium port for
 The renderer lockdown is experimental and off by default.
 .Xr beryllium-sandbox 7
 states what is and is not enforced and how to check it.
+.Pp
+Releases from 0.20.3.19 on are signed.
+The installer,
+.Pa install.sh
+in the repository, verifies the signature of a release before it
+installs the package, and
+.Ql sh install.sh --verify-only
+checks a release without installing it.
+The release key is
+.Ql release@beryllium ,
+of type ED25519, with the fingerprint
+.Bd -literal -offset indent
+SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc
+.Ed
+.Pp
+It is a key file on the build machine and is accepted until the end of
+2026; hardware tokens are to replace it.
+The list of keys in force is in
+.Pa freebsd/release-keys
+in the repository.
+A page installed with one release names the keys of that release: when a
+later release is signed with another key, the repository says so first,
+and this page from that release on.

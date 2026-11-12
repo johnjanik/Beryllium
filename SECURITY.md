@@ -19,7 +19,7 @@ releases are not patched.
 
 | Version | Supported |
 |---|---|
-| 0.20.3.12 (current, FreeBSD 16.0-CURRENT amd64 packages) | yes |
+| The latest release (FreeBSD 16.0-CURRENT amd64 packages); the README names it | yes |
 | earlier releases | no: update |
 
 Packages are published for FreeBSD 16.0-CURRENT on amd64. Building from
@@ -105,8 +105,27 @@ maintainer files it there.
 
 ## Verifying a release
 
-- `install.sh` fetches `SHA256SUMS` and the package from the release and
-  checks the digest before anything runs with privileges.
+- Releases are signed from 0.20.3.19 on, with a key that is not on
+  GitHub. A release carries `RELEASE`, which names it (version, tag,
+  commit, date) and lists the SHA-256 of each of its files, and
+  `RELEASE.sig`, the signature of that file. `install.sh` verifies the
+  signature, then that the release is the one asked for and not older
+  than the one installed, then the package's digest and version, before
+  anything runs with privileges, and installs nothing that fails.
+  `sh install.sh --verify-only` does the checks and stops.
+- The release key: `release@beryllium`, ED25519, fingerprint
+  `SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc`. It is a key file
+  on the build machine, accepted until the end of 2026; two hardware
+  tokens are to replace it. The list of keys, how to check a release by
+  hand and how a key is withdrawn are in
+  [freebsd/release-keys](freebsd/release-keys/README.md). The same
+  fingerprint is in the manual page installed with the package
+  (`man beryllium`) and in the notes of each release; compare them.
+- What signing does not cover: whoever can change this repository's main
+  branch can change the installer and the key list together, and a
+  compromised build machine builds a package that is then signed.
+  Releases up to 0.20.3.18 are not signed: the installer installs one
+  only by name and with `--allow-unsigned`, against its checksum file.
 - Every package carries `/usr/local/share/beryllium/BUILD-MANIFEST.json`,
   also published with the release: the version, the Chromium and Helium
   versions, the imported FreeBSD patch set and the SHA-256 of every
@@ -115,10 +134,9 @@ maintainer files it there.
   (`freebsd/tools/check-provenance`). It also refuses a package built with
   a compiler cache (`compiler_cache` in the manifest, from 0.20.3.19): in a
   release, every object file came from the compiler during that build.
-- Releases are not yet signed with a key separate from GitHub; the
-  proposal is in [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md)
-  (BER-06). Until then, the trust in a release is the trust in this
-  GitHub repository and account.
+- The design, with what was tried against it, is in
+  [plan/18](plan/18-REMAINING-WORK.md) section 5 (review finding BER-06
+  of [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md)).
 
 ## Reviews
 

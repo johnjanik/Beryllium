@@ -1,0 +1,9 @@
+# Keys that may sign a Beryllium release (ssh-keygen -Y, namespace
+# "beryllium-release"). install.sh carries the same lines and verifies every
+# release against them; a test keeps the two equal. README.md beside this
+# file says how to check a release by hand and how keys are added and
+# withdrawn.
+#
+# The key file on the build machine. SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc
+# Accepted until the end of 2026: two hardware tokens replace it.
+release@beryllium namespaces="beryllium-release",valid-after="20261111",valid-before="20270101" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIsdyAeLdF0QS0/rhJhIO4pIgWgWY4kKoeVM5oOpYll3

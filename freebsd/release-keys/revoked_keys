@@ -1,0 +1,3 @@
+# Release keys that are no longer accepted, one public key a line
+# (ssh-keygen -Y verify -r). install.sh carries the same lines. Empty: no
+# key has been withdrawn.

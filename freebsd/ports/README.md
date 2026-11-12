@@ -415,13 +415,21 @@ that commit must contain the port the package was built from; commits that
 change only documentation since the build are fine.
 
 ```sh
-freebsd/tools/publish-release v0.20.3.N-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0*.pkg
+freebsd/tools/publish-release v0.20.3.N /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0*.pkg
 ```
+
+The release is signed with the key in `~/.ssh/beryllium-release` (it asks
+for the passphrase; `--key FILE` names another, such as a hardware
+token's), and nothing is published without a signature. Before uploading,
+the tool runs this checkout's `install.sh --verify-only` on the files it
+made; after uploading, it runs it again on what GitHub serves, and says
+so if that fails. [freebsd/release-keys](../release-keys/README.md) has
+the keys and the rules for them.
 
 The packages must come from clean builds: one built with a compiler cache
 (`--ccache`, above) is refused. Give it the packages from every jail you
 built (for example the 151amd64 one too). It names each `beryllium-FreeBSD-<major>-amd64.pkg`, writes
-`SHA256SUMS` and release notes that name the commit as the corresponding
+the signed manifest `RELEASE`, `SHA256SUMS` and release notes that name the commit as the corresponding
 source, and creates the release with the GitHub CLI (`pkg install gh`,
 then `gh auth login` once). `--draft` creates it unpublished, and
 `--dry-run` only prepares the files. Without `gh`, it leaves the files in

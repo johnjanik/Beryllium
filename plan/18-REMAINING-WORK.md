@@ -760,10 +760,43 @@ section tests it and fills what it left out.
 
 ### 5.1 Where it stands
 
-`install.sh` fetches `SHA256SUMS` and the package from the same release
-and compares digests. Whoever can replace release assets can replace
-both. `publish-release` runs on the owner's machine and refuses a package
-not built from the commit it names.
+**Written on 12 November 2026, with the owner's key; no release is signed
+yet.** Steps 2 to 5 of 5.3 are done: `publish-release` writes and signs
+the manifest, refuses to publish without a signature, and runs this
+checkout's `install.sh --verify-only` on what it made and again on what
+GitHub serves; `install.sh` verifies the signature and makes the four
+checks, with `--verify-only`, `--allow-downgrade`, `--allow-unsigned`
+and `--from`; the key lists are in `freebsd/release-keys` and inside
+`install.sh`, held equal by a test; the fingerprint is in `SECURITY.md`,
+the README, `beryllium(1)` and each release's notes; and every case of
+5.5 is a test, with real signatures from keys made in the test. What is
+left: step 6, the first signed release (0.20.3.19); the hardware tokens
+(two YubiKey 5C NFC, ordered 12 November 2026), which must sign a release
+before the key file's validity ends on 1 January 2027; and the
+fingerprint somewhere outside GitHub.
+
+Three things were added to the design while writing it:
+
+- **The last unsigned release is known by its digest.** If `latest`
+  required a signature from the day this installer reached the main
+  branch, nobody could install until 0.20.3.19 was out. So the installer
+  carries the SHA-256 of 0.20.3.18's FreeBSD 16 package (as GitHub
+  served it on 12 November 2026) and accepts that package, and nothing
+  else, for an unsigned `latest` until 1 December 2026 and for
+  `--release v0.20.3.18` always. The checksum file beside the package is
+  not consulted. *To confirm:* that the digest is that of the owner's own
+  package file.
+- **`--from URL`** takes the release's files from another place (a
+  mirror, a directory). It is how `publish-release` checks its files
+  before uploading, and it is safe by construction: the files are
+  verified the same way, and it does not go with `--allow-unsigned`.
+- **`--verify-only` on a machine the release has no package for** checks
+  the signature and the manifest and says so.
+
+Before that: `install.sh` fetched `SHA256SUMS` and the package from the
+same release and compared digests. Whoever can replace release assets
+can replace both. `publish-release` runs on the owner's machine and
+refuses a package not built from the commit it names.
 
 *Tried, OpenSSH 9.6:* the proposal's commands work. A signature made
 with `ssh-keygen -Y sign -n beryllium-release` verifies against an
