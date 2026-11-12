@@ -366,8 +366,12 @@ class Browser:
 
     def log_lines(self, needle, limit=200):
         """Lines of the browser's log (its stderr, shared by its children)
-        containing needle; the last limit of them."""
-        return [l for l in self._log() if needle in l][-limit:]
+        containing needle: the last limit of them, or all of them with
+        limit=None. A check that must not miss a line asks for all: the
+        lockdown gate read the last 200 from 0.20.3.13 to 0.20.3.18, when
+        the log had grown past that, and so saw only its end."""
+        found = [l for l in self._log() if needle in l]
+        return found if limit is None else found[-limit:]
 
     def log_context(self, needle, after=16, limit=20):
         """Each log line containing needle with the lines that belong to the

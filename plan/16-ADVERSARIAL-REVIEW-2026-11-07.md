@@ -258,7 +258,10 @@ it, and the Capsicum survey with it, all with
   enables the sandbox before `RenderThreadImpl` exists, so the reviewer's
   question "is startup single-threaded?" is answered yes by Chromium's
   ordering, and from 0.20.3.13 the lockdown logs the thread count at that
-  point and the gate requires one. The two sockets were pairs the renderer
+  point and the gate requires one. (Until 12 November 2026 the gate read
+  the last 200 lines of that log, so it required one of the three or four
+  renderers whose reports stood there, not of all: plan/14 has the
+  account.) The two sockets were pairs the renderer
   made itself after the lockdown (0.20.3.11, 0.20.3.12). For 0.20.3.11 the
   lockdown turns the receive-path limits on before the snapshot
   (`ExpectConfinement()`) as a precaution, and `base::UnixDomainSocket`'s

@@ -27,14 +27,14 @@ Purpose: Helium noises a canvas readback with one routine in two kinds of
 Stage: 4 (Beryllium series). Depends on helium/core/noise/canvas.patch,
   which creates the file.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not
-  compiled. The eight lines use only names the function uses already
-  (color_type, kBGRA_8888_SkColorType, kRGBA_8888_SkColorType). First
-  build: 0.20.3.18.
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.18 (released 12 November 2026). This header was brought
+  up to date for 0.20.3.19; the code below it is as built.
 Test: freebsd/privacy/noise-hash/battery. The rows "toDataURL gives the
   same pixels as getImageData", the same for toBlob and convertToBlob, and
   "Textured image through toDataURL gives the pixels of getImageData" read
-  10, 10, 10 and 0 of 30 on 0.20.3.17 and must read 30 of 30. The
+  10, 10, 10 and 0 of 30 on 0.20.3.17 and must read 30 of 30. On
+  0.20.3.18 (12 November 2026, two runs) they read 30 of 30 each. The
   battery's self-test runs the same rows against stand-in noise that
   behaves as this patch intends. Feature matrix row P-FPR-04.
 security-review: not required (changes the byte order a readback is taken

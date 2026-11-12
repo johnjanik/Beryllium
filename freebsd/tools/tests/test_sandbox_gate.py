@@ -237,11 +237,21 @@ class PolicyTest(unittest.TestCase):
         self.assertIn("fd 13 (s): rights not limited", noted)
 
 
+def log_of(lines):
+    """browser.log_lines as the real one answers: the last 200 unless the
+    caller asks for all."""
+    def log_lines(needle, limit=200):
+        found = [l for l in lines if needle in l]
+        return found if limit is None else found[-limit:]
+    return log_lines
+
+
 class LogTest(unittest.TestCase):
     def run_case(self, browser_args, lines):
         t = case("test_lockdown_log", browser_args, RENDERERS)
-        t.browser.log_lines.return_value = list(lines)
+        t.browser.log_lines.side_effect = log_of(list(lines))
         t.test_lockdown_log()
+        return t.ctx.note.call_args[0][1]
 
     LOCKED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=2 capability_mode=1 closed_directories=0 limited=12 threads=1"
     THREADED = "[1:1:1107/000000.000000:WARNING:sandbox_freebsd.cc(400)] beryllium-sandbox: renderer pid=3 capability_mode=1 closed_directories=0 limited=12 threads=2"
@@ -271,6 +281,43 @@ class LogTest(unittest.TestCase):
             self.run_case(LOCKDOWN, [self.LOCKED, self.CUT, self.RECEIVED])
         self.assertIn("received descriptors outside the policy", str(e.exception))
 
+    def test_gate_reads_the_whole_log_not_its_end(self):
+        """From 0.20.3.13 the browser logs every descriptor it cuts, some
+        180 lines a session, and the gate read the last 200 lines: three or
+        four of eight lockdown reports, and nothing that came before them
+        (found on 12 November 2026, in the reports of 0.20.3.18). A problem
+        early in a long log must fail the gate."""
+        long_tail = [self.CUT] * 300
+        for early, message in [(self.RECEIVED, "received descriptors outside the policy"),
+                               (self.REFUSED_SEND, "the policy has no kind for"),
+                               (self.THREADED, "other threads at its lockdown point")]:
+            with self.assertRaises(AssertionError, msg=early) as e:
+                self.run_case(LOCKDOWN, [early] + long_tail + [self.LOCKED])
+            self.assertIn(message, str(e.exception))
+        reports = [self.LOCKED.replace("pid=2", f"pid={n}") for n in range(2, 10)]
+        noted = self.run_case(LOCKDOWN, reports[:5] + long_tail + reports[5:])
+        self.assertIn("308 lines of the lockdown's log read, all of it: 8 lockdown reports",
+                      noted)
+        self.assertIn("threads at the lockdown point: [1, 1, 1, 1, 1, 1, 1, 1]", noted)
+
+    def test_the_browsers_log_can_be_read_whole(self):
+        sys.path.insert(0, SUITE)
+        from berytest import browser as browser_module
+        import tempfile
+        b = browser_module.Browser.__new__(browser_module.Browser)
+        with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
+            f.write("".join(f"beryllium-sandbox: line {n}\nother {n}\n" for n in range(450)))
+        b.log_path = f.name
+        try:
+            self.assertEqual(len(b.log_lines("beryllium-sandbox")), 200)
+            self.assertEqual(b.log_lines("beryllium-sandbox")[-1], "beryllium-sandbox: line 449")
+            whole = b.log_lines("beryllium-sandbox", limit=None)
+            self.assertEqual(len(whole), 450)
+            self.assertEqual(whole[0], "beryllium-sandbox: line 0")
+            self.assertEqual(b.log_lines("nothing like it", limit=None), [])
+        finally:
+            os.unlink(f.name)
+
     def test_survey_only_records(self):
         self.run_case([], [])
         self.run_case([], [self.RECEIVED])
@@ -280,7 +327,7 @@ class LogTest(unittest.TestCase):
                 "socket pair made at mojo::PlatformChannel on thread 'Compositor' "
                 "(fd 19, fd 22): limited")
         t = case("test_lockdown_log", LOCKDOWN, RENDERERS)
-        t.browser.log_lines.return_value = [self.LOCKED, made, self.CUT]
+        t.browser.log_lines.side_effect = log_of([self.LOCKED, made, self.CUT])
         t.test_lockdown_log()
         noted = t.ctx.note.call_args[0][1]
         self.assertIn("1 socket pairs made by confined processes: "

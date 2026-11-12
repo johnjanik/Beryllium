@@ -52,7 +52,9 @@ PRIORITIES = ("must", "should", "later", "study")
 IMPLEMENTED = ("todo", "partial", "done", "inherited", "disabled")
 TESTED = ("none", "planned", "written", "passing", "failing", "manual")
 ID_RE = re.compile(r"^([FPSBR])-[A-Z]{2,4}-[0-9]{2}$")
-RELEASE_RE = re.compile(r"^v[0-9]+(\.[0-9]+)+-[0-9]+$")
+# Release tags as published: v0.20.3.1-1 and v0.20.3.7-1 with a package
+# revision, v0.20.3.12 and later without.
+RELEASE_RE = re.compile(r"^v[0-9]+(\.[0-9]+)+(-[0-9]+)?$")
 FIELDS = {"id", "group", "title", "need", "priority", "phase", "implemented",
           "built", "tested", "where", "tests", "planned_test", "evidence",
           "source", "notes"}
@@ -131,7 +133,7 @@ def check(meta, features, repo=REPO, redteam_text=None):
             bad(f"tested must be one of {', '.join(TESTED)}")
         built = ft.get("built", "no")
         if built != "no" and not RELEASE_RE.match(str(built)):
-            bad('built must be "no" or a release tag such as v0.20.3.1-1')
+            bad('built must be "no" or a release tag such as v0.20.3.18 or v0.20.3.1-1')
         if built != "no" and impl == "todo":
             bad("cannot have shipped in a release while implemented is todo")
         if impl in ("done", "partial") and not as_list(ft.get("where")):
