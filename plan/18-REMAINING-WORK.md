@@ -753,6 +753,64 @@ Tier 1 utilities are confined, attested and tested; every other process
 has its statement in the three places; the drift tables are enforced.
 README item 4 becomes two shorter ones (tier 2 and tier 4) or goes.
 
+### 4.7 Which get a policy and which a statement: suggestions, 12 November 2026
+
+The owner asked for suggestions that follow what other projects do. They
+are suggestions; the decision is the owner's and is not made.
+
+What others do, per process:
+
+| Process | Chromium on Linux | OpenBSD's port | Firefox on Linux |
+|---|---|---|---|
+| Browser | not confined, and says so | a broad pledge and unveil | not confined |
+| Utilities that compute (data decoder, print compositor, "service" and "utility" kinds) | confined | confined | confined (utility, RDD) |
+| CDM | confined, tightly | confined, its tightest | confined |
+| Storage service | confined as a utility | confined as a utility | no such process |
+| Audio service | not confined by default | confined | no such process |
+| Network service | not confined by default, and says so | confined | no such process |
+| Video capture | not confined, and says so | confined | no such process |
+| GPU | a loose system-call filter, widened for NVIDIA's driver | a pledge and unveil that include devices and the network | not confined |
+
+Read in Chromium 156.0.8078.79 for this section: `kNetworkServiceSandbox`
+is off by default except where the BSD ports turn it on
+(`sandbox/policy/features.cc`); `kAudioServiceSandbox` is on by default
+for Windows, macOS and Fuchsia only (`content/public/common/content_features.cc`);
+the video capture service's sandbox is `kNoSandbox` everywhere but
+Fuchsia (`services/video_capture/public/mojom/video_capture_service.mojom`);
+and `docs/security/process-sandboxes-by-platform.md`, titled "Unsandboxed
+Processes by Platform", lists the browser on all platforms, the network
+service on Android, Windows and Linux, and video capture on all but
+Fuchsia. The OpenBSD, Firefox and GPU columns come from a research pass
+over their sources on the same day and were not read a second time.
+
+Suggested:
+
+| Process | Suggestion | Why |
+|---|---|---|
+| Browser | statement | nobody confines it but OpenBSD, whose pledge still allows files, processes and the network |
+| Utilities that compute | policy (tier 1), next after the renderer | everyone confines them, and the renderer's lockdown fits unchanged |
+| CDM (Widevine) | policy before it is supported at all | everyone confines it tightly; it is closed code handling page data |
+| Storage service | policy, after the one-build spike of 4.2 | confined elsewhere, and Chromium has the restricted mode for it |
+| Audio service | statement now, policy as tier 3 | Chromium itself leaves it unconfined on Linux; OpenBSD shows a policy is possible |
+| Video capture | statement | Chromium leaves it unconfined on every desktop platform |
+| Network service | statement, with the work described as tier 4 | Chromium publishes it as unconfined on Linux, Windows and Android; it is the largest piece here |
+| GPU with NVIDIA | statement, plus the mitigations of tier 5 | Firefox leaves it unconfined; Chromium's filter has to allow that driver nearly everything; capability mode cannot be fitted round code that opens devices by path at will |
+| GPU with Mesa | decide when there is a Mesa machine | one render node and listable ioctls may allow a policy |
+| The OS print backend | statement | Chromium runs it unconfined and names it so (`UnsandboxedPrintBackendHost`) |
+
+The form of the statement also has a precedent: Chromium's table has one
+row a process, the word "unsandboxed", and the reason beside it. Section
+4.3 already asks for that, in the README, `beryllium-sandbox(7)` and
+`beryllium://sandbox`. One thing to add from Chromium's later
+documentation (157): a process that holds a connection to an X server is
+to be counted as unconfined whatever else limits it, which is the case
+the GPU mitigation about `DISPLAY` is for.
+
+Where this goes beyond the norm: a network service policy and an audio
+policy would put Beryllium ahead of Chromium on Linux and level with
+OpenBSD. Where it stays behind: nowhere, once tier 1 and the CDM are
+done.
+
 ## 5. Signed releases
 
 Review finding BER-06, matrix B-PKG-07. The proposal is in plan/16; this
@@ -760,10 +818,43 @@ section tests it and fills what it left out.
 
 ### 5.1 Where it stands
 
-`install.sh` fetches `SHA256SUMS` and the package from the same release
-and compares digests. Whoever can replace release assets can replace
-both. `publish-release` runs on the owner's machine and refuses a package
-not built from the commit it names.
+**Written on 12 November 2026, with the owner's key; no release is signed
+yet.** Steps 2 to 5 of 5.3 are done: `publish-release` writes and signs
+the manifest, refuses to publish without a signature, and runs this
+checkout's `install.sh --verify-only` on what it made and again on what
+GitHub serves; `install.sh` verifies the signature and makes the four
+checks, with `--verify-only`, `--allow-downgrade`, `--allow-unsigned`
+and `--from`; the key lists are in `freebsd/release-keys` and inside
+`install.sh`, held equal by a test; the fingerprint is in `SECURITY.md`,
+the README, `beryllium(1)` and each release's notes; and every case of
+5.5 is a test, with real signatures from keys made in the test. What is
+left: step 6, the first signed release (0.20.3.19); the hardware tokens
+(two YubiKey 5C NFC, ordered 12 November 2026), which must sign a release
+before the key file's validity ends on 1 January 2027; and the
+fingerprint somewhere outside GitHub.
+
+Three things were added to the design while writing it:
+
+- **The last unsigned release is known by its digest.** If `latest`
+  required a signature from the day this installer reached the main
+  branch, nobody could install until 0.20.3.19 was out. So the installer
+  carries the SHA-256 of 0.20.3.18's FreeBSD 16 package (as GitHub
+  served it on 12 November 2026) and accepts that package, and nothing
+  else, for an unsigned `latest` until 1 December 2026 and for
+  `--release v0.20.3.18` always. The checksum file beside the package is
+  not consulted. *To confirm:* that the digest is that of the owner's own
+  package file.
+- **`--from URL`** takes the release's files from another place (a
+  mirror, a directory). It is how `publish-release` checks its files
+  before uploading, and it is safe by construction: the files are
+  verified the same way, and it does not go with `--allow-unsigned`.
+- **`--verify-only` on a machine the release has no package for** checks
+  the signature and the manifest and says so.
+
+Before that: `install.sh` fetched `SHA256SUMS` and the package from the
+same release and compared digests. Whoever can replace release assets
+can replace both. `publish-release` runs on the owner's machine and
+refuses a package not built from the commit it names.
 
 *Tried, OpenSSH 9.6:* the proposal's commands work. A signature made
 with `ssh-keygen -Y sign -n beryllium-release` verifies against an
@@ -1265,8 +1356,29 @@ small and of a kind already compiled once in this tree where possible.
    written by AI. So the report is written by the owner, in the owner's
    words, from evidence the owner has run and checked, and no patch is
    offered to Helium; Beryllium's own fix is public for anyone to read.
-   Which of the port's defects go to the port's maintainers is still
-   open.
+   Which of the port's defects go to the port's maintainers: see 12
+   below.
+
+**Added 12 November 2026.**
+
+8. **The flat-colour rule in the `readPixels` noise stays.** A pixel
+   whose whole 3 by 3 neighbourhood in the read is one exact colour is
+   handed back as read, so that pages which pick objects by colour keep
+   working. The owner accepts what that leaves open: a canvas read one
+   pixel at a time comes back exact.
+9. **"Canvas noise on every way out of a canvas" (P-FPR-07) is a must.**
+10. **The release key is given** (the key file on the build machine,
+    `SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc`), and signing is
+    written (section 5.1). Two YubiKey 5C NFC are bought and are to be
+    used when they arrive.
+11. **The Helium report is on the owner's list** (decision 7 stands).
+12. **A report to the FreeBSD port's maintainers is drafted** for the
+    owner to read, check against the current port and send:
+    `freebsd/upstream-reports/www-chromium.md`. It describes fixes and
+    offers no patch, for FreeBSD's caution about generated code and
+    because Beryllium's patches are under another licence.
+13. **Which processes get a statement instead of a policy** is not
+    decided. Suggestions that follow what other projects do are in 4.7.
 
 ### 8.4 What this plan does not establish
 

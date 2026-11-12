@@ -262,9 +262,14 @@ stands, the design, the work, the tests, and how it is to be attacked.
    create.
 4. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
-5. **Signed releases.** Signing each release with a key kept off GitHub,
-   verified by `install.sh`; the proposal is in plan/16 and its tests and
-   gaps (replay of an old signed release among them) in plan/18.
+5. **Signed releases.** Written and tested on 12 November 2026: the
+   release tool signs and refuses to publish unsigned, and `install.sh`
+   verifies before it installs. Still to do: publish the first signed
+   release, 0.20.3.19; move from the key file on the build machine to the
+   two hardware tokens, before the key file stops being accepted at the
+   end of 2026; and publish the fingerprint somewhere this repository's
+   credentials do not reach. After that, a signed package repository, so
+   that `pkg upgrade` updates Beryllium.
 6. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
@@ -299,6 +304,7 @@ emoji (about 215 MB, shared with the rest of the desktop).
 | Command | What it does |
 |---|---|
 | `sh install.sh` | install or update to the latest release |
+| `sh install.sh --verify-only` | check the latest release's signature and package, and install nothing |
 | `sh install.sh --build` | build from source with Poudriere and install (several hours, about 100 GB of disk); for FreeBSD versions without a package |
 | `sh install.sh --uninstall` | remove Beryllium; your profile stays |
 | `sh install.sh --dry-run` | show every command that would change the system, and change nothing |
@@ -306,6 +312,17 @@ emoji (about 215 MB, shared with the rest of the desktop).
 `sh install.sh --help` lists the other options. To update, run
 `sh install.sh` again when a new release is out; there is no in-browser
 updater.
+
+Releases are signed from 0.20.3.19 on, with a key that is not on GitHub.
+The installer verifies the signature, that the release is the one asked
+for and not older than the one installed, and the package's digest, and
+installs nothing that fails. The key's fingerprint is
+`SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc`; it is also in
+[SECURITY.md](SECURITY.md), in `man beryllium` and in each release's
+notes, and [freebsd/release-keys](freebsd/release-keys/README.md) says how
+to check a release by hand. 0.20.3.18, the release before that, is not
+signed: the installer knows its package by its SHA-256 and accepts that
+package only.
 
 Beryllium needs `kern.ipc.shm_allow_removed=1`. The installer offers to
 set it, and the launcher will not start the browser without it.

@@ -22,6 +22,17 @@
 #                   change nothing
 #   --yes           do not ask for confirmation
 #   --release TAG   install the package from release TAG (default: latest)
+#   --verify-only   check the release's signature and the package, and
+#                   install nothing
+#   --allow-downgrade
+#                   install the latest release although a newer version is
+#                   installed
+#   --allow-unsigned
+#                   with --release TAG: install a release from before
+#                   releases were signed (0.20.3.18 and earlier), checked
+#                   against its checksum file only
+#   --from URL      take the release's files from URL (a mirror, or
+#                   file:///a/directory); they are verified the same way
 #   --dir PATH      where --build keeps the source (default: ~/Beryllium)
 #   --branch NAME   branch --build uses (default: main)
 #   --ccache        with --build: keep a compiler cache (ccache), so the next
@@ -35,6 +46,37 @@ REPO="johnjanik/Beryllium"
 GIT_URL="https://github.com/${REPO}.git"
 RELEASES="https://github.com/${REPO}/releases"
 POUDRIERE_CONF="${BERYLLIUM_POUDRIERE_CONF:-/usr/local/etc/poudriere.conf}"  # override for tests
+
+# Release signing (plan/18 section 5; freebsd/release-keys/README.md). A
+# release carries RELEASE, which names it and lists the SHA-256 of its
+# files, and RELEASE.sig, made with a key that is not on GitHub. The two
+# lists below are freebsd/release-keys/allowed_signers and revoked_keys,
+# line for line: this script is fetched alone, so it carries them.
+SIGNER="release@beryllium"
+SIGN_NAMESPACE="beryllium-release"
+FIRST_SIGNED="0.20.3.19"
+MANIFEST_MAX=65536 # bytes; a release manifest is a few hundred
+
+# The last release made before releases were signed. This installer knows
+# its FreeBSD 16 package by its SHA-256 (as GitHub served it on 12 November
+# 2026), so that package installs without a signature and nothing else can
+# be passed off as it. As "the latest release" it is accepted until the
+# date below, by which a signed release is to be out; by its name, always.
+LAST_UNSIGNED_TAG="v0.20.3.18"
+LAST_UNSIGNED_VERSION="0.20.3.18"
+LAST_UNSIGNED_SHA256_16="0094119e7283cec3f8ff8a3388a615c4debc04738d513b63f8bc0f7981bb1c26"
+LAST_UNSIGNED_AS_LATEST_UNTIL=20261201
+
+allowed_signers() {
+	cat <<'EOF'
+release@beryllium namespaces="beryllium-release",valid-after="20261111",valid-before="20270101" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIsdyAeLdF0QS0/rhJhIO4pIgWgWY4kKoeVM5oOpYll3
+EOF
+}
+
+revoked_keys() {
+	cat <<'EOF'
+EOF
+}
 POUDRIERE_D="$(dirname "$POUDRIERE_CONF")/poudriere.d"
 CCACHE_SET=ccache # --ccache builds are Poudriere's set "ccache" (bulk -z ccache)
 CCACHE_MAX=30G
@@ -43,6 +85,10 @@ MODE=package
 DRYRUN=0
 YES=0
 RELEASE=latest
+VERIFY_ONLY=0
+ALLOW_DOWNGRADE=0
+ALLOW_UNSIGNED=0
+FROM=""
 SRCDIR="${HOME:-/root}/Beryllium"
 BRANCH=main
 CCACHE=0
@@ -191,26 +237,216 @@ EOF
 
 # ---------------------------------------------------------------------------
 
+# The release's signed manifest, checked and taken apart. RELEASE reads:
+#
+#   beryllium-release 1
+#   version 0.20.3.19
+#   tag v0.20.3.19
+#   commit <40 hex digits>
+#   date 2026-11-12
+#   sha256 <64 hex digits>  beryllium-FreeBSD-16-amd64.pkg
+#   sha256 <64 hex digits>  BUILD-MANIFEST-FreeBSD-16-amd64.json
+#
+# Nothing in it is acted on before the signature has verified, and after
+# that only lines of exactly these shapes: one of each field, a file name
+# of letters, digits, dots, hyphens and underscores, one line a file.
+# Anything else refuses the whole manifest. Output: the same fields, with
+# "asset <digest> <name>" for each file.
+parse_manifest() { # file
+	LC_ALL=C awk '
+	function bad(why) { print "install.sh: release manifest: " why > "/dev/stderr"; failed = 1; exit 1 }
+	function hex(v, n) { return length(v) == n && v !~ /[^0-9a-f]/ }
+	length($0) > 300 { bad("line " NR " is too long") }
+	/[^ -~]/ { bad("line " NR " has a character that does not belong in a manifest") }
+	NR == 1 {
+		if ($0 != "beryllium-release 1")
+			bad("not a Beryllium release manifest of a kind this installer knows")
+		next
+	}
+	NF == 2 && ($1 == "version" || $1 == "tag" || $1 == "commit" || $1 == "date") {
+		if (seen[$1]++) bad("two " $1 " lines")
+		if ($1 == "version" && $2 !~ /^[0-9][0-9A-Za-z._,]*$/) bad("version is not a version")
+		if ($1 == "tag" && $2 !~ /^v[0-9][0-9A-Za-z._-]*$/) bad("tag is not a release tag")
+		if ($1 == "commit" && !hex($2, 40)) bad("commit is not a commit")
+		if ($1 == "date" && $2 !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) bad("date is not a date")
+		print $1, $2
+		next
+	}
+	NF == 3 && $1 == "sha256" {
+		if (!hex($2, 64)) bad("line " NR " has no SHA-256")
+		if ($3 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) bad("line " NR " names a file this installer will not touch")
+		if (named[$3]++) bad("two lines for " $3)
+		print "asset", $2, $3
+		assets++
+		next
+	}
+	{ bad("line " NR " is not one this installer knows") }
+	END {
+		if (failed) exit 1
+		if (NR == 0) { print "install.sh: release manifest: empty" > "/dev/stderr"; exit 1 }
+		if (!seen["version"] || !seen["tag"] || !seen["commit"] || !seen["date"] || !assets) {
+			print "install.sh: release manifest: a field is missing" > "/dev/stderr"
+			exit 1
+		}
+	}' "$1"
+}
+
+manifest_field() { # name
+	awk -v k="$1" '$1 == k { print $2; exit }' "$TMPDIR_B/RELEASE.fields"
+}
+
+# verify_signature FILE SIGNATURE: FILE was signed by a release key that is
+# in the list, in its validity and not withdrawn. The answer is ssh-keygen's
+# exit status, so nothing stands between the command and the test.
+verify_signature() {
+	command -v ssh-keygen >/dev/null 2>&1 ||
+		die "ssh-keygen is needed to check the release's signature, and is not installed.
+It is part of FreeBSD's base system; where that was built without OpenSSH,
+'pkg install openssh-portable' provides it. Nothing was installed."
+	allowed_signers >"$TMPDIR_B/allowed_signers"
+	revoked_keys >"$TMPDIR_B/revoked_keys"
+	if ssh-keygen -Y verify -f "$TMPDIR_B/allowed_signers" -I "$SIGNER" -n "$SIGN_NAMESPACE" \
+	    -s "$2" -r "$TMPDIR_B/revoked_keys" <"$1" >"$TMPDIR_B/verify.out" 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# The release's manifest: fetched, its signature verified, read, and
+# compared with what was asked for. Sets expected (the package's SHA-256)
+# and m_version.
+signed_release() { # base asset
+	step "Fetching the signed release manifest ($RELEASE)"
+	if ! download "$1/RELEASE" "$TMPDIR_B/RELEASE"; then
+		if download "$1/SHA256SUMS" "$TMPDIR_B/SHA256SUMS" 2>/dev/null; then
+			if known_unsigned_release "$2"; then
+				return 0
+			fi
+			if [ "$RELEASE" = latest ]; then
+				die "the latest release is not signed. Releases are signed from $FIRST_SIGNED on, and
+this installer takes nothing else for the latest. The last release from
+before that installs by its name:
+  sh install.sh --release $LAST_UNSIGNED_TAG
+Nothing was installed."
+			fi
+			die "this release ($RELEASE) is not signed. Releases are signed from $FIRST_SIGNED on,
+and this installer installs nothing else unless told to. A release from
+before that installs by name, checked against its checksum file only:
+  sh install.sh --release $RELEASE --allow-unsigned
+Nothing was installed."
+		fi
+		die "no published Beryllium release found at ${FROM:-$RELEASES} ($RELEASE).
+Build it from source instead: sh install.sh --build"
+	fi
+	download "$1/RELEASE.sig" "$TMPDIR_B/RELEASE.sig" 2>/dev/null ||
+		die "the release manifest has no signature beside it (RELEASE.sig). Nothing was installed."
+	size=$(wc -c <"$TMPDIR_B/RELEASE" | tr -d ' ')
+	[ "$size" -le "$MANIFEST_MAX" ] ||
+		die "the release manifest is $size bytes; a real one is a few hundred. Nothing was installed."
+	if ! verify_signature "$TMPDIR_B/RELEASE" "$TMPDIR_B/RELEASE.sig"; then
+		tr -cd '[:print:]\n' <"$TMPDIR_B/verify.out" | sed 's/^/  ssh-keygen: /' >&2
+		die "the signature on the release manifest does not verify against Beryllium's
+release keys (freebsd/release-keys in the repository). Nothing was installed."
+	fi
+	say "Signature verified: $(grep -m1 '^Good ' "$TMPDIR_B/verify.out" | tr -cd '[:print:]')"
+	parse_manifest "$TMPDIR_B/RELEASE" >"$TMPDIR_B/RELEASE.fields" ||
+		die "the release manifest is signed but is not what this installer expects. Nothing was installed."
+	m_version=$(manifest_field version)
+	m_tag=$(manifest_field tag)
+	say "Release: Beryllium $m_version ($m_tag), dated $(manifest_field date), source commit $(manifest_field commit)"
+	if [ "$RELEASE" != latest ] && [ "$m_tag" != "$RELEASE" ]; then
+		die "asked for release $RELEASE, and the signed manifest is that of $m_tag. Nothing was installed."
+	fi
+	expected=$(awk -v f="$2" '$1 == "asset" && $3 == f { print $2 }' "$TMPDIR_B/RELEASE.fields")
+	if [ -z "$expected" ]; then
+		say "This release has packages for:"
+		awk '$1 == "asset" && $3 ~ /\.pkg$/ { print "  " $3 }' "$TMPDIR_B/RELEASE.fields"
+		if [ "$VERIFY_ONLY" = 1 ]; then
+			say "Signature and manifest verified. There is no package for FreeBSD ${MAJOR} (amd64) to check."
+			exit 0
+		fi
+		die "none for FreeBSD ${MAJOR} (amd64). Build it from source: sh install.sh --build"
+	fi
+	if [ "$RELEASE" = latest ] && [ "$ALLOW_DOWNGRADE" = 0 ] && pkg info -e beryllium; then
+		installed=$(pkg query '%v' beryllium)
+		if [ "$(pkg version -t "$installed" "$m_version")" = '>' ]; then
+			die "Beryllium $installed is installed, and the release offered as the latest is $m_version, which is older.
+That is what a replayed old release looks like. To install it all the same:
+  sh install.sh --allow-downgrade
+Nothing was installed."
+		fi
+	fi
+}
+
+# The one unsigned release this installer knows by its package's SHA-256.
+# Sets expected and m_version as signed_release does; the checksum file
+# beside the package is not consulted.
+known_unsigned_release() { # asset
+	[ "$1" = "beryllium-FreeBSD-16-amd64.pkg" ] || return 1
+	[ -z "$FROM" ] || return 1
+	if [ "$RELEASE" = latest ]; then
+		[ "$(date +%Y%m%d)" -lt "$LAST_UNSIGNED_AS_LATEST_UNTIL" ] || return 1
+	elif [ "$RELEASE" != "$LAST_UNSIGNED_TAG" ]; then
+		return 1
+	fi
+	cat <<EOF
+Release $LAST_UNSIGNED_TAG is from before releases were signed (they are from
+$FIRST_SIGNED on). This installer knows its package by its SHA-256 and
+accepts that package only.
+EOF
+	expected=$LAST_UNSIGNED_SHA256_16
+	m_version=$LAST_UNSIGNED_VERSION
+	if [ "$RELEASE" = latest ] && [ "$ALLOW_DOWNGRADE" = 0 ] && pkg info -e beryllium; then
+		installed=$(pkg query '%v' beryllium)
+		if [ "$(pkg version -t "$installed" "$m_version")" = '>' ]; then
+			die "Beryllium $installed is installed, and the release offered as the latest is $m_version, which is older.
+That is what a replayed old release looks like. To install it all the same:
+  sh install.sh --allow-downgrade
+Nothing was installed."
+		fi
+	fi
+	return 0
+}
+
+# A release from before releases were signed: its checksum file is all
+# there is, and whoever can replace the package can replace that too.
+unsigned_release() { # base asset
+	cat <<EOF
+
+NOT VERIFIED BY SIGNATURE (--allow-unsigned). Release $RELEASE is checked
+against the checksum file published beside it and nothing more: whoever
+could replace the package could replace that file as well.
+EOF
+	step "Fetching the release checksums ($RELEASE)"
+	if ! download "$1/SHA256SUMS" "$TMPDIR_B/SHA256SUMS"; then
+		die "no published Beryllium release found at ${FROM:-$RELEASES} ($RELEASE).
+Build it from source instead: sh install.sh --build"
+	fi
+	expected=$(awk -v f="$2" '$2 == f || $2 == "*" f { print $1 }' "$TMPDIR_B/SHA256SUMS")
+	if [ -z "$expected" ]; then
+		say "This release has packages for:"
+		awk '{ print "  " $2 }' "$TMPDIR_B/SHA256SUMS"
+		die "none for FreeBSD ${MAJOR} (amd64). Build it from source: sh install.sh --build"
+	fi
+	m_version=""
+}
+
 mode_package() {
 	check_platform
 	asset="beryllium-FreeBSD-${MAJOR}-amd64.pkg"
-	if [ "$RELEASE" = latest ]; then
+	if [ -n "$FROM" ]; then
+		base=${FROM%/}
+	elif [ "$RELEASE" = latest ]; then
 		base="${RELEASES}/latest/download"
 	else
 		base="${RELEASES}/download/${RELEASE}"
 	fi
 	TMPDIR_B=$(mktemp -d "${TMPDIR:-/tmp}/beryllium.XXXXXX")
 
-	step "Fetching the release checksums ($RELEASE)"
-	if ! download "${base}/SHA256SUMS" "$TMPDIR_B/SHA256SUMS"; then
-		die "no published Beryllium release found at ${RELEASES} ($RELEASE).
-Build it from source instead: sh install.sh --build"
-	fi
-	expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$TMPDIR_B/SHA256SUMS")
-	if [ -z "$expected" ]; then
-		say "This release has packages for:"
-		awk '{ print "  " $2 }' "$TMPDIR_B/SHA256SUMS"
-		die "none for FreeBSD ${MAJOR} (amd64). Build it from source: sh install.sh --build"
+	if [ "$ALLOW_UNSIGNED" = 1 ]; then
+		unsigned_release "$base" "$asset"
+	else
+		signed_release "$base" "$asset"
 	fi
 
 	step "Fetching $asset"
@@ -225,8 +461,17 @@ Nothing was installed."
 	pkgabi=$(pkg query -F "$TMPDIR_B/$asset" '%q')
 	pkgname=$(pkg query -F "$TMPDIR_B/$asset" '%n-%v')
 	[ "$pkgabi" = "$ABI" ] || die "$asset is for $pkgabi, but this machine is $ABI"
+	if [ -n "$m_version" ]; then
+		pkgversion=$(pkg query -F "$TMPDIR_B/$asset" '%v')
+		[ "$pkgversion" = "$m_version" ] ||
+			die "the package says it is version $pkgversion, and the signed manifest says $m_version. Nothing was installed."
+	fi
 	say "Package: $pkgname for $pkgabi"
 
+	if [ "$VERIFY_ONLY" = 1 ]; then
+		say "Verified: the signature, the release's name and version, and the package. Nothing was installed (--verify-only)."
+		return 0
+	fi
 	sandbox_notice
 	confirm "Install $pkgname?" || die "cancelled; nothing was installed"
 	find_su
@@ -580,6 +825,10 @@ while [ $# -gt 0 ]; do
 	--dry-run) DRYRUN=1 ;;
 	--yes | -y) YES=1 ;;
 	--release) shift; RELEASE=${1:?--release needs a tag} ;;
+	--verify-only) VERIFY_ONLY=1 ;;
+	--allow-downgrade) ALLOW_DOWNGRADE=1 ;;
+	--allow-unsigned) ALLOW_UNSIGNED=1 ;;
+	--from) shift; FROM=${1:?--from needs a URL} ;;
 	--dir) shift; SRCDIR=${1:?--dir needs a path} ;;
 	--branch) shift; BRANCH=${1:?--branch needs a name} ;;
 	--ccache) CCACHE=1 ;;
@@ -591,6 +840,18 @@ done
 
 if [ "$CCACHE" = 1 ] && [ "$MODE" != build ]; then
 	die "--ccache goes with --build"
+fi
+if [ "$ALLOW_UNSIGNED" = 1 ] && [ "$RELEASE" = latest ]; then
+	die "--allow-unsigned goes with --release TAG: the latest release is always checked by its signature"
+fi
+if [ "$ALLOW_UNSIGNED" = 1 ] && [ "$VERIFY_ONLY" = 1 ]; then
+	die "--verify-only checks a signature, and --allow-unsigned asks for none"
+fi
+if [ "$ALLOW_UNSIGNED" = 1 ] && [ -n "$FROM" ]; then
+	die "--from takes files from a place of your choosing, so they must be signed: it does not go with --allow-unsigned"
+fi
+if [ "$MODE" != package ] && [ "$VERIFY_ONLY$ALLOW_DOWNGRADE$ALLOW_UNSIGNED$FROM" != 000 ]; then
+	die "--verify-only, --allow-downgrade, --allow-unsigned and --from are for installing a release, not for --build or --uninstall"
 fi
 [ "$DRYRUN" = 1 ] && say "Dry run: commands that would change the system are shown, not run."
 
