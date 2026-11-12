@@ -904,6 +904,11 @@ FreeBSD test bed, so an increment must be worth a build.
    (`--network`) and the video diagnosis (`--diagnose` of the whole
    suite). With no code changed, the results of 0.20.3.18 stand for
    them.
+   **0.20.3.19 was published that day** (release `v0.20.3.19`, 10:34
+   UTC, source commit 8dc34f3), the first signed release. The package
+   GitHub serves has the SHA-256 above, the signed manifest lists it, and
+   the build manifest says `"compiler_cache": "none"`
+   (18-REMAINING-WORK.md section 5.1 has what was checked).
    **Then attestation** (next, build 0.20.3.20; 0.20.3.18 carried the
    two noise patches only and 0.20.3.19 no code change): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

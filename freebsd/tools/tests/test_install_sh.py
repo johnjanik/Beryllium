@@ -155,11 +155,6 @@ STUBS = {
         if [ "$1" = -q ]; then sha256sum "$2" | cut -d' ' -f1
         else h=$(sha256sum "$2" | cut -d' ' -f1); echo "$h $2"; fi""",
     "freebsd-version": 'echo "${STUB_FBSDVER:-16.0-CURRENT}"',
-    "date": """
-        case "$*" in
-        +%Y%m%d) echo "${STUB_TODAY:-20261112}" ;;
-        *) exec /bin/date "$@" ;;
-        esac""",
     "zpool": 'printf "%s\\n" $STUB_POOLS',
     "poudriere": """
         case "$1" in
@@ -483,50 +478,52 @@ class SignedReleaseTests(Harness):
         r = self.install("--release", "v0.20.3.12")
         self.refused(r, "is not signed", "sh install.sh --release v0.20.3.12 --allow-unsigned")
         self.assertFalse(self.package_was_fetched())
-        # as the latest, once the last unsigned release has had its time
-        r = self.install(STUB_TODAY="20261201")
+        # as the latest: a signed release is out, so nothing else is taken
+        r = self.install()
         self.refused(r, "the latest release is not signed", "sh install.sh --release v0.20.3.18")
         self.assertFalse(self.package_was_fetched())
-        # and from a place of the user's choosing, always
-        r = self.install("--from", "file://" + self.release, STUB_TODAY="20261112")
+        # and from a place of the user's choosing
+        r = self.install("--from", "file://" + self.release)
         self.refused(r, "the latest release is not signed")
 
     def test_the_last_unsigned_release_is_known_by_its_digest(self):
-        """0.20.3.18, the release before signing: its package installs
-        without a signature because the installer carries its SHA-256,
-        and nothing else is taken for it."""
+        """0.20.3.18, the release before signing: asked for by its name,
+        its package installs without a signature because the installer
+        carries its SHA-256, and nothing else is taken for it. As the
+        latest release it is not taken: that ended when 0.20.3.19, the
+        first signed release, was published."""
         self.publish(signed=False)
         with open(self.path("beryllium-FreeBSD-16-amd64.pkg"), "rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()
         knows = installer_with(os.path.join(self.tmp, "knows.sh"), signers_line(), known=digest)
         env = {"STUB_PKGVER": "0.20.3.18"}
-        for args in ((), ("--release", "v0.20.3.18")):
-            r = self.install(*args, installer=knows, **env)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertIn("This installer knows its package by its SHA-256", r.stdout)
-            self.assertRegex(r.stdout, r"\+ doas pkg add \S+\.pkg\n")
-            self.assertNotIn("NOT VERIFIED", r.stdout)
+        named = ("--release", "v0.20.3.18")
+        r = self.install(*named, installer=knows, **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("This installer knows its package by its SHA-256", r.stdout)
+        self.assertRegex(r.stdout, r"\+ doas pkg add \S+\.pkg\n")
+        self.assertNotIn("NOT VERIFIED", r.stdout)
+        # offered as the latest, the same bytes are refused: no signature
+        open(self.log, "w").close()
+        r = self.install(installer=knows, **env)
+        self.refused(r, "the latest release is not signed", "sh install.sh --release v0.20.3.18")
+        self.assertFalse(self.package_was_fetched())
         # the checksum file beside it is not what decides
         with open(self.path("SHA256SUMS"), "w") as f:
             f.write("0" * 64 + " beryllium-FreeBSD-16-amd64.pkg\n")
-        self.assertEqual(self.install(installer=knows, **env).returncode, 0)
+        self.assertEqual(self.install(*named, installer=knows, **env).returncode, 0)
         # another package under that name: the real installer knows another digest
-        r = self.install(**env)
+        r = self.install(*named, **env)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("checksum mismatch", r.stderr)
         self.assertNotIn("pkg add", r.stdout)
         # the right bytes saying they are another version
-        r = self.install(installer=knows, STUB_PKGVER="0.20.3.17")
+        r = self.install(*named, installer=knows, STUB_PKGVER="0.20.3.17")
         self.refused(r, "the package says it is version 0.20.3.17")
-        # a newer version installed: offered as the latest, it is a downgrade
-        r = self.install(installer=knows, STUB_PKGVER="0.20.3.18",
-                         STUB_INSTALLED="nss gtk3 noto-basic noto-sans-sc noto-emoji beryllium",
-                         STUB_INSTALLED_VERSION="0.20.3.19")
-        self.refused(r, "which is older")
         # no other machine's package is known
         self.publish(majors=(15,), signed=False)
-        r = self.install(installer=knows, STUB_ABI="FreeBSD:15:amd64", **env)
-        self.refused(r, "the latest release is not signed")
+        r = self.install(*named, installer=knows, STUB_ABI="FreeBSD:15:amd64", **env)
+        self.refused(r, "this release (v0.20.3.18) is not signed")
 
     def test_the_installer_knows_0_20_3_18_as_it_was_published(self):
         with open(INSTALL) as f:

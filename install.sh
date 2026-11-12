@@ -59,13 +59,13 @@ MANIFEST_MAX=65536 # bytes; a release manifest is a few hundred
 
 # The last release made before releases were signed. This installer knows
 # its FreeBSD 16 package by its SHA-256 (as GitHub served it on 12 November
-# 2026), so that package installs without a signature and nothing else can
-# be passed off as it. As "the latest release" it is accepted until the
-# date below, by which a signed release is to be out; by its name, always.
+# 2026), so that package installs by its name without a signature and
+# nothing else can be passed off as it. It was also accepted as "the latest
+# release" until the first signed one, 0.20.3.19, was published (12
+# November 2026); since then the latest release has to be signed.
 LAST_UNSIGNED_TAG="v0.20.3.18"
 LAST_UNSIGNED_VERSION="0.20.3.18"
 LAST_UNSIGNED_SHA256_16="0094119e7283cec3f8ff8a3388a615c4debc04738d513b63f8bc0f7981bb1c26"
-LAST_UNSIGNED_AS_LATEST_UNTIL=20261201
 
 allowed_signers() {
 	cat <<'EOF'
@@ -378,17 +378,14 @@ Nothing was installed."
 	fi
 }
 
-# The one unsigned release this installer knows by its package's SHA-256.
-# Sets expected and m_version as signed_release does; the checksum file
-# beside the package is not consulted.
+# The one unsigned release this installer knows by its package's SHA-256,
+# when it is asked for by its name. Sets expected and m_version as
+# signed_release does; the checksum file beside the package is not
+# consulted.
 known_unsigned_release() { # asset
 	[ "$1" = "beryllium-FreeBSD-16-amd64.pkg" ] || return 1
 	[ -z "$FROM" ] || return 1
-	if [ "$RELEASE" = latest ]; then
-		[ "$(date +%Y%m%d)" -lt "$LAST_UNSIGNED_AS_LATEST_UNTIL" ] || return 1
-	elif [ "$RELEASE" != "$LAST_UNSIGNED_TAG" ]; then
-		return 1
-	fi
+	[ "$RELEASE" = "$LAST_UNSIGNED_TAG" ] || return 1
 	cat <<EOF
 Release $LAST_UNSIGNED_TAG is from before releases were signed (they are from
 $FIRST_SIGNED on). This installer knows its package by its SHA-256 and
@@ -396,15 +393,6 @@ accepts that package only.
 EOF
 	expected=$LAST_UNSIGNED_SHA256_16
 	m_version=$LAST_UNSIGNED_VERSION
-	if [ "$RELEASE" = latest ] && [ "$ALLOW_DOWNGRADE" = 0 ] && pkg info -e beryllium; then
-		installed=$(pkg query '%v' beryllium)
-		if [ "$(pkg version -t "$installed" "$m_version")" = '>' ]; then
-			die "Beryllium $installed is installed, and the release offered as the latest is $m_version, which is older.
-That is what a replayed old release looks like. To install it all the same:
-  sh install.sh --allow-downgrade
-Nothing was installed."
-		fi
-	fi
 	return 0
 }
 

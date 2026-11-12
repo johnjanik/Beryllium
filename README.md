@@ -30,14 +30,50 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.18**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.19**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.18 in seven runs: four with the renderer lockdown on, and three without it, of which one with the network and one with the diagnostics (12 November 2026). What the first three lockdown runs did not check, and the fourth did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.19 in two runs, one with the renderer lockdown on and one without it (12 November 2026). 0.20.3.19 is the browser of 0.20.3.18 built again, and on 0.20.3.18 the suite passed in seven runs that day: four with the lockdown, and three without it, of which one with the network and one with the diagnostics. What the first three of those lockdown runs did not check, and the later ones did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
 - **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
+
+### New in 0.20.3.19 (since 0.20.3.18)
+
+The first signed release. The browser itself is that of 0.20.3.18, built
+again: no patch's code changed.
+
+- **The release is signed.** Beside the package the release carries
+  `RELEASE`, which names the release (version, tag, source commit, date)
+  and lists the SHA-256 of each of its files, and `RELEASE.sig`, a
+  signature on it made with a key that is not on GitHub. `install.sh`
+  verifies the signature against the keys it carries, then that the
+  release is the one asked for, that it is not older than the one
+  installed, and that the package has the digest the signed file gives
+  it. It installs nothing that fails one of these.
+  `sh install.sh --verify-only` makes the checks and installs nothing.
+  The key's fingerprint and how to check by hand are under
+  [Install](#install).
+- **The build manifest says whether a compiler cache was used.** A
+  release is built without one, and its manifest says
+  `"compiler_cache": "none"`; the release tool refuses a package built
+  with one.
+
+Checked on the release as GitHub serves it, the day it was published
+(12 November 2026): the signature verifies with `ssh-keygen` against
+[freebsd/release-keys](freebsd/release-keys/README.md); the package has
+the SHA-256 the signed file lists, which is also the SHA-256 of the file
+on the build machine; and `install.sh` accepts the release, refuses it as
+a downgrade when a newer version is installed, and refuses it when
+another tag was asked for. That last check was made off FreeBSD, with
+stand-ins for `pkg` and `fetch`. On the build machine the release tool
+runs the installer's checks on the files before it uploads them, and
+publishes nothing that fails.
+
+The signing key is for now a file on the build machine. It stops being
+accepted on 1 January 2027; two hardware tokens are to replace it before
+then (see [Still to finish](#still-to-finish)).
 
 ### New in 0.20.3.18 (since 0.20.3.17)
 
@@ -248,16 +284,16 @@ stands, the design, the work, the tests, and how it is to be attacked.
 3. **On by default, fail closed.** The lockdown becomes the default when
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
-   `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17 and
-   0.20.3.18 pass the gate in every run made, two and four. The last of
-   them is the first in which the gate read the whole of the lockdown's
-   log (Known issues); the others were made before that, several at the
-   same time, and the tally leaves them out. The 100 are counted on the
-   build that is to carry the default. One call is still refused after
-   the lockdown,
-   `cpuset_getaffinity`, 19 times in 20 renderers in the survey of
-   0.20.3.18; it does no harm, and it has to go before a refused call can
-   be treated as an alarm. There will be one package: the switches that
+   `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17,
+   0.20.3.18 and 0.20.3.19 pass the gate in every run made: two, four and
+   one. In the last run on 0.20.3.18 and in the run on 0.20.3.19 the gate
+   read the whole of the lockdown's log (Known issues); the others were
+   made before that, several at the same time, and the tally leaves them
+   out. The 100 are counted on the build that is to carry the default.
+   One call is still refused after the lockdown, `cpuset_getaffinity`,
+   once in each of 20 renderers in the survey of 0.20.3.19; it does no
+   harm, and it has to go before a refused call can be treated as an
+   alarm. There will be one package: the switches that
    undo the sandbox will come to need a file only an administrator can
    create.
 4. **The other processes.** Decided on 12 November 2026, following what
@@ -267,14 +303,14 @@ stands, the design, the work, the tests, and how it is to be attacked.
    they are not confined for the browser, the network service, video
    capture and the GPU process with NVIDIA's driver; a statement now and
    a policy later for audio. None of it is written yet.
-5. **Signed releases.** Written and tested on 12 November 2026: the
-   release tool signs and refuses to publish unsigned, and `install.sh`
-   verifies before it installs. Still to do: publish the first signed
-   release, 0.20.3.19; move from the key file on the build machine to the
-   two hardware tokens, before the key file stops being accepted at the
-   end of 2026; and publish the fingerprint somewhere this repository's
-   credentials do not reach. After that, a signed package repository, so
-   that `pkg upgrade` updates Beryllium.
+5. **Signed releases.** In place from 0.20.3.19 (12 November 2026): the
+   release tool signs and refuses to publish unsigned, `install.sh`
+   verifies before it installs, and the first signed release verifies as
+   GitHub serves it. Still to do: move from the key file on the build
+   machine to the two hardware tokens, before the key file stops being
+   accepted at the end of 2026; and publish the fingerprint somewhere
+   this repository's credentials do not reach. After that, a signed
+   package repository, so that `pkg upgrade` updates Beryllium.
 6. **Assurance.** A FreeBSD test machine for CI, review records for the
    217 imported FreeBSD patches on security paths, and the allocator
    hardening flags the review named as the main deficit.
@@ -301,8 +337,9 @@ sh install.sh
 
 The installer downloads the package for your FreeBSD version from this
 repository's [releases](https://github.com/johnjanik/Beryllium/releases),
-checks it against the release's `SHA256SUMS`, installs its dependencies
-from the official FreeBSD package repository, and installs it. The
+verifies the release's signature and the package's digest (below),
+installs its dependencies from the official FreeBSD package repository,
+and installs the package. The
 dependencies include the Noto fonts for Chinese, Japanese, Korean and
 emoji (about 215 MB, shared with the rest of the desktop).
 
@@ -326,8 +363,10 @@ installs nothing that fails. The key's fingerprint is
 [SECURITY.md](SECURITY.md), in `man beryllium` and in each release's
 notes, and [freebsd/release-keys](freebsd/release-keys/README.md) says how
 to check a release by hand. 0.20.3.18, the release before that, is not
-signed: the installer knows its package by its SHA-256 and accepts that
-package only.
+signed: the installer knows its package by its SHA-256 and installs that
+package, and no other, when asked for it by name
+(`sh install.sh --release v0.20.3.18`). The latest release has to be
+signed.
 
 Beryllium needs `kern.ipc.shm_allow_removed=1`. The installer offers to
 set it, and the launcher will not start the browser without it.
@@ -372,8 +411,9 @@ set it, and the launcher will not start the browser without it.
 - **The canvas noise can still be read around.** Helium applies its
   canvas noise when a page reads a canvas through `getImageData`,
   `toDataURL`, `toBlob` or `convertToBlob`. 0.20.3.18 adds WebGL
-  `readPixels` in its usual format. Still without noise in 0.20.3.18,
-  measured in 60 readbacks of 60 each (12 November 2026): a canvas copied
+  `readPixels` in its usual format. Still without noise in 0.20.3.18 and
+  in 0.20.3.19, which has the same code, measured on 0.20.3.18 in 60
+  readbacks of 60 each (12 November 2026): a canvas copied
   into a video frame, and a canvas read through WebGL one pixel at a
   time, which is exact because an area of one colour is left exact. Not
   tried: WebGL reads in other formats or into a buffer object,
@@ -401,8 +441,9 @@ set it, and the launcher will not start the browser without it.
   corrected in the suite the same day (the suite is in the repository,
   not in the package). 0.20.3.18 then passed with the corrected check:
   340 lines read, the whole log; a lockdown report from each of the
-  eight renderers, each with one thread; no refused descriptor. Releases
-  before it have not been run again.
+  eight renderers, each with one thread; no refused descriptor. 0.20.3.19
+  passed the same way, with 310 lines. Releases before 0.20.3.18 have not
+  been run again.
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
   driven over DevTools, the video plays for about 45 seconds and then
@@ -539,7 +580,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.18 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.19 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -553,11 +594,11 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.18, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.19, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |
-| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite, build manifests checked before publishing); signing proposed |
+| 6. Release engineering | Signed packages, CI, and a maintenance process another person can follow | started (CI, installer, test suite, build manifests checked before publishing, releases signed from 0.20.3.19); a signed package repository is still to come |
 
 Every feature the project must implement, build and test, with its status,
 is in the [feature matrix](plan/13-FEATURE-MATRIX.md). Details are in the

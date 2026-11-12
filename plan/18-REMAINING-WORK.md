@@ -819,8 +819,9 @@ section tests it and fills what it left out.
 
 ### 5.1 Where it stands
 
-**Written on 12 November 2026, with the owner's key; no release is signed
-yet.** Steps 2 to 5 of 5.3 are done: `publish-release` writes and signs
+**In place: written on 12 November 2026 with the owner's key, and
+0.20.3.19, published that day, is the first signed release.** Steps 2 to
+6 of 5.3 are done: `publish-release` writes and signs
 the manifest, refuses to publish without a signature, and runs this
 checkout's `install.sh --verify-only` on what it made and again on what
 GitHub serves; `install.sh` verifies the signature and makes the four
@@ -829,15 +830,45 @@ and `--from`; the key lists are in `freebsd/release-keys` and inside
 `install.sh`, held equal by a test; the fingerprint is in `SECURITY.md`,
 the README, `beryllium(1)` and each release's notes; and every case of
 5.5 is a test, with real signatures from keys made in the test. What is
-left: step 6, the first signed release (0.20.3.19: its package was built
-and tested on 12 November 2026 and is not published yet; the file on the
-build machine has SHA-256
-`01de225e838fa68fecee2bf98e42dd1c9e23b7006d5c69b554836fd9c877139b`,
-which the signed `RELEASE` must list for
-`beryllium-FreeBSD-16-amd64.pkg`); the hardware tokens
-(two YubiKey 5C NFC, ordered 12 November 2026), which must sign a release
-before the key file's validity ends on 1 January 2027; and the
-fingerprint somewhere outside GitHub.
+left: the hardware tokens (two YubiKey 5C NFC, ordered 12 November 2026),
+which must sign a release before the key file's validity ends on 1
+January 2027; and the fingerprint somewhere outside GitHub.
+
+**The first signed release, 0.20.3.19** (release `v0.20.3.19`, published
+12 November 2026 at 10:34 UTC, source commit 8dc34f3). It was the first
+run of `publish-release` with a real key. Checked the same day, on the
+files as GitHub serves them, from a machine that is not the build
+machine:
+
+- `ssh-keygen -Y verify` with `freebsd/release-keys/allowed_signers` and
+  the revocation file accepts `RELEASE.sig` for `RELEASE`: a good
+  signature in the namespace `beryllium-release` for `release@beryllium`,
+  with the key `SHA256:WqmnUvCQV4s8rrrKuaM7zov/qa8jzHgTPQPfkJI99lc`, the
+  fingerprint the documents carry. The address for the latest release
+  serves the same two files.
+- `RELEASE` names version 0.20.3.19, tag `v0.20.3.19`, that commit and
+  the date, and lists two files. The package it lists has SHA-256
+  `01de225e838fa68fecee2bf98e42dd1c9e23b7006d5c69b554836fd9c877139b`,
+  which is the digest the owner read from the file on the build machine
+  before publishing and the digest of the 148 MB file downloaded from
+  the release.
+- The build manifest has the digest `RELEASE` lists for it, says
+  `"compiler_cache": "none"` (the first manifest with that key), and
+  `check-provenance` accepts it against the release's commit: 20
+  patches, the same Helium commit and imported patch set.
+- `install.sh` from that commit, run on those files: accepts the release
+  as the latest and by its tag, with nothing installed, with 0.20.3.18
+  installed and with 0.20.3.19 installed; refuses it as a downgrade with
+  a newer version installed, and accepts it then with
+  `--allow-downgrade`; refuses it when `v0.20.3.18` was asked for.
+
+*What that last check did not exercise:* it was made on Linux, with the
+stand-ins for `pkg`, `fetch`, `sha256` and `freebsd-version` that the
+unit tests use, so the package's own name, version and ABI were not read
+from it there. On FreeBSD `publish-release` runs the same installer on
+the files before it uploads them and publishes nothing that fails; its
+output on the build machine was not sent, and the second run, on what
+GitHub serves, is what the checks above repeat from elsewhere.
 
 Three things were added to the design while writing it:
 
@@ -846,10 +877,16 @@ Three things were added to the design while writing it:
   branch, nobody could install until 0.20.3.19 was out. So the installer
   carries the SHA-256 of 0.20.3.18's FreeBSD 16 package (as GitHub
   served it on 12 November 2026) and accepts that package, and nothing
-  else, for an unsigned `latest` until 1 December 2026 and for
-  `--release v0.20.3.18` always. The checksum file beside the package is
-  not consulted. The owner confirmed on 12 November 2026 that the digest
-  is that of the package file on the build machine.
+  else, for `--release v0.20.3.18` always. The checksum file beside the
+  package is not consulted. The owner confirmed on 12 November 2026 that
+  the digest is that of the package file on the build machine. Until a
+  signed release was out, the installer also took that package as an
+  unsigned `latest`, with 1 December 2026 as the last day. That ended
+  when 0.20.3.19 was published: step 6 of 5.3 says unsigned installs of
+  `latest` end with the first signed release, so the allowance and its
+  date were removed from the installer the same day. A `latest` without
+  a signature is now refused, and the message names
+  `--release v0.20.3.18`.
 - **`--from URL`** takes the release's files from another place (a
   mirror, a directory). It is how `publish-release` checks its files
   before uploading, and it is safe by construction: the files are
@@ -1015,6 +1052,11 @@ upload that does not verify.
 A release is published with a signed manifest; `install.sh` refuses
 everything in 5.5; the fingerprint is in the places listed. README item
 5 goes; the package repository stays in the matrix as B-PKG-07.
+
+As of 12 November 2026: the first two hold, with 0.20.3.19. The
+fingerprint is in the repository, the manual page and the release notes,
+and nowhere outside GitHub yet; the hardware tokens have not signed a
+release. README item 5 stays until both are done.
 
 ## 6. Assurance
 
@@ -1328,7 +1370,7 @@ as a defect with its cause. README item 7 goes.
 | Build | Carries | Proves |
 |---|---|---|
 | 0.20.3.18, built and published 12 November 2026 | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, two runs of 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md); the suite passing in six runs, three of them with the lockdown |
-| 0.20.3.19, built 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. To be the first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). Still to come from it: the first run of the signing on the owner's machine, and the round trip through GitHub |
+| 0.20.3.19, built and published 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. The first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). The signing ran for the first time on the owner's machine, and the release verifies as GitHub serves it (5.1) |
 | 0.20.3.20 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
 | 0.20.3.21 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
 | 0.20.3.22 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |

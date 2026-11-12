@@ -25,7 +25,7 @@ carry the status.
 | BER-03 | A failed stdio rights limit was not fatal | yes | fixed in 0.20.3.10: the lockdown fails and the renderer ends |
 | BER-04 | Sandbox tests accept missing or partial confinement | yes | fixed: with the lockdown requested the tests are a gate; the three negative scenarios now fail (unit-tested) |
 | BER-05 | The startup sweep is not a lifetime policy | yes | receive-side limits were already in `a253314` (defence in depth); the sender-side boundary is written for 0.20.3.13 (the browser cuts before `sendmsg`); the GPU process's sends to renderers remain receiver-limited |
-| BER-06 | One release trust channel; no source binding | yes | publish-release now refuses a package whose build manifest does not match the checkout; signing written on 12 November 2026 with the owner's key (plan/18 section 5), the first signed release to be 0.20.3.19 |
+| BER-06 | One release trust channel; no source binding | yes | publish-release now refuses a package whose build manifest does not match the checkout; signing written on 12 November 2026 with the owner's key (plan/18 section 5); 0.20.3.19, published that day, is the first signed release, and it verifies as GitHub serves it |
 | BER-07 | Assurance coverage short of a hardened-release claim | yes | documented where the observation methods stop; no claim is made beyond them |
 
 ## BER-01: default child processes lack OS confinement
@@ -173,7 +173,9 @@ digests, so that an old signed release cannot be passed off as another;
 the installer checks the tag, the version and against a downgrade; and
 `publish-release` verifies its own work with the installer before and
 after uploading. The keys are in `freebsd/release-keys`. The first signed
-release is to be 0.20.3.19.
+release is 0.20.3.19, published on 12 November 2026: its signature
+verifies against those keys, and the package GitHub serves has the digest
+the signed manifest lists.
 
 `install.sh` fetches `SHA256SUMS`
 and the package from the same release; an actor able to replace release
