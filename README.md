@@ -317,10 +317,9 @@ set it, and the launcher will not start the browser without it.
   readbacks of 60, and so did a canvas read whole through a WebGL
   texture. Still exact in that build, 60 of 60 each: a canvas copied into
   a video frame, and a canvas read through WebGL one pixel at a time.
-  Other WebGL read formats were not tried. The offline test suite passes
-  on that build without the renderer lockdown; it has not been run on it
-  with the lockdown. The measurements, the patches' limits and the test
-  battery are in
+  Other WebGL read formats were not tried. The test suite passes on that
+  build with the renderer lockdown and without it. The measurements, the
+  patches' limits and the test battery are in
   [freebsd/privacy/noise-hash](freebsd/privacy/noise-hash/README.md).
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
@@ -329,7 +328,8 @@ set it, and the launcher will not start the browser without it.
   "Something went wrong. Refresh or try again later." (error code
   `ump.spsrejectfailure`), which is what that server does to a session it
   cannot attest as an ordinary browser. The test judges playback up to
-  that point and notes the rejection. If you see that message in ordinary
+  that point and notes the rejection; on build 0.20.3.18 it passed that
+  way, after 44 seconds of video. If you see that message in ordinary
   use, it is worth reporting, with the "Copy debug info" text from the
   player's right-click menu.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's

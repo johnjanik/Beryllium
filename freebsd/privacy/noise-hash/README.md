@@ -567,12 +567,13 @@ Read as results:
   came back exact in sixty of sixty. Both were written down as open
   before the build.
 
-The browser suite ran on the same build that morning, without the
-renderer lockdown: 35 tests pass and 4 are skipped for want of their
-switches. Its four canvas noise tests pass (1012 pixels moved on one
-site and 1016 on the other, other pixels, none of the four sets, none
-with the feature off). Its rendering group runs with the canvas noise
-switched off, so it says nothing about noise on `readPixels`; the
+The browser suite ran four times on the same build that morning: plain,
+with the network, with the diagnostics, and with the renderer lockdown.
+No test failed in any. Its four canvas noise tests passed each time
+(1012 and 1016 pixels moved on the two sites, 994 and 1030, 1006 and
+1056, 1049 and 1029; other pixels each time, none of the four sets,
+none with the feature off). Its rendering group runs with the canvas
+noise switched off, so it says nothing about noise on `readPixels`; the
 battery is the test for that.
 
 The two patch files still say "not built" in their headers. They stay as
