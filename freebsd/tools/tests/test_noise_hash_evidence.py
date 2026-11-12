@@ -124,8 +124,8 @@ class Model(unittest.TestCase):
 
     def test_a_whole_read_of_flat_squares_moves_only_their_borders(self):
         """The battery's four flat squares, read whole. Build 0.20.3.18
-        changed 112 to 122 of the 1,024 pixels (12 November 2026); the
-        README gives the model's range for 400 tokens."""
+        changed 112 to 123 of the 1,024 pixels (12 November 2026, 60
+        readbacks); the README gives the model's range for 400 tokens."""
         colours = [(10, 20, 30, 255), (200, 100, 50, 255), (1, 2, 3, 255), (250, 251, 252, 255)]
         scene = [colours[(x >= 16) + 2 * (y >= 16)] for y in range(32) for x in range(32)]
         border = {i for i in range(1024) if i % 32 in (15, 16) or i // 32 in (15, 16)}
@@ -138,7 +138,7 @@ class Model(unittest.TestCase):
             self.assertLessEqual(moved, border, "a pixel inside a flat square moved")
             counts.append(len(moved))
         self.assertEqual((min(counts), max(counts)), (111, 123))
-        self.assertTrue(min(counts) <= 112 and 122 <= max(counts),
+        self.assertTrue(min(counts) <= 112 and 123 <= max(counts),
                         "the build's counts fall outside what the model gives")
 
     def test_fully_transparent_pixels_are_left_alone(self):
@@ -180,7 +180,7 @@ class Readme(unittest.TestCase):
         for name, expected, measured in rows:
             self.assertEqual(expected, measured, name)
         self.assertIn("changes 111 to 123, all among the 124 pixels on the borders", self.text)
-        self.assertIn("changed 112 to 122 of its\n  1,024 pixels", self.text)
+        self.assertIn("changed 112 to 123 of its\n  1,024 pixels", self.text)
 
     def test_the_stated_chance(self):
         chance = sum(analysis.binomial_pmf(4096, 0.25, k) for k in SIZES)

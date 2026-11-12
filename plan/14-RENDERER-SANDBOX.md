@@ -726,7 +726,26 @@ FreeBSD test bed, so an increment must be worth a build.
    canvas. Skipped as always without their switches: the YouTube test
    (`--network`) and the two diagnostic groups. Still not seen: the
    manual pages read from the installed package.
-   **Then attestation** (next, build 0.20.3.18): the browser checks
+   **The suite on 0.20.3.18 (12 November 2026, one run after a restart,
+   `unprivileged_proc_debug=1`, without the lockdown): everything
+   passes.** 35 tests pass; 4 are skipped: the YouTube test
+   (`--network`), the two diagnostic groups, and the descriptor policy
+   test, which needs the lockdown. The build differs from 0.20.3.17 by
+   two patches to the canvas noise, in the renderer's canvas and WebGL
+   code (18-REMAINING-WORK.md section 8.2). The thread probe again
+   finds one thread when `RendererMain` begins and one at the lockdown
+   point (stopped at the marker under `EnableSandbox`, in a run that did
+   not switch the lockdown on). Canvas
+   noise: 1012 pixels moved on one site and 1016 on the other, other
+   pixels, none of the four sets, the same on a second read, none with
+   the feature off. The canvas sweeps are exact on the CPU and the
+   default canvas, both displays still reporting HDR. Media, pages,
+   fonts, the toolbar, the idle network checks and the stability tests
+   as before. Not reported on 0.20.3.18: a run with the lockdown, and
+   the YouTube run. The noise battery ran twice on this build the same
+   morning (freebsd/privacy/noise-hash/README.md).
+   **Then attestation** (next, build 0.20.3.19; 0.20.3.18 carried the
+   two noise patches only): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
