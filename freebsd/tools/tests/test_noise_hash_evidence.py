@@ -122,6 +122,25 @@ class Model(unittest.TestCase):
                          model.noise_pixels(token, before, 10, 10, finalize=True))
         self.assertNotEqual(model.webgl_readback(token, before, 10, 10), before)
 
+    def test_a_whole_read_of_flat_squares_moves_only_their_borders(self):
+        """The battery's four flat squares, read whole. Build 0.20.3.18
+        changed 112 to 122 of the 1,024 pixels (12 November 2026); the
+        README gives the model's range for 400 tokens."""
+        colours = [(10, 20, 30, 255), (200, 100, 50, 255), (1, 2, 3, 255), (250, 251, 252, 255)]
+        scene = [colours[(x >= 16) + 2 * (y >= 16)] for y in range(32) for x in range(32)]
+        border = {i for i in range(1024) if i % 32 in (15, 16) or i // 32 in (15, 16)}
+        self.assertEqual(len(border), 124)
+        rng = random.Random(18)
+        counts = []
+        for _ in range(400):
+            out = model.webgl_readback(rng.getrandbits(64), scene, 32, 32)
+            moved = {i for i, (a, b) in enumerate(zip(scene, out)) if a != b}
+            self.assertLessEqual(moved, border, "a pixel inside a flat square moved")
+            counts.append(len(moved))
+        self.assertEqual((min(counts), max(counts)), (111, 123))
+        self.assertTrue(min(counts) <= 112 and 122 <= max(counts),
+                        "the build's counts fall outside what the model gives")
+
     def test_fully_transparent_pixels_are_left_alone(self):
         before = model.flat(6, 6, (0, 0, 0, 0))
         self.assertEqual(model.noise_pixels(0x1234, before, 6, 6), before)
@@ -151,6 +170,17 @@ class Readme(unittest.TestCase):
             low = SIZES.index(int(first))
             self.assertEqual(step, "+1" if low & 1 else "-1",
                              "the README's table contradicts its own point 3")
+
+    def test_build_18_came_out_as_rehearsed(self):
+        """The table of the two patches: what the rehearsal against the
+        stand-in noise expected of 0.20.3.18, and what the build showed."""
+        rows = re.findall(r"^\| (.+?) \| [^|]+ \| (\d+ of 30)(?: \([^|]*\))? \| (\d+ of 30) \|$",
+                          self.text, re.M)
+        self.assertEqual(len(rows), 7)
+        for name, expected, measured in rows:
+            self.assertEqual(expected, measured, name)
+        self.assertIn("changes 111 to 123, all among the 124 pixels on the borders", self.text)
+        self.assertIn("changed 112 to 122 of its\n  1,024 pixels", self.text)
 
     def test_the_stated_chance(self):
         chance = sum(analysis.binomial_pmf(4096, 0.25, k) for k in SIZES)
