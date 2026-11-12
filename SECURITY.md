@@ -126,6 +126,9 @@ maintainer files it there.
   compromised build machine builds a package that is then signed.
   Releases up to 0.20.3.18 are not signed: the installer installs one
   only by name and with `--allow-unsigned`, against its checksum file.
+  The exception is 0.20.3.18 itself, whose package the installer knows by
+  its SHA-256: it installs by name without that switch, and only that
+  package. Nothing unsigned is taken as the latest release.
 - Every package carries `/usr/local/share/beryllium/BUILD-MANIFEST.json`,
   also published with the release: the version, the Chromium and Helium
   versions, the imported FreeBSD patch set and the SHA-256 of every
