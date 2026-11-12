@@ -775,6 +775,52 @@ FreeBSD test bed, so an increment must be worth a build.
    These runs are not part of the count for the default
    (18-REMAINING-WORK.md section 3, P7): that count is kept by
    `run --lockdown --repeat` in its ledger, one run at a time.
+   **Four more reports, 08:26, three runs at the same time, all with the
+   lockdown: two whole suites and the Capsicum survey alone.** Both
+   suites pass (36 pass, 3 skipped each): four renderers in capability
+   mode, 20 to 36 descriptors per renderer and none outside the policy,
+   one thread under lldb at both moments, canvas noise on 1036 and 1019
+   pixels and on 1053 and 1011. In one of them the window opened on the
+   other display (depth 24, no HDR) and one clip dropped a frame; the
+   canvas sweeps were exact there too.
+   The survey with the lockdown on, its details file this time: all 20
+   renderers wrote the lockdown marker. After it the kernel refused them
+   one call, `cpuset_getaffinity`, 19 times, and the one sysctl they
+   read was `hw.ncpu`, which capability mode allows. That is the state
+   of 0.20.3.16 and of 0.20.3.10 to 0.20.3.12; the 242 refusals of
+   socket operations that 0.20.3.13 showed after the lockdown are gone.
+   A confined renderer's descriptors as the survey lists them: the
+   browser's resource files read-only, kqueues and event descriptors,
+   anonymous shared memory, and limited sockets to the browser, the GPU
+   process, the network service and the storage service. The other
+   process types have no lockdown point; the survey lists what each
+   would be refused (the GPU process its devices, its shader caches and
+   ten sysctls; the network service its cache files and the routing
+   table; the audio service its connection to PulseAudio).
+   **0.20.3.18 was published that day** (release `v0.20.3.18`, 04:31
+   UTC, source commit a732622).
+   **The gate's check of the lockdown's log was incomplete from
+   0.20.3.13 to 0.20.3.18, and these reports showed it.** One suite
+   counted three lockdown reports and 12 socket pairs where the other
+   counted four and 14. The check took the last 200 lines the lockdown
+   wrote, and in every lockdown report since 0.20.3.13 the lines it
+   accounts for (reports, socket pairs, cuts) add up to exactly 200: on
+   0.20.3.12 they were 22, with 8 lockdown reports, and the browser has
+   logged each descriptor it cuts since 0.20.3.13, about 180 lines a
+   session. So the numbers this log has given since then ("four lockdown
+   reports with `threads=1`", "the browser cutting 1 to 83 per
+   renderer", "14 socket pairs") are those of the end of the log: three
+   or four of about eight reports, and cut counts that are whole only
+   for the last renderers. A descriptor refused on arrival, a failure to
+   limit one, or a renderer with a second thread, written before those
+   200 lines, would not have failed the gate. Not affected: the kernel's
+   answer for every renderer, the descriptor policy read with
+   `procstat`, the thread probe under lldb, and the two-thread finding
+   of 0.20.3.15 and 0.20.3.16, which the end of the log showed.
+   Corrected on 12 November 2026: the check reads the whole log and says
+   how many lines that was, and a unit test puts a refusal 300 lines
+   before the end. No build has been run with it yet; the next
+   `run --lockdown` on 0.20.3.18 is the first.
    **Then attestation** (next, build 0.20.3.19; 0.20.3.18 carried the
    two noise patches only): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

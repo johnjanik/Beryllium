@@ -30,14 +30,48 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.17**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.18**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole offline test suite passes on 0.20.3.17, with the renderer lockdown on and without it (11 November 2026). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.18 in six runs: three with the renderer lockdown on, and three without it, of which one with the network and one with the diagnostics (12 November 2026). What the lockdown runs did not check until that day is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
 - **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
+
+### New in 0.20.3.18 (since 0.20.3.17)
+
+Two changes, both to the canvas fingerprinting noise that Beryllium takes
+from Helium. Nothing changes in the renderer lockdown.
+
+- **One noise for a canvas.** `toDataURL`, `toBlob` and `convertToBlob`
+  now change the same pixels, in the same way, as `getImageData`. Up to
+  0.20.3.17 they noised the picture with red and blue exchanged, so one
+  site could read two different noisings of one canvas in one session.
+- **Noise on what WebGL reads back.** `readPixels` in the usual format,
+  four bytes a pixel, carries the site's canvas noise. That covers a
+  WebGL scene read back, which is the other picture fingerprinting
+  scripts hash, and a 2D canvas copied into a WebGL texture, which came
+  back with every pixel exact in 0.20.3.17. An area of one exact colour
+  still reads back exact, so pages that pick an object by the colour
+  under the pointer keep working.
+
+Both were measured on this build with the
+[test battery](freebsd/privacy/noise-hash/README.md) in two runs, and held
+in 60 readbacks of 60. What the noise still does not cover is under
+[Known issues](#known-issues).
+
+In the repository since 0.20.3.17, and not part of the package:
+
+- `freebsd/privacy/noise-hash/battery` measures the canvas noise of
+  Beryllium or Helium on FreeBSD, Linux and macOS, and compares machines;
+- `freebsd/tests/browser/run --repeat N` runs the suite N times and keeps
+  a ledger; `run --tally` adds it up;
+- the suite's lockdown gate reads the whole of the lockdown's log (it
+  read only the end of it before: see Known issues);
+- `freebsd/tools/gpu-probe` says which GPU driver a machine would use;
+- `sh install.sh --build --ccache` makes a test build with a compiler
+  cache, so the next one compiles only what changed.
 
 ### New in 0.20.3.17 (since 0.20.3.12)
 
@@ -76,6 +110,8 @@ For the renderer lockdown, which stays opt-in:
   also fails on a renderer that has a second thread at its lockdown point,
   and it lists the threads there from their stacks. On 0.20.3.17 the
   whole suite passes with the lockdown on (two runs so far).
+  (Found on 12 November 2026: in those runs the gate read only the end of
+  the lockdown's log. See [Known issues](#known-issues).)
 
 For anyone running the test suite: `run --lockdown` switches the lockdown
 on; a browser that dies under a test is reported with its exit status or
@@ -212,10 +248,16 @@ stands, the design, the work, the tests, and how it is to be attacked.
 3. **On by default, fail closed.** The lockdown becomes the default when
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
-   `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17 is the
-   first build to pass the gate since it began counting threads, in both
-   runs made so far. There will be one package: the switches that undo
-   the sandbox will come to need a file only an administrator can create.
+   `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17 and
+   0.20.3.18 pass the gate in every run made, two and three. None of
+   those counts toward the 100: they were made before the gate read the
+   whole of the lockdown's log (Known issues), and several ran at the
+   same time. One call is still refused after the lockdown,
+   `cpuset_getaffinity`, 19 times in 20 renderers in the survey of
+   0.20.3.18; it does no harm, and it has to go before a refused call can
+   be treated as an alarm. There will be one package: the switches that
+   undo the sandbox will come to need a file only an administrator can
+   create.
 4. **The other processes.** GPU, network, audio and utility processes get
    their own policies, or an explicit statement that they have none.
 5. **Signed releases.** Signing each release with a key kept off GitHub,
@@ -226,7 +268,7 @@ stands, the design, the work, the tests, and how it is to be attacked.
    hardening flags the review named as the main deficit.
 7. **WebGPU** finds no adapter. Chromium gives Linux and BSD a WebGPU
    adapter only when the GPU process uses Vulkan, which it does not here.
-   Decided: the next build turns WebGPU off by default, with a switch for
+   Decided: a coming build turns WebGPU off by default, with a switch for
    those who want it, until the GPU process has a policy.
 
 ## Install
@@ -303,24 +345,38 @@ set it, and the launcher will not start the browser without it.
   package. (Releases up to 0.20.3.12 brought no font for Chinese,
   Japanese, Korean or emoji: `pkg install noto-sans-sc noto-emoji` there.)
 - **WebGPU** finds no adapter.
-- **The canvas noise can be read around.** Helium's canvas noise, which
-  Beryllium carries, is applied when a page reads a canvas through
-  `getImageData`, `toDataURL`, `toBlob` or `convertToBlob`, and nowhere
-  else. Measured on Beryllium 0.20.3.17 on FreeBSD, and on Helium
-  0.21.2.1 on macOS and Linux (11 November 2026): a canvas copied into a
-  WebGL texture or into a video frame reads back with every pixel exact,
-  and `readPixels` of a WebGL canvas is not noised. Reading a canvas
-  through `toDataURL` or `toBlob` also gives other noise than
-  `getImageData` does (red and blue are exchanged). Build 0.20.3.18,
-  measured on 12 November 2026 in two runs and not published yet, has two
-  patches for this: a snapshot carried the noise of `getImageData` in 60
-  readbacks of 60, and so did a canvas read whole through a WebGL
-  texture. Still exact in that build, 60 of 60 each: a canvas copied into
-  a video frame, and a canvas read through WebGL one pixel at a time.
-  Other WebGL read formats were not tried. The test suite passes on that
-  build with the renderer lockdown and without it. The measurements, the
-  patches' limits and the test battery are in
+- **The canvas noise can still be read around.** Helium applies its
+  canvas noise when a page reads a canvas through `getImageData`,
+  `toDataURL`, `toBlob` or `convertToBlob`. 0.20.3.18 adds WebGL
+  `readPixels` in its usual format. Still without noise in 0.20.3.18,
+  measured in 60 readbacks of 60 each (12 November 2026): a canvas copied
+  into a video frame, and a canvas read through WebGL one pixel at a
+  time, which is exact because an area of one colour is left exact. Not
+  tried: WebGL reads in other formats or into a buffer object,
+  `captureStream`, `createImageBitmap`, WebGPU. So a script that hashes a
+  canvas or a WebGL scene in the usual ways gets noise, and a page
+  written to get round the noise still can. In releases up to 0.20.3.17,
+  and in Helium 0.21.2.1 as measured on macOS and Linux, `readPixels` is
+  not noised at all, a canvas copied into a WebGL texture reads back
+  exact, and `toDataURL` and `toBlob` give other noise than
+  `getImageData` (red and blue exchanged). The measurements, the patches'
+  limits and the test battery are in
   [freebsd/privacy/noise-hash](freebsd/privacy/noise-hash/README.md).
+- **The lockdown gate read only the end of the log.** With the lockdown
+  on, the suite checks three things: the kernel's answer for every
+  renderer, every descriptor a renderer holds, and the lockdown's own
+  log, where a renderer reports its lockdown and a refused descriptor is
+  written down. The third check read the last 200 lines of that log, and
+  since 0.20.3.13, when the browser began to write a line for each
+  descriptor it cuts, the log is longer than that. So from 0.20.3.13 to
+  0.20.3.18 each run saw three or four of about eight lockdown reports
+  (on 0.20.3.17 and 0.20.3.18 each with one thread) and no refused
+  descriptor in what it read; what stood earlier in the log was not
+  checked. The first two checks do not use the log and were complete.
+  Found on 12 November 2026 in the reports of 0.20.3.18 and
+  corrected in the suite the same day (the suite is in the repository,
+  not in the package). 0.20.3.18 has not yet been run with the corrected
+  check.
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
   driven over DevTools, the video plays for about 45 seconds and then
@@ -328,8 +384,8 @@ set it, and the launcher will not start the browser without it.
   "Something went wrong. Refresh or try again later." (error code
   `ump.spsrejectfailure`), which is what that server does to a session it
   cannot attest as an ordinary browser. The test judges playback up to
-  that point and notes the rejection; on build 0.20.3.18 it passed that
-  way, after 44 seconds of video. If you see that message in ordinary
+  that point and notes the rejection; on 0.20.3.18 it passed that way,
+  after 44 seconds of video. If you see that message in ordinary
   use, it is worth reporting, with the "Copy debug info" text from the
   player's right-click menu.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
@@ -439,7 +495,10 @@ From Helium's open-source patch set, Beryllium keeps:
   turns it off. In releases up to 0.20.3.12, which pixels of a flat area
   move follows only two bits of the site's 64-bit noise token, so two
   sites move the same pixels in one session of four; since 0.20.3.17 a
-  Beryllium patch makes every draw depend on the whole token.
+  Beryllium patch makes every draw depend on the whole token. Since
+  0.20.3.18 every call that reads a 2D canvas gives the same noise, and
+  WebGL `readPixels` is noised too; what is left open is under
+  [Known issues](#known-issues).
 
 What differs:
 
@@ -454,7 +513,7 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.17 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.18 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
@@ -468,7 +527,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.17, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.18, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |

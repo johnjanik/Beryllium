@@ -18,8 +18,8 @@ Beryllium 0.20.3.17 was measured the same evening on FreeBSD. Its change
 to the hash holds: 30 readbacks, 30 different sets of pixels, none of the
 four. The ways around the noise are open on it exactly as on Helium.
 
-Beryllium build 0.20.3.18 was measured on 12 November 2026, in two runs.
-It has two patches more: a snapshot carried the noise of `getImageData`
+Beryllium 0.20.3.18, released 12 November 2026, was measured that day in
+two runs. It has two patches more: a snapshot carried the noise of `getImageData`
 in 60 readbacks of 60, and so did a canvas read whole through a WebGL
 texture. A video frame, and a read of one pixel at a time, still gave
 exact pixels in 60 of 60. The numbers are under "Beryllium's changes".
@@ -241,7 +241,8 @@ carries Helium 0.20.3's canvas code with one change, to the hash.
 The owner ran the battery twice on build 0.20.3.18, the first with those
 two patches, on the same machine, at 07:51 and, after a restart, at
 08:00. Each run: one control profile and five new profiles of six sites,
-thirty readbacks. The build is not published as a release yet.
+thirty readbacks. The build was published as release 0.20.3.18 the same
+day.
 
 The hash, in a second build:
 
@@ -497,15 +498,15 @@ the whole token. Released in 0.20.3.17 and measured above.
 11 November 2026 for 0.20.3.18: a blue, green, red snapshot is read back
 as red, green, blue before it is noised, so `toDataURL`, `toBlob` and
 `convertToBlob` carry the noise `getImageData` carries. Eight lines.
-Built in 0.20.3.18 and measured on 12 November 2026.
+In 0.20.3.18, released and measured on 12 November 2026.
 
 `patches/privacy/beryllium-noise-webgl-readpixels.patch`, written the
 same day for 0.20.3.18: `readPixels` into an array, in the format every
 WebGL context offers (four bytes a pixel), gets the site's canvas noise,
 anchored to the framebuffer. That covers a WebGL scene read back, and a
 2D canvas read through a texture, which then carries exactly the noise
-`getImageData` gives it. Built in 0.20.3.18 and measured on 12 November
-2026. Before that build its new function had been compiled outside the
+`getImageData` gives it. In 0.20.3.18, released and measured on 12
+November 2026. Before that build its new function had been compiled outside the
 tree against Chromium's own headers, where it agreed with `model.py` on
 240 cases.
 
@@ -576,10 +577,11 @@ none with the feature off). Its rendering group runs with the canvas
 noise switched off, so it says nothing about noise on `readPixels`; the
 battery is the test for that.
 
-The two patch files still say "not built" in their headers. They stay as
-they are until 0.20.3.18 is published or dropped: a package's manifest
-carries the SHA-256 of every patch, and `publish-release` refuses a
-package whose patches differ from the checkout.
+The two patch files kept their "not built" headers until 0.20.3.18 was
+published: a package's manifest carries the SHA-256 of every patch, and
+`publish-release` refuses a package whose patches differ from the
+checkout. The headers were brought up to date with the next revision,
+0.20.3.19; the code in them is unchanged.
 
 ## Reporting
 

@@ -54,8 +54,10 @@ Stage: 4 (Beryllium series). Depends on helium/core/noise/canvas.patch,
   privacy/beryllium-noise-snapshot-channel-order.patch, which changes the
   same file before it.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not
-  compiled in the tree. The new function, with the 8-bit path of the
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.18 (released 12 November 2026); this header was brought
+  up to date for 0.20.3.19 and the code below it is as built. Before
+  that build, the new function, with the 8-bit path of the
   helper it calls, and the layout arithmetic added to ReadPixelsHelper()
   were compiled verbatim outside the tree against Chromium's own
   base/containers/span.h, base/numerics/checked_math.h and
@@ -69,14 +71,17 @@ Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   not compile: the three lines that call the helper from the WebGL
   context (GetPackPixelStoreParams(), Host()->GetTopExecutionContext(),
   ByteSpanMaybeShared().subspan()), each used elsewhere in that file in
-  the same form. First build: 0.20.3.18.
+  the same form; the build compiled them.
 Test: freebsd/privacy/noise-hash/battery. On 0.20.3.17 "A canvas copied
   into a WebGL texture reads back exact, without noise" reads 30 of 30 and
   must read 0 of 30, with "reads back with the noise of getImageData" at
   30 of 30; "WebGL: single pixels and 3 by 3 blocks of a flat colour read
   back exact" must stay 30 of 30; "WebGL: read one pixel at a time, a
   canvas comes back exact" stays 30 of 30 and is the open route named
-  above. The battery's self-test runs these rows against stand-in noise
+  above. On 0.20.3.18 (12 November 2026, two runs of 30 readbacks) every
+  one of these rows read as required, and a whole read of four flat
+  squares changed 112 to 123 of 1,024 pixels, the model's 111 to 123.
+  The battery's self-test runs these rows against stand-in noise
   that behaves as this patch intends. Feature matrix row P-FPR-07.
 security-review: not required for the sandbox (renderer-only, no new
   input from outside the page, no new privilege). It changes what a web

@@ -188,7 +188,11 @@ class SandboxHonesty(BrowserTest):
         descriptor the policy has no kind for (the receive path says so as it
         removes every right) or failed to limit one."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
-        lines = self.browser.log_lines("beryllium-sandbox")
+        # The whole log, not its end: one refusal anywhere in it fails the
+        # gate. (Until 12 November 2026 this read the last 200 lines, which
+        # from 0.20.3.13, the first build to log what the browser cuts, was
+        # less than the log: three or four of some eight lockdown reports.)
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
         locked = [l for l in lines if "capability_mode=1" in l]
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
@@ -223,7 +227,8 @@ class SandboxHonesty(BrowserTest):
                 if site not in seen_sites:
                     seen_sites.add(site)
                     traces.append(block)
-        self.note(f"{len(locked)} lockdown reports, {len(received)} received descriptors "
+        self.note(f"{len(lines)} lines of the lockdown's log read, all of it: "
+                  f"{len(locked)} lockdown reports, {len(received)} received descriptors "
                   f"outside the policy, {len(failed)} failures, {len(made)} socket pairs made "
                   f"by confined processes" + (f": {makers}" if makers else "")
                   + (f"\nthreads at the lockdown point: {threads_at_lockdown}"

@@ -113,7 +113,7 @@ maintainer files it there.
   Beryllium patch. The release tool refuses a package whose manifest does
   not match the commit the release names
   (`freebsd/tools/check-provenance`). It also refuses a package built with
-  a compiler cache (`compiler_cache` in the manifest, from 0.20.3.18): in a
+  a compiler cache (`compiler_cache` in the manifest, from 0.20.3.19): in a
   release, every object file came from the compiler during that build.
 - Releases are not yet signed with a key separate from GitHub; the
   proposal is in [plan/16](plan/16-ADVERSARIAL-REVIEW-2026-11-07.md)
