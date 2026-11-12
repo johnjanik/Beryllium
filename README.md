@@ -260,8 +260,13 @@ stands, the design, the work, the tests, and how it is to be attacked.
    be treated as an alarm. There will be one package: the switches that
    undo the sandbox will come to need a file only an administrator can
    create.
-4. **The other processes.** GPU, network, audio and utility processes get
-   their own policies, or an explicit statement that they have none.
+4. **The other processes.** Decided on 12 November 2026, following what
+   Chromium on Linux, OpenBSD's port and Firefox do: a policy for the
+   utilities that only compute, for the storage service, and for the
+   Widevine process before it is supported; an explicit statement that
+   they are not confined for the browser, the network service, video
+   capture and the GPU process with NVIDIA's driver; a statement now and
+   a policy later for audio. None of it is written yet.
 5. **Signed releases.** Written and tested on 12 November 2026: the
    release tool signs and refuses to publish unsigned, and `install.sh`
    verifies before it installs. Still to do: publish the first signed
