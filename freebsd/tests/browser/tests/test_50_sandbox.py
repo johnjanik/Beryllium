@@ -196,7 +196,11 @@ class SandboxHonesty(BrowserTest):
         locked = [l for l in lines if "capability_mode=1" in l]
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
-        made = [l for l in lines if "socket pair made" in l]
+        # One line a pair. The first pair at each place in each process is
+        # followed by a line with its call stack ("the first socket pair
+        # made at ... came from frames"), which is not another pair: counted
+        # as one until 12 November 2026, it doubled the number.
+        made = [l for l in lines if "socket pair made" in l and "came from" not in l]
         makers = capsicum.socket_pair_makers(made)
         threads_at_lockdown = capsicum.threads_at_lockdown(locked)
         # The kernel's names for those threads, per renderer. Up to 0.20.3.16

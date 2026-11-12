@@ -326,8 +326,12 @@ class LogTest(unittest.TestCase):
         made = ("[2:7:1108/120000.000000:WARNING:capsicum_rights.cc(340)] beryllium-sandbox: "
                 "socket pair made at mojo::PlatformChannel on thread 'Compositor' "
                 "(fd 19, fd 22): limited")
+        # the stack of the first pair at a place is not a second pair
+        frames = ("[2:7:1108/120000.000001:WARNING:capsicum_rights.cc(344)] beryllium-sandbox: "
+                  "the first socket pair made at mojo::PlatformChannel on thread 'Compositor' "
+                  "came from frames: beryllium+0xa4b9434 beryllium+0x3881532")
         t = case("test_lockdown_log", LOCKDOWN, RENDERERS)
-        t.browser.log_lines.side_effect = log_of([self.LOCKED, made, self.CUT])
+        t.browser.log_lines.side_effect = log_of([self.LOCKED, made, frames, self.CUT])
         t.test_lockdown_log()
         noted = t.ctx.note.call_args[0][1]
         self.assertIn("1 socket pairs made by confined processes: "
