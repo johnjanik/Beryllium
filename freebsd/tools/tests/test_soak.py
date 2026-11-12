@@ -29,11 +29,14 @@ loader.exec_module(suite_run)
 
 
 def entry(outcome=soak.CLEAN, package="beryllium-0.20.3.18", boot=100, lockdown=True,
-          whole=True, headless=False, started="2026-11-12 01:00:00"):
-    return {"started": started, "seconds": 190, "boot": boot, "package": package,
+          whole=True, headless=False, started="2026-11-12 01:00:00", gate=soak.GATE):
+    made = {"started": started, "seconds": 190, "boot": boot, "package": package,
             "lockdown": lockdown, "whole": whole, "headless": headless, "outcome": outcome,
             "counts": {}, "results": "/r",
             "not_passed": [] if outcome == soak.CLEAN else ["fail tests.test_50_sandbox.X.test_y"]}
+    if gate is not None:   # None: a line written before the ledger had the mark
+        made["gate"] = gate
+    return made
 
 
 REPORT = {
@@ -173,6 +176,42 @@ class Tally(unittest.TestCase):
                       f"at least {soak.BAR_BOOTS} boots",
                       f"at least {soak.BAR_WINDOWS} of them with windows"):
             self.assertTrue(words in plan, f"plan/18 does not say: {words}")
+
+
+class GateMark(unittest.TestCase):
+    """The lockdown gate read the last 200 lines of the lockdown's log
+    until 12 November 2026, the end of it only from 0.20.3.13. A run made
+    then is evidence and is not in the count (plan/18 section 3.2)."""
+
+    def test_a_new_line_carries_the_mark(self):
+        self.assertEqual(soak.entry_from_report(REPORT, 100, "/r")["gate"], soak.GATE)
+        self.assertEqual(soak.entry_without_report(soak.HUNG, 0, 1800, 100, "p", True, True,
+                                                   False, "/r")["gate"], soak.GATE)
+
+    def test_a_line_without_the_mark_is_kept_and_not_counted(self):
+        old = [entry(gate=None) for _ in range(3)]
+        self.assertEqual(soak.tally(old), {})
+        mixed = old + [entry(), entry()]
+        self.assertEqual(soak.tally(mixed)["beryllium-0.20.3.18"]["streak"], 2)
+        self.assertEqual(soak.tally(mixed)["beryllium-0.20.3.18"]["runs"], 2)
+
+    def test_a_failure_before_the_mark_does_not_break_a_later_count(self):
+        runs = [entry(soak.FAILED, gate=None), entry(), entry()]
+        self.assertEqual(soak.tally(runs)["beryllium-0.20.3.18"]["streak"], 2)
+        self.assertIsNone(soak.tally(runs)["beryllium-0.20.3.18"]["last_bad"])
+
+    def test_the_tally_says_what_it_left_out(self):
+        text = "\n".join(soak.tally_lines([entry(gate=None), entry(gate=None), entry()]))
+        self.assertIn("beryllium-0.20.3.18: 2 whole-suite lockdown runs made before the gate "
+                      "read the whole of the lockdown's log (12 November 2026): kept, not "
+                      "counted", text)
+        self.assertIn("beryllium-0.20.3.18: 1 whole-suite lockdown runs, 1 clean", text)
+        only_old = soak.tally_lines([entry(gate=None)])
+        self.assertIn("1 whole-suite lockdown run made before", only_old[0])
+        self.assertIn("No whole-suite lockdown run that counts", only_old[1])
+        # runs that never counted (no lockdown, some groups) are not "left out"
+        self.assertEqual(soak.made_before_the_gate_read_the_whole_log(
+            [entry(lockdown=False, gate=None), entry(whole=False, gate=None)]), {})
 
 
 class TallyWords(unittest.TestCase):

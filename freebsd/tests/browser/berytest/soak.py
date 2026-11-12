@@ -31,6 +31,13 @@ BAR_WINDOWS = 20
 # many seconds is taken to hang, and is stopped with its browsers.
 RUN_TIMEOUT = 30 * 60
 
+# What the lockdown gate checked when a run was made, written into its
+# ledger line. 2: the gate reads the whole of the lockdown's log (12
+# November 2026). Before that it read the last 200 lines, which from
+# 0.20.3.13 was the end of the log only; such a run carries no mark, is
+# kept in the ledger, and is not counted (plan/18 section 3.2).
+GATE = 2
+
 CLEAN = "clean"
 FAILED = "failed"
 HUNG = "hung"
@@ -91,6 +98,7 @@ def entry_from_report(report, boot, results):
         "lockdown": str(info.get("renderer_lockdown", "")).startswith("requested"),
         "whole": not options.get("groups"),
         "headless": bool(options.get("headless")),
+        "gate": GATE,
         "outcome": FAILED if not_passed else CLEAN,
         "counts": counts,
         "not_passed": not_passed,
@@ -109,6 +117,7 @@ def entry_without_report(outcome, started, seconds, boot, package, lockdown, who
         "lockdown": lockdown,
         "whole": whole,
         "headless": headless,
+        "gate": GATE,
         "outcome": outcome,
         "counts": {},
         "not_passed": [f"{outcome}: the run left no report"],
@@ -143,8 +152,23 @@ def read(ledger):
     return entries
 
 
-def counts_toward_the_bar(entry):
+def whole_lockdown_run(entry):
     return bool(entry.get("lockdown")) and bool(entry.get("whole"))
+
+
+def counts_toward_the_bar(entry):
+    """A whole-suite lockdown run whose gate read the whole log."""
+    return whole_lockdown_run(entry) and entry.get("gate", 1) >= GATE
+
+
+def made_before_the_gate_read_the_whole_log(entries):
+    """{package: number} of whole-suite lockdown runs kept and not counted."""
+    out = {}
+    for e in entries:
+        if whole_lockdown_run(e) and not counts_toward_the_bar(e):
+            name = e.get("package", "unknown")
+            out[name] = out.get(name, 0) + 1
+    return out
 
 
 def tally(entries):
@@ -181,14 +205,21 @@ def tally_lines(entries, only=None):
     """The tally in words; only: one package version, for the line a
     repeat prints after each run."""
     packages = tally(entries)
+    earlier = made_before_the_gate_read_the_whole_log(entries)
     if only is not None:
         packages = {k: v for k, v in packages.items() if k == only}
+        earlier = {k: v for k, v in earlier.items() if k == only}
         if not packages:
             return []
-    if not packages:
-        return ["No whole-suite lockdown run in the ledger yet "
-                "(make one with: run --lockdown, or many with: run --lockdown --repeat N)."]
     lines = []
+    for name, n in earlier.items():
+        lines.append(f"{name}: {n} whole-suite lockdown run{'' if n == 1 else 's'} made before "
+                     "the gate read the whole of the lockdown's log (12 November 2026): kept, "
+                     "not counted")
+    if not packages:
+        return lines + ["No whole-suite lockdown run that counts in the ledger yet "
+                        "(make one with: run --lockdown, or many with: "
+                        "run --lockdown --repeat N)."]
     for name, p in packages.items():
         lines.append(f"{name}: {p['runs']} whole-suite lockdown runs, {p['clean']} clean, "
                      f"{p['runs'] - p['clean']} not")

@@ -819,8 +819,31 @@ FreeBSD test bed, so an increment must be worth a build.
    of 0.20.3.15 and 0.20.3.16, which the end of the log showed.
    Corrected on 12 November 2026: the check reads the whole log and says
    how many lines that was, and a unit test puts a refusal 300 lines
-   before the end. No build has been run with it yet; the next
-   `run --lockdown` on 0.20.3.18 is the first.
+   before the end.
+   **The first run with the whole log read, 0.20.3.18, 08:56 the same
+   day, alone on the machine: the gate passes.** 36 pass, 3 skipped. The
+   check read 340 lines, all the lockdown wrote: eight lockdown reports,
+   one for every renderer of the session, each with `threads=1` and
+   `CrRendererMain`; no descriptor refused on arrival, none refused
+   before sending, no failure; 304 lines of the browser cutting what it
+   sent, 10 to 121 per renderer. So what the end of the log had shown
+   holds for the whole of it on this build. Four renderers in capability
+   mode by the kernel's answer, 20 to 36 descriptors per renderer and
+   none outside the policy, one thread under lldb at both moments;
+   canvas noise on 1048 and 1033 pixels.
+   That report also showed the note counting socket pairs twice: it said
+   28, and the log has 28 lines about them. Half are pairs and half are
+   the call stack logged after the first pair at each place in each
+   process (logged since 0.20.3.15): in the lines the report prints,
+   every pair is followed by its stack line. 14 pairs for 8 renderers is
+   what 0.20.3.12 counted, whose log had no stack lines and was read
+   whole: one on the main thread in every renderer, and one on the
+   compositor thread in six. Each is limited. The note counts pairs only
+   from now.
+   The ledger marks each line with what the gate checked, and `run
+   --tally` keeps and does not count a whole-suite lockdown run made
+   before 12 November 2026 (18-REMAINING-WORK.md section 3.2). The 08:56
+   run was made a commit before that mark and is evidence, not a count.
    **Then attestation** (next, build 0.20.3.19; 0.20.3.18 carried the
    two noise patches only): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,

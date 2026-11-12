@@ -34,7 +34,7 @@ Current release: **Beryllium 0.20.3.18**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.18 in six runs: three with the renderer lockdown on, and three without it, of which one with the network and one with the diagnostics (12 November 2026). What the lockdown runs did not check until that day is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. The whole test suite passes on 0.20.3.18 in seven runs: four with the renderer lockdown on, and three without it, of which one with the network and one with the diagnostics (12 November 2026). What the first three lockdown runs did not check, and the fourth did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
 - **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
 - **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
@@ -249,10 +249,12 @@ stands, the design, the work, the tests, and how it is to be attacked.
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
    `run --lockdown --repeat 100`, then `run --tally`). 0.20.3.17 and
-   0.20.3.18 pass the gate in every run made, two and three. None of
-   those counts toward the 100: they were made before the gate read the
-   whole of the lockdown's log (Known issues), and several ran at the
-   same time. One call is still refused after the lockdown,
+   0.20.3.18 pass the gate in every run made, two and four. The last of
+   them is the first in which the gate read the whole of the lockdown's
+   log (Known issues); the others were made before that, several at the
+   same time, and the tally leaves them out. The 100 are counted on the
+   build that is to carry the default. One call is still refused after
+   the lockdown,
    `cpuset_getaffinity`, 19 times in 20 renderers in the survey of
    0.20.3.18; it does no harm, and it has to go before a refused call can
    be treated as an alarm. There will be one package: the switches that
@@ -375,8 +377,10 @@ set it, and the launcher will not start the browser without it.
   checked. The first two checks do not use the log and were complete.
   Found on 12 November 2026 in the reports of 0.20.3.18 and
   corrected in the suite the same day (the suite is in the repository,
-  not in the package). 0.20.3.18 has not yet been run with the corrected
-  check.
+  not in the package). 0.20.3.18 then passed with the corrected check:
+  340 lines read, the whole log; a lockdown report from each of the
+  eight renderers, each with one thread; no refused descriptor. Releases
+  before it have not been run again.
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
   driven over DevTools, the video plays for about 45 seconds and then

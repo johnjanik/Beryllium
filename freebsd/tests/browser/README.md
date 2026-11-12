@@ -60,7 +60,10 @@ it they are skipped. Useful options:
   starts. Every run, repeated or not, adds one line to a ledger
   (`~/beryllium-test-results/ledger.jsonl`, or `--ledger FILE`): when,
   which boot, the package version, lockdown or not, whole suite or some
-  groups, the result and what did not pass. `run --tally` reads it and
+  groups, what the lockdown gate checked, the result and what did not
+  pass (a whole-suite lockdown run from before 12 November 2026, when the
+  gate read only the end of the lockdown's log, has no such mark: the
+  tally keeps it and does not count it). `run --tally` reads it and
   says, per package version, how many whole-suite lockdown runs in a row
   were clean, over how many boots, and what is still missing from the bar
   for turning the lockdown on by default (100 in a row, 3 boots, 20 with

@@ -393,8 +393,9 @@ true before the default changes, and how to prove it.
   0.20.3.18, where the lines the check accounted for add up to exactly
   200 in every lockdown run since 0.20.3.13. The kernel's answer per
   renderer and the descriptor policy do not use the log. The suite reads
-  the whole log from that day (plan/14 has the account); no build has
-  been run with it yet.
+  the whole log from that day (plan/14 has the account), and 0.20.3.18
+  passed with it the same morning: 340 lines, eight lockdown reports for
+  eight renderers, each with one thread, nothing refused.
 - A renderer whose lockdown fails ends itself. That is the only
   fail-closed mechanism so far.
 - *Survey:* after the lockdown a renderer is refused exactly one call,
@@ -493,7 +494,9 @@ The rules of the count, so that nothing is decided after the fact:
   whose gate reads the whole of the lockdown's log, and if it had the
   machine's browser tests to itself: `--repeat` makes one run at a time.
   The lockdown runs made on 0.20.3.17 and 0.20.3.18 before that are
-  evidence and are not in the count.
+  evidence and are not in the count. The ledger enforces the first half:
+  each line carries what the gate checked, and `run --tally` lists a
+  whole-suite lockdown run without that mark as kept and not counted.
 - Any failure or error in a counting run sets the count back to zero. So
   does a run that hangs or dies. The cause is found before counting
   resumes; if the fault is in a test, the test is fixed and the count
@@ -1228,7 +1231,7 @@ as a defect with its cause. README item 7 goes.
 | Build | Carries | Proves |
 |---|---|---|
 | 0.20.3.18, built and published 12 November 2026 | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, two runs of 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md); the suite passing in six runs, three of them with the lockdown |
-| 0.20.3.19 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the headers of the two noise patches brought up to date (done 12 November 2026, with the revision); the first manifest that records a compiler cache or its absence | attestation; the sender alone suffices; the gate passing with the whole log read |
+| 0.20.3.19 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the headers of the two noise patches brought up to date (done 12 November 2026, with the revision); the first manifest that records a compiler cache or its absence | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 |
 | 0.20.3.20 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
 | 0.20.3.21 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
