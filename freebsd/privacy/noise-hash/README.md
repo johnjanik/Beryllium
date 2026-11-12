@@ -18,6 +18,12 @@ Beryllium 0.20.3.17 was measured the same evening on FreeBSD. Its change
 to the hash holds: 30 readbacks, 30 different sets of pixels, none of the
 four. The ways around the noise are open on it exactly as on Helium.
 
+Beryllium build 0.20.3.18 was measured on 12 November 2026, in two runs.
+It has two patches more: a snapshot carried the noise of `getImageData`
+in 60 readbacks of 60, and so did a canvas read whole through a WebGL
+texture. A video frame, and a read of one pixel at a time, still gave
+exact pixels in 60 of 60. The numbers are under "Beryllium's changes".
+
 ## The finding
 
 Helium gives each site a 64-bit noise token per profile session and
@@ -229,6 +235,31 @@ carries Helium 0.20.3's canvas code with one change, to the hash.
   is noised with red and blue exchanged. Two patches for build 0.20.3.18
   answer the snapshot and the WebGL read ("Beryllium's changes" below);
   0.20.3.17, measured here, has neither.
+
+### Build 0.20.3.18, 12 November 2026
+
+The owner ran the battery twice on build 0.20.3.18, the first with those
+two patches, on the same machine, at 07:51 and, after a restart, at
+08:00. Each run: one control profile and five new profiles of six sites,
+thirty readbacks. The build is not published as a release yet.
+
+The hash, in a second build:
+
+| | Beryllium 0.20.3.17 | Beryllium 0.20.3.18, two runs |
+|---|---|---|
+| Control, noise off: every readback exact | 6 of 6 | 12 of 12 |
+| Readbacks with noise | 30 of 30 | 60 of 60 |
+| Changed pixels are one of the four sets | 0 of 30 | 0 of 60 |
+| Different sets of changed pixels among the readbacks | 30 | 60 |
+| Counts of changed pixels | 945 to 1065, mean 1015 | 952 to 1071, mean 1022 |
+| Textured image: some value of five low bits explains every step | 0 of 30 | 0 of 60 |
+| Pairs of sites in one profile with the same pixels | 0 of 75 | 0 of 150 |
+| The same canvas read twice gives the same pixels | 30 of 30 | 60 of 60 |
+
+The counts again spread as independent choices with chance one in four
+would (mean 1022 and standard deviation 28, against 1024 and 28). What
+the two patches changed is in the table under "Beryllium's changes":
+every row came out as the rehearsal had it, in both runs.
 
 ## What was not measured
 
@@ -465,17 +496,18 @@ the whole token. Released in 0.20.3.17 and measured above.
 `patches/privacy/beryllium-noise-snapshot-channel-order.patch`, written
 11 November 2026 for 0.20.3.18: a blue, green, red snapshot is read back
 as red, green, blue before it is noised, so `toDataURL`, `toBlob` and
-`convertToBlob` carry the noise `getImageData` carries. Eight lines. Not
-yet built.
+`convertToBlob` carry the noise `getImageData` carries. Eight lines.
+Built in 0.20.3.18 and measured on 12 November 2026.
 
 `patches/privacy/beryllium-noise-webgl-readpixels.patch`, written the
 same day for 0.20.3.18: `readPixels` into an array, in the format every
 WebGL context offers (four bytes a pixel), gets the site's canvas noise,
 anchored to the framebuffer. That covers a WebGL scene read back, and a
 2D canvas read through a texture, which then carries exactly the noise
-`getImageData` gives it. Not yet built in the tree; its new function was
-compiled outside it against Chromium's own headers and agrees with
-`model.py` on 240 cases.
+`getImageData` gives it. Built in 0.20.3.18 and measured on 12 November
+2026. Before that build its new function had been compiled outside the
+tree against Chromium's own headers, where it agreed with `model.py` on
+240 cases.
 
 It leaves one kind of pixel alone: one whose whole 3 by 3 neighbourhood
 in the read is one exact colour. WebGL pages read flat colour back for
@@ -484,7 +516,7 @@ there), and Helium's noise changes one such pixel in four. Tor Browser's
 protection of `readPixels` broke pages that way. A flat area tells a
 page nothing one pixel of it would not.
 
-What that patch leaves open, and the battery will keep showing:
+What that patch leaves open, and the battery keeps showing:
 
 - a read of one pixel at a time, which is exact for the reason above and
   costs a page one call a pixel;
@@ -492,23 +524,62 @@ What that patch leaves open, and the battery will keep showing:
 - WebGL 2 `readPixels` into a buffer object;
 - video frames, `captureStream`, `createImageBitmap`.
 
-So after 0.20.3.18 the scripts that hash a WebGL scene with `readPixels`,
+So from 0.20.3.18 the scripts that hash a WebGL scene with `readPixels`,
 or a canvas with `toDataURL`, get noise, and one noise. A page written to
 get round Beryllium's noise still can. Feature matrix row P-FPR-07 stays
 open for that.
 
-What the battery should show on 0.20.3.18, from a rehearsal against the
-stand-in noise (`battery run --simulate fixed`):
+What the battery was expected to show on 0.20.3.18, from a rehearsal
+against the stand-in noise (`battery run --simulate fixed`) written before
+the build, and what it showed on the build (12 November 2026, two runs of
+thirty readbacks, the same in each):
 
-| Row | 0.20.3.17, measured | 0.20.3.18, expected |
-|---|---|---|
-| `toDataURL`, `toBlob`, `convertToBlob` give the pixels of `getImageData` | 10 of 30 | 30 of 30 |
-| Textured image through `toDataURL` gives the pixels of `getImageData` | 0 of 30 | 30 of 30 |
-| A canvas copied into a WebGL texture reads back exact | 30 of 30 | 0 of 30 |
-| or reads back with the noise of `getImageData` | 0 of 30 | 30 of 30 |
-| WebGL: single pixels and 3 by 3 blocks of a flat colour read back exact | not asked | 30 of 30 |
-| WebGL: read one pixel at a time, a canvas comes back exact | not asked | 30 of 30 (the open route) |
-| A canvas copied into a video frame reads back exact | 30 of 30 | 30 of 30 (still open) |
+| Row | 0.20.3.17, measured | 0.20.3.18, expected | 0.20.3.18, measured in each run |
+|---|---|---|---|
+| `toDataURL`, `toBlob`, `convertToBlob` give the pixels of `getImageData` | 10 of 30 | 30 of 30 | 30 of 30 |
+| Textured image through `toDataURL` gives the pixels of `getImageData` | 0 of 30 | 30 of 30 | 30 of 30 |
+| A canvas copied into a WebGL texture reads back exact | 30 of 30 | 0 of 30 | 0 of 30 |
+| or reads back with the noise of `getImageData` | 0 of 30 | 30 of 30 | 30 of 30 |
+| WebGL: single pixels and 3 by 3 blocks of a flat colour read back exact | not asked | 30 of 30 | 30 of 30 |
+| WebGL: read one pixel at a time, a canvas comes back exact | not asked | 30 of 30 (the open route) | 30 of 30 |
+| A canvas copied into a video frame reads back exact | 30 of 30 | 30 of 30 (still open) | 30 of 30 |
+
+Read as results:
+
+- **One noise for a canvas.** A snapshot now carries the pixels of
+  `getImageData`, in all sixty readbacks and for the grey fill, the
+  textured image and the mixed one. Red and blue are no longer exchanged:
+  the two readings agree whichever channel the step is on (in fifteen of
+  the sixty it was on green, where an exchange would not show).
+- **The texture route is closed for the usual read.** A canvas copied
+  into a WebGL texture and read back whole comes back with exactly the
+  noise `getImageData` gives that canvas, so a page gains nothing by
+  taking that route.
+- **Flat colour reads back exact, and only flat colour.** The four reads
+  of one pixel and the four of 3 by 3 pixels inside a flat square were
+  exact every time, so a page that picks objects by colour is not
+  disturbed. A whole read of the four squares changed 112 to 123 of its
+  1,024 pixels. `model.py`, run on that scene afterwards with 400 tokens,
+  changes 111 to 123, all among the 124 pixels on the borders between the
+  squares; the battery records the count for the build, not which pixels.
+- **What was left open is open.** Read one pixel at a time, the textured
+  canvas came back exact in sixty of sixty. Through a video frame it
+  came back exact in sixty of sixty. Both were written down as open
+  before the build.
+
+The browser suite ran four times on the same build that morning: plain,
+with the network, with the diagnostics, and with the renderer lockdown.
+No test failed in any. Its four canvas noise tests passed each time
+(1012 and 1016 pixels moved on the two sites, 994 and 1030, 1006 and
+1056, 1049 and 1029; other pixels each time, none of the four sets,
+none with the feature off). Its rendering group runs with the canvas
+noise switched off, so it says nothing about noise on `readPixels`; the
+battery is the test for that.
+
+The two patch files still say "not built" in their headers. They stay as
+they are until 0.20.3.18 is published or dropped: a package's manifest
+carries the SHA-256 of every patch, and `publish-release` refuses a
+package whose patches differ from the checkout.
 
 ## Reporting
 

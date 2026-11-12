@@ -268,6 +268,16 @@ BERYLLIUM_INSTALL_BROWSER=	${INSTALL} ${COPY} ${_BINOWNGRP} -m ${BINMODE}
 BERYLLIUM_INSTALL_BROWSER=	${INSTALL_PROGRAM}
 .endif
 
+# A build with the ports framework's compiler cache (WITH_CCACHE_BUILD, which
+# Poudriere sets when its CCACHE_DIR is set; install.sh --build --ccache)
+# says so in BUILD-MANIFEST.json: object files may come from earlier builds.
+# Such a package is a test build; check-provenance refuses to release it.
+.if defined(WITH_CCACHE_BUILD) && !defined(NO_CCACHE)
+BERYLLIUM_COMPILER_CACHE=	ccache
+.else
+BERYLLIUM_COMPILER_CACHE=	none
+.endif
+
 .if ${PORT_OPTIONS:MHEIMDAL_BASE} && !exists(/usr/lib/libkrb5.so)
 IGNORE=		you have selected HEIMDAL_BASE but do not have Heimdal installed in base
 .endif
@@ -478,6 +488,7 @@ do-install:
 		--version ${DISTVERSION} --chromium ${CHROMIUM_VERSION} \
 		--helium-commit ${HELIUM_COMMIT} \
 		--patches-dir ${BERYLLIUM_FILES}/patches \
+		--compiler-cache ${BERYLLIUM_COMPILER_CACHE} \
 		> ${STAGEDIR}${DATADIR}/BUILD-MANIFEST.json
 
 post-install-DEBUG-on:

@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 INSTALL = os.path.join(REPO, "install.sh")
 PUBLISH = os.path.join(REPO, "freebsd", "tools", "publish-release")
+BUILD_MANIFEST = os.path.join(REPO, "freebsd", "tools", "build-manifest")
 CHECK_PROVENANCE = os.path.join(REPO, "freebsd", "tools", "check-provenance")
 
 HELIUM_COMMIT = "2f81b9cafa38a95071e20de3f9cd6b0aca6d3c65"
@@ -224,6 +225,8 @@ class InstallBuildTests(Harness):
                 "+ doas poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium",
                 "+ pkg add <the new beryllium package>"]:
             self.assertIn(line + "\n", out)
+        self.assertIn("data/logs/bulk/160amd64-default/latest/logs/", out)
+        self.assertNotIn("ccache", out, "a build without --ccache must stay a clean build")
 
     def test_15_release_machine_with_existing_setup(self):
         conf = self.env["BERYLLIUM_POUDRIERE_CONF"]
@@ -254,6 +257,224 @@ class InstallBuildTests(Harness):
         r = self.run_sh(INSTALL, "--build", "--dry-run", "--yes", STUB_POOLS="tank data")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("several ZFS pools", r.stderr)
+
+    # --ccache: a compiler cache for the build set "ccache" and no other.
+
+    def ccache_build(self, *args, **env):
+        return self.run_sh(INSTALL, "--build", "--ccache", "--dry-run", "--yes", *args, **env)
+
+    def stub_ls(self, owner):
+        """ls -ld DIR, as on a machine where DIR belongs to owner."""
+        path = os.path.join(self.bin, "ls")
+        with open(path, "w") as f:
+            f.write('#!/bin/sh\necho "drwxr-xr-x  2 %s %s  3 Nov 11 12:00 $2"\n'
+                    % tuple(owner.split(":")))
+        os.chmod(path, 0o755)
+
+    def test_ccache_is_its_own_build_set(self):
+        r = self.ccache_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        d = os.path.join(self.tmp, "poudriere.d")
+        cache = "/usr/local/poudriere/ccache-beryllium"
+        for line in [
+                f"+ doas mkdir -p {d}",
+                f"+ append to {d}/ccache-poudriere.conf:",
+                f"    CCACHE_DIR={cache}",
+                "    CCACHE_DIR_NON_ROOT_SAFE=yes",
+                f"+ doas mkdir -p {cache}",
+                f"+ write {cache}/ccache.conf: max_size = 30G",
+                f"+ doas chown -R nobody:nobody {cache}",
+                "+ doas poudriere bulk -j 160amd64 -p default -z ccache -O beryllium "
+                "-b latest www/beryllium"]:
+            self.assertIn(line + "\n", out)
+        # the set's own logs, not those of a clean build
+        self.assertIn("data/logs/bulk/160amd64-default-ccache/latest/logs/", out)
+        self.assertIn("publish-release refuses to\npublish it", out)
+        # the main configuration gets no cache: other builds stay clean
+        main = out.split("Compiler cache for the build set")[0]
+        self.assertNotIn("CCACHE", main)
+        self.assertFalse(os.path.exists(d), "a dry run changed the system")
+
+    def test_ccache_goes_with_build(self):
+        self.publish()
+        r = self.run_sh(INSTALL, "--ccache", "--dry-run", "--yes")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--ccache goes with --build", r.stderr)
+        self.assertNotIn("pkg add", r.stdout)
+
+    def test_ccache_keeps_an_existing_setup(self):
+        d = os.path.join(self.tmp, "poudriere.d")
+        cache = os.path.join(self.tmp, "cache")
+        os.makedirs(d)
+        os.makedirs(cache)
+        with open(os.path.join(d, "ccache-poudriere.conf"), "w") as f:
+            f.write(f"CCACHE_DIR={cache}\nCCACHE_DIR_NON_ROOT_SAFE=yes\n")
+        self.stub_ls("nobody:nobody")
+        r = self.ccache_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        section = r.stdout.split("Compiler cache for the build set")[1].split("==>")[0]
+        self.assertIn("Already set up.", section)
+        self.assertIn(f"  {cache}\n", section)
+        self.assertNotIn("\n+ ", section, "an existing setup was changed")
+        self.assertNotIn("belongs to", r.stderr)
+        self.assertIn("-z ccache ", r.stdout)
+
+    def test_ccache_directory_named_in_the_set_file_is_used(self):
+        """The owner may move the cache: CCACHE_DIR in the set's file wins."""
+        d = os.path.join(self.tmp, "poudriere.d")
+        os.makedirs(d)
+        with open(os.path.join(d, "ccache-poudriere.conf"), "w") as f:
+            f.write("CCACHE_DIR=/tank/ccache\n")
+        r = self.ccache_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("+ doas mkdir -p /tank/ccache\n", r.stdout)
+        self.assertIn("    CCACHE_DIR_NON_ROOT_SAFE=yes\n", r.stdout)
+        self.assertNotIn("CCACHE_DIR=/usr/local/poudriere", r.stdout)
+
+    def test_ccache_directory_belongs_to_whoever_compiles(self):
+        conf = self.env["BERYLLIUM_POUDRIERE_CONF"]
+        for text, owner in [("BUILD_AS_NON_ROOT=no\n", "root:wheel"),
+                            ("PORTBUILD_USER=root\n", "root:wheel"),
+                            ("PORTBUILD_USER=builder\nPORTBUILD_UID=2000\n", "2000:2000"),
+                            ("PORTBUILD_USER=builder\n", "65532:65532"),
+                            ("BASEFS=/pd\n", "nobody:nobody")]:
+            with open(conf, "w") as f:
+                f.write(text)
+            r = self.ccache_build()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            base = "/pd" if "BASEFS" in text else "/usr/local/poudriere"
+            self.assertIn(f"+ doas chown -R {owner} {base}/ccache-beryllium\n", r.stdout, text)
+
+    def test_ccache_warns_about_a_directory_the_build_cannot_write(self):
+        d = os.path.join(self.tmp, "poudriere.d")
+        cache = os.path.join(self.tmp, "cache")
+        os.makedirs(d)
+        os.makedirs(cache)
+        with open(os.path.join(d, "ccache-poudriere.conf"), "w") as f:
+            f.write(f"CCACHE_DIR={cache}\nCCACHE_DIR_NON_ROOT_SAFE=yes\n")
+        self.stub_ls("root:wheel")
+        r = self.ccache_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"{cache} belongs to root:wheel, but Poudriere compiles as nobody:nobody",
+                      r.stderr)
+
+    def test_ccache_warns_when_every_build_is_cached(self):
+        with open(self.env["BERYLLIUM_POUDRIERE_CONF"], "w") as f:
+            f.write("CCACHE_DIR=/var/cache/ccache\n")
+        r = self.ccache_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("every Poudriere build on this machine uses a compiler cache", r.stderr)
+        r = self.run_sh(INSTALL, "--build", "--dry-run", "--yes")
+        self.assertNotIn("compiler cache", r.stderr)
+
+    def real_build(self, *args):
+        """install.sh --build for real (no --dry-run), as root, against
+        stand-ins that record what Poudriere and pkg were asked to do. The
+        poudriere stand-in puts the package where Poudriere would:
+        data/packages/<jail>-<tree>[-<set>]/All."""
+        base = os.path.join(self.tmp, "pd")
+        src = os.path.join(self.tmp, "src")
+        os.makedirs(os.path.join(src, ".git"), exist_ok=True)
+        os.makedirs(os.path.join(src, "freebsd", "tools"), exist_ok=True)
+        stubs = {
+            "id": "echo 0",
+            "git": 'case "$*" in *"remote get-url"*) '
+                   "echo https://github.com/johnjanik/Beryllium.git ;; esac",
+            os.path.join(src, "freebsd", "tools", "sync-port"): "exit 0",
+            "chown": 'echo "chown $*" >>"$STUB_LOG"',
+            "ccache": 'echo "ccache $* in $CCACHE_DIR"',
+            "pkg": """
+                case "$1" in
+                config) echo FreeBSD:16:amd64 ;;
+                info) [ "$3" != beryllium ] ;;
+                query) [ "$4" = %dn ] && echo nss ;;
+                add) echo "pkg $*" >>"$STUB_LOG" ;;
+                *) echo "pkg $* must not run" >&2; exit 99 ;;
+                esac""",
+            "poudriere": """
+                case "$1" in
+                jail) echo "160amd64 16.0-CURRENT amd64 http /x/jails/160amd64" ;;
+                ports) echo "default git 2026-11-03 /x/ports/default"
+                       echo "beryllium null 2026-11-03 /x/ports/beryllium" ;;
+                bulk)
+                    echo "poudriere $*" >>"$STUB_LOG"
+                    shift; jail=""; tree=""; set=""
+                    while [ $# -gt 0 ]; do
+                        case "$1" in
+                        -j) jail=$2; shift ;;
+                        -p) tree=$2; shift ;;
+                        -z) set=$2; shift ;;
+                        esac
+                        shift
+                    done
+                    d="$STUB_BASEFS/data/packages/$jail-$tree${set:+-$set}/All"
+                    mkdir -p "$d" && : >"$d/beryllium-0.20.3.1.pkg" ;;
+                esac""",
+        }
+        for name, body in stubs.items():
+            path = os.path.join(self.bin, name)
+            with open(path, "w") as f:
+                f.write("#!/bin/sh\n" + textwrap.dedent(body).strip() + "\n")
+            os.chmod(path, 0o755)
+        conf = self.env["BERYLLIUM_POUDRIERE_CONF"]
+        if not os.path.exists(conf):
+            with open(conf, "w") as f:
+                f.write(f"ZPOOL=zroot\nBASEFS={base}\nDISTFILES_CACHE={self.tmp}/distfiles\n"
+                        "USE_TMPFS=no\nALLOW_MAKE_JOBS=yes\nMAX_EXECUTION_TIME=172800\n"
+                        "NOHANG_TIME=28800\n")
+        open(self.log, "w").close()
+        r = self.run_sh(INSTALL, "--build", "--yes", "--dir", src, *args,
+                        STUB_BASEFS=base, STUB_SHM="1")
+        with open(self.log) as f:
+            return r, f.read().splitlines(), base
+
+    def test_ccache_build_for_real(self):
+        r, did, base = self.real_build("--ccache")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cache = os.path.join(base, "ccache-beryllium")
+        setconf = os.path.join(self.tmp, "poudriere.d", "ccache-poudriere.conf")
+        with open(setconf) as f:
+            written = f.read()
+        self.assertEqual(written,
+                         "# Added by the Beryllium installer (install.sh --build --ccache)\n"
+                         f"CCACHE_DIR={cache}\nCCACHE_DIR_NON_ROOT_SAFE=yes\n")
+        with open(os.path.join(cache, "ccache.conf")) as f:
+            self.assertEqual(f.read(), "max_size = 30G\n")
+        pkgfile = os.path.join(base, "data", "packages", "160amd64-default-ccache", "All",
+                               "beryllium-0.20.3.1.pkg")
+        self.assertEqual(did, [
+            f"chown -R nobody:nobody {cache}",
+            "poudriere bulk -j 160amd64 -p default -z ccache -O beryllium -b latest www/beryllium",
+            f"pkg add {pkgfile}"])
+        self.assertIn("This package was built with a compiler cache: it is a test build",
+                      r.stdout)
+        self.assertIn(f"ccache -s in {cache}\n", r.stdout)
+        with open(self.env["BERYLLIUM_POUDRIERE_CONF"]) as f:
+            self.assertNotIn("CCACHE", f.read(), "the cache leaked into every build")
+
+        # again: nothing is set up twice, and the cache is the same one
+        r, did, _ = self.real_build("--ccache")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Already set up.", r.stdout)
+        with open(setconf) as f:
+            self.assertEqual(f.read(), written)
+        self.assertEqual(len(did), 2, did)   # the build and the install, no chown
+
+        # and a build without --ccache is still a clean one, in its own place
+        r, did, _ = self.real_build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        clean = os.path.join(base, "data", "packages", "160amd64-default", "All",
+                             "beryllium-0.20.3.1.pkg")
+        self.assertEqual(did, [
+            "poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium",
+            f"pkg add {clean}"])
+        self.assertNotIn("compiler cache", r.stdout)
+
+    def test_help_names_ccache(self):
+        r = self.run_sh(INSTALL, "--help")
+        self.assertIn("--ccache", r.stdout)
+        self.assertIn("a release is built without it", r.stdout)
 
     def test_uninstall(self):
         r = self.run_sh(INSTALL, "--uninstall", "--dry-run", "--yes",
@@ -376,12 +597,88 @@ class CheckProvenanceTests(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("manifest '0.20.3.1', package '0.20.3.4'", r.stderr)
 
+    def test_a_build_with_a_compiler_cache_is_not_a_release(self):
+        """plan/04: a release is a clean build. Exit 3, so publish-release
+        can say what is wrong; a manifest without the key predates it."""
+        r = self.check(manifest_for(self.root, self.digests, compiler_cache="ccache"),
+                       "--version", "0.20.3.1")
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("built with a compiler cache (ccache)", r.stderr)
+        self.assertNotIn("not built from this checkout", r.stderr)
+        self.assertNotIn("built from this checkout:", r.stdout)
+        r = self.check(manifest_for(self.root, self.digests, compiler_cache="none"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("compiler_cache", manifest_for(self.root, self.digests))
+
+    def test_a_compiler_cache_and_other_patches_are_both_named(self):
+        other = dict(self.digests, **{"ui/two.patch": "0" * 64})
+        r = self.check(manifest_for(self.root, other, compiler_cache="ccache"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("built with a compiler cache", r.stderr)
+        self.assertIn("ui/two.patch differs", r.stderr)
+
     def test_unreadable_manifest(self):
         r = self.check("not json")
         self.assertEqual(r.returncode, 2)
         self.assertIn("cannot read", r.stderr)
         r = self.check("[1, 2]")
         self.assertEqual(r.returncode, 2)
+
+
+class BuildManifestTests(unittest.TestCase):
+    """The tool the port runs at stage time (the port carries a copy, kept
+    identical by sync-port --check)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = os.path.join(self.tmp, "repo")
+        self.digests = fake_checkout(self.root)
+        self.gnargs = os.path.join(self.tmp, "gnargs.json")
+        with open(self.gnargs, "w") as f:
+            json.dump({"args": {"is_official_build": True}, "origin": {}, "hardening": {}}, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def manifest(self, *extra):
+        port = os.path.join(self.root, "freebsd", "ports", "www", "beryllium")
+        r = subprocess.run(
+            [sys.executable, BUILD_MANIFEST, "--gnargs-json", self.gnargs,
+             "--imported-from", os.path.join(port, "files", "IMPORTED-FROM"),
+             "--version", "0.20.3.1", "--chromium", "156.0.8078.79",
+             "--helium-commit", HELIUM_COMMIT,
+             "--patches-dir", os.path.join(self.root, "patches"), *extra],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def check(self, text):
+        path = os.path.join(self.tmp, "BUILD-MANIFEST.json")
+        with open(path, "w") as f:
+            f.write(text)
+        return subprocess.run([sys.executable, CHECK_PROVENANCE, "--repo", self.root,
+                               "--version", "0.20.3.1", path],
+                              capture_output=True, text=True, timeout=60).returncode
+
+    def test_a_clean_build_says_so_and_can_be_released(self):
+        text = self.manifest()
+        self.assertEqual(json.loads(text)["compiler_cache"], "none")
+        self.assertEqual(json.loads(text)["beryllium_patches"], self.digests)
+        self.assertEqual(self.check(text), 0)
+
+    def test_a_build_with_a_compiler_cache_says_so_and_cannot(self):
+        text = self.manifest("--compiler-cache", "ccache")
+        self.assertEqual(json.loads(text)["compiler_cache"], "ccache")
+        self.assertEqual(self.check(text), 3)
+
+    def test_the_port_records_the_ports_frameworks_cache_switch(self):
+        with open(os.path.join(REPO, "freebsd", "ports", "www", "beryllium", "Makefile")) as f:
+            makefile = f.read()
+        self.assertIn(".if defined(WITH_CCACHE_BUILD) && !defined(NO_CCACHE)\n"
+                      "BERYLLIUM_COMPILER_CACHE=\tccache\n"
+                      ".else\nBERYLLIUM_COMPILER_CACHE=\tnone\n.endif\n", makefile)
+        self.assertIn("\t\t--compiler-cache ${BERYLLIUM_COMPILER_CACHE} \\\n"
+                      "\t\t> ${STAGEDIR}${DATADIR}/BUILD-MANIFEST.json\n", makefile)
 
 
 class PublishReleaseTests(Harness):
@@ -436,6 +733,17 @@ class PublishReleaseTests(Harness):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("security/one.patch differs", r.stderr)
         self.assertIn("was not built from this checkout (commit 1234567890abcdef)", r.stderr)
+        self.assertNotIn("gh release create", r.stdout)
+
+    def test_refuses_a_package_built_with_a_compiler_cache(self):
+        write_package(self.pkgfile, manifest_for(self.root, self.digests,
+                                                 compiler_cache="ccache"))
+        r = self.run_sh(PUBLISH, "--dry-run", "v0.20.3.1-1", self.pkgfile,
+                        STUB_DIRTY="", STUB_UNPUSHED="")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("was built with a compiler cache: it is a test build", r.stderr)
+        self.assertIn("without --ccache", r.stderr)
+        self.assertNotIn("was not built from this checkout", r.stderr)
         self.assertNotIn("gh release create", r.stdout)
 
     def test_refuses_a_package_without_a_manifest(self):

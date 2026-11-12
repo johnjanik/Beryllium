@@ -726,7 +726,57 @@ FreeBSD test bed, so an increment must be worth a build.
    canvas. Skipped as always without their switches: the YouTube test
    (`--network`) and the two diagnostic groups. Still not seen: the
    manual pages read from the installed package.
-   **Then attestation** (next, build 0.20.3.18): the browser checks
+   **The suite on 0.20.3.18 (12 November 2026, one run after a restart,
+   `unprivileged_proc_debug=1`, without the lockdown): everything
+   passes.** 35 tests pass; 4 are skipped: the YouTube test
+   (`--network`), the two diagnostic groups, and the descriptor policy
+   test, which needs the lockdown. The build differs from 0.20.3.17 by
+   two patches to the canvas noise, in the renderer's canvas and WebGL
+   code (18-REMAINING-WORK.md section 8.2). The thread probe again
+   finds one thread when `RendererMain` begins and one at the lockdown
+   point (stopped at the marker under `EnableSandbox`, in a run that did
+   not switch the lockdown on). Canvas
+   noise: 1012 pixels moved on one site and 1016 on the other, other
+   pixels, none of the four sets, the same on a second read, none with
+   the feature off. The canvas sweeps are exact on the CPU and the
+   default canvas, both displays still reporting HDR. Media, pages,
+   fonts, the toolbar, the idle network checks and the stability tests
+   as before. The noise battery ran twice on this build the same
+   morning (freebsd/privacy/noise-hash/README.md).
+   **Three more runs on 0.20.3.18 the same morning, with `--network`,
+   `--diagnose` and `--lockdown`: no test fails in any.** They were
+   started within 75 seconds of one another (08:14 to 08:15) and ran at
+   the same time, each with its own profile.
+   With the lockdown (36 pass, 3 skipped): the gate passes, for the
+   third time and the first on this build. Four renderers in capability
+   mode and no other process; four lockdown reports with `threads=1` and
+   `CrRendererMain`; 20 to 37 descriptors per renderer and none outside
+   the policy (one renderer ended before it was read); the browser
+   cutting 1 to 81 descriptors per renderer; 14 socket pairs made by
+   confined renderers, each limited, 6 on the compositor thread and 8 on
+   the main thread, the same number from the same two places as on
+   0.20.3.17; one thread under lldb at both moments. So the two noise
+   patches changed nothing the lockdown sees.
+   With the network (36 pass, 3 skipped): the YouTube test passes, the
+   first run of the version that judges playback up to a rejection. AV1
+   at 480p with Opus played for 44 seconds, 12 frames dropped, and then
+   YouTube's stream protection rejected the session
+   (`ump.spsrejectfailure`), as on 0.20.3.17, where the earlier version
+   of the test failed on it.
+   With the diagnostics (37 pass, 2 skipped): every clip plays under
+   every switch except with GPU memory buffers forced on, which crashes
+   the three video clips (exit code 11), the crash the default avoids. The
+   Capsicum survey, the first since 0.20.3.13: 20 renderer processes, 9
+   distinct refusals, 14 sysctls read (10 and 15 then). Its details file
+   was not sent, so which refusal and which sysctl went is not known.
+   Canvas noise in the four suite runs of the morning: 1012 and 1016
+   pixels on the two sites, 994 and 1030, 1006 and 1056, 1049 and 1029,
+   other pixels each time and none of the four sets.
+   These runs are not part of the count for the default
+   (18-REMAINING-WORK.md section 3, P7): that count is kept by
+   `run --lockdown --repeat` in its ledger, one run at a time.
+   **Then attestation** (next, build 0.20.3.19; 0.20.3.18 carried the
+   two noise patches only): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`

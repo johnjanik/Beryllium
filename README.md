@@ -311,11 +311,15 @@ set it, and the launcher will not start the browser without it.
   WebGL texture or into a video frame reads back with every pixel exact,
   and `readPixels` of a WebGL canvas is not noised. Reading a canvas
   through `toDataURL` or `toBlob` also gives other noise than
-  `getImageData` does (red and blue are exchanged). Two patches written
-  for the next build, 0.20.3.18, give a snapshot the noise of
-  `getImageData` and put the noise on WebGL `readPixels`; they are not
-  built yet, and they leave the video frame and some other WebGL reads
-  open. The measurements, the patches' limits and the test battery are in
+  `getImageData` does (red and blue are exchanged). Build 0.20.3.18,
+  measured on 12 November 2026 in two runs and not published yet, has two
+  patches for this: a snapshot carried the noise of `getImageData` in 60
+  readbacks of 60, and so did a canvas read whole through a WebGL
+  texture. Still exact in that build, 60 of 60 each: a canvas copied into
+  a video frame, and a canvas read through WebGL one pixel at a time.
+  Other WebGL read formats were not tried. The test suite passes on that
+  build with the renderer lockdown and without it. The measurements, the
+  patches' limits and the test battery are in
   [freebsd/privacy/noise-hash](freebsd/privacy/noise-hash/README.md).
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
@@ -324,7 +328,8 @@ set it, and the launcher will not start the browser without it.
   "Something went wrong. Refresh or try again later." (error code
   `ump.spsrejectfailure`), which is what that server does to a session it
   cannot attest as an ordinary browser. The test judges playback up to
-  that point and notes the rejection. If you see that message in ordinary
+  that point and notes the rejection; on build 0.20.3.18 it passed that
+  way, after 44 seconds of video. If you see that message in ordinary
   use, it is worth reporting, with the "Copy debug info" text from the
   player's right-click menu.
 - **Two GPUs.** On Wayland the browser renders on the GPU the desktop's
@@ -397,8 +402,10 @@ Beryllium builds in a [Poudriere](https://github.com/freebsd/poudriere) jail
 from this repository's port, `freebsd/ports/www/beryllium`. The full
 walkthrough, from installing Poudriere to installing the package, is
 [freebsd/ports/README.md](freebsd/ports/README.md); `sh install.sh --build`
-follows it for you. With the jail and ports trees set up as described
-there, a build is:
+follows it for you, and `sh install.sh --build --ccache` makes a test build
+with a compiler cache, so that the next one compiles only what changed (a
+release is always built without it). With the jail and ports trees set up
+as described there, a build is:
 
 ```sh
 doas poudriere bulk -j 160amd64 -p default -O beryllium -b latest www/beryllium

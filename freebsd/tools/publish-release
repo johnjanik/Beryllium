@@ -26,6 +26,9 @@
 # version; a package built from other inputs is refused, so the release
 # never names a commit the package was not built from. The manifests are
 # published with the release as BUILD-MANIFEST-FreeBSD-<major>-amd64.json.
+#
+# A release is a clean build (plan/04): a package whose manifest says it was
+# built with a compiler cache (install.sh --build --ccache) is refused.
 
 set -eu
 
@@ -85,8 +88,13 @@ for pkgfile in "$@"; do
 	manifest="BUILD-MANIFEST-FreeBSD-${major}-amd64.json"
 	manifest_of "$pkgfile" "$OUT/$manifest" ||
 		die "$pkgfile carries no BUILD-MANIFEST.json; it was not built by www/beryllium"
-	python3 "$TOOLS/check-provenance" --repo "$REPO_ROOT" --version "$v" "$OUT/$manifest" ||
-		die "$pkgfile was not built from this checkout (commit $COMMIT); build it from here, or check out what it was built from"
+	rc=0
+	python3 "$TOOLS/check-provenance" --repo "$REPO_ROOT" --version "$v" "$OUT/$manifest" || rc=$?
+	case "$rc" in
+	0) ;;
+	3) die "$pkgfile was built with a compiler cache: it is a test build. Build the release without one (install.sh --build, without --ccache)" ;;
+	*) die "$pkgfile was not built from this checkout (commit $COMMIT); build it from here, or check out what it was built from" ;;
+	esac
 	cp "$pkgfile" "$OUT/$asset"
 	names="$names $asset"
 	manifests="${manifests:-} $manifest"

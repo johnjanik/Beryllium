@@ -1209,9 +1209,10 @@ as a defect with its cause. README item 7 goes.
 
 | Build | Carries | Proves |
 |---|---|---|
-| 0.20.3.18 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07) | attestation; the sender alone suffices; the noise battery's rows for snapshots and WebGL |
-| 0.20.3.19 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
-| 0.20.3.20 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
+| 0.20.3.18, built 12 November 2026, not yet published | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md) |
+| 0.20.3.19 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the headers of the two noise patches brought up to date (not before 0.20.3.18 is published or dropped: the manifest pins every patch's SHA-256) | attestation; the sender alone suffices |
+| 0.20.3.20 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
+| 0.20.3.21 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
 | separate spikes | allocator, BackupRefPtr, control-flow integrity (6.3); the storage service in its restricted mode (4.2 tier 2); item 2 stage B | an answer each |
 

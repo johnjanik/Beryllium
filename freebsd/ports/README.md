@@ -295,6 +295,99 @@ ldd /usr/local/share/beryllium/beryllium | grep 'not found'
 If a FreeBSD base library is reported missing, `doas pkg install
 compat15x-amd64` provides the 15.x versions.
 
+## Faster test builds with a compiler cache
+
+Every Poudriere build starts from a clean tree and compiles all of Chromium
+again, about 55,000 steps, even when one patch changed. A compiler cache
+(`devel/ccache`) keeps what the compiler produced; the next build runs the
+compiler only for files whose source, headers, flags or compiler changed.
+The installer sets it up when asked:
+
+```sh
+sh install.sh --build --ccache
+```
+
+**For test builds only.** A release is a clean build: every object file in
+it came from the compiler during that build (plan/04). The two kinds of
+build are kept apart in three ways:
+
+- The cache belongs to its own Poudriere build set, `ccache`. Only a build
+  started with `-z ccache` reads `ccache-poudriere.conf`; a build without
+  it, such as step 10, uses no cache.
+- The set has its own packages and logs, in
+  `/usr/local/poudriere/data/packages/160amd64-default-ccache/` and
+  `.../logs/bulk/160amd64-default-ccache/`. The path in "Publishing a
+  release" below never names a cached build.
+- The package says how it was built: `compiler_cache` in its
+  `BUILD-MANIFEST.json` is `ccache` instead of `none`, and
+  `freebsd/tools/publish-release` refuses such a package.
+
+The same by hand, as root (the build runs as `nobody` unless
+`poudriere.conf` says otherwise):
+
+```sh
+doas mkdir -p /usr/local/poudriere/ccache-beryllium
+```
+
+```sh
+echo 'max_size = 30G' | doas tee /usr/local/poudriere/ccache-beryllium/ccache.conf
+```
+
+```sh
+doas chown -R nobody:nobody /usr/local/poudriere/ccache-beryllium
+```
+
+```sh
+printf 'CCACHE_DIR=/usr/local/poudriere/ccache-beryllium\nCCACHE_DIR_NON_ROOT_SAFE=yes\n' | doas tee -a /usr/local/etc/poudriere.d/ccache-poudriere.conf
+```
+
+```sh
+doas poudriere bulk -j 160amd64 -p default -z ccache -O beryllium -b latest www/beryllium
+```
+
+`max_size` matters: ccache's own limit is 5 GB, less than one build of the
+browser, so it would throw results away while the build is still running.
+To move the cache, change `CCACHE_DIR` in `ccache-poudriere.conf`; the
+installer uses the directory named there. To start again from nothing,
+delete the directory and run the installer again.
+
+What to expect:
+
+- The first build with the cache takes as long as any build, and fills the
+  cache. It also fetches the dependencies again, into the set's own package
+  directory.
+- Later builds skip the compiler for unchanged C and C++ files. They still
+  run everything else: the code generators and scripts, the Rust compiler,
+  the linker, and the extract, patch, configure, stage and package phases.
+- A new `llvm` package makes every earlier result unusable, and a new
+  Chromium version most of them; that build fills the cache again.
+
+Check that it works, after the second build (`pkg install ccache` on the
+build machine gives the same tool the jail uses):
+
+```sh
+CCACHE_DIR=/usr/local/poudriere/ccache-beryllium ccache -s
+```
+
+After a second build of the same source, `cache hit (direct)` should be
+far larger than `cache miss`, and `unsupported compiler option` near zero.
+The numbers add up over all builds. The installed package answers whether
+a cache was used:
+
+```sh
+grep compiler_cache /usr/local/share/beryllium/BUILD-MANIFEST.json
+```
+
+State on 11 November 2026: written, not yet run on FreeBSD. Checked by
+reading, against the source of Poudriere 3.4.8, the ports framework
+(`Mk/bsd.ccache.mk`, `Mk/bsd.port.mk`) and ccache 3.7.12 with FreeBSD's
+patch: Poudriere mounts the directory and sets `WITH_CCACHE_BUILD`; the
+framework puts ccache's `cc` and `c++` ahead of the port's own links on
+`PATH`, and ccache finds the port's clang behind them; none of the compiler
+options in the 4,478 compile lines of the 2 November build log (the first
+fifth of a build) is one ccache refuses to cache. How much time it saves
+has not been measured.
+
 ## What to expect from the first builds
 
 - **BSD patches against a newer point release.** The imported set is for
@@ -325,8 +418,9 @@ change only documentation since the build are fine.
 freebsd/tools/publish-release v0.20.3.N-1 /usr/local/poudriere/data/packages/160amd64-default/All/beryllium-0*.pkg
 ```
 
-Give it the packages from every jail you built (for example the 151amd64
-one too). It names each `beryllium-FreeBSD-<major>-amd64.pkg`, writes
+The packages must come from clean builds: one built with a compiler cache
+(`--ccache`, above) is refused. Give it the packages from every jail you
+built (for example the 151amd64 one too). It names each `beryllium-FreeBSD-<major>-amd64.pkg`, writes
 `SHA256SUMS` and release notes that name the commit as the corresponding
 source, and creates the release with the GitHub CLI (`pkg install gh`,
 then `gh auth login` once). `--draft` creates it unpublished, and
