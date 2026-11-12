@@ -755,8 +755,9 @@ README item 4 becomes two shorter ones (tier 2 and tier 4) or goes.
 
 ### 4.7 Which get a policy and which a statement: suggestions, 12 November 2026
 
-The owner asked for suggestions that follow what other projects do. They
-are suggestions; the decision is the owner's and is not made.
+The owner asked for suggestions that follow what other projects do, and
+**accepted them on 12 November 2026**, for every process in the second
+table below. So that table is the decision.
 
 What others do, per process:
 
@@ -842,8 +843,8 @@ Three things were added to the design while writing it:
   served it on 12 November 2026) and accepts that package, and nothing
   else, for an unsigned `latest` until 1 December 2026 and for
   `--release v0.20.3.18` always. The checksum file beside the package is
-  not consulted. *To confirm:* that the digest is that of the owner's own
-  package file.
+  not consulted. The owner confirmed on 12 November 2026 that the digest
+  is that of the package file on the build machine.
 - **`--from URL`** takes the release's files from another place (a
   mirror, a directory). It is how `publish-release` checks its files
   before uploading, and it is safe by construction: the files are
@@ -1377,8 +1378,18 @@ small and of a kind already compiled once in this tree where possible.
     `freebsd/upstream-reports/www-chromium.md`. It describes fixes and
     offers no patch, for FreeBSD's caution about generated code and
     because Beryllium's patches are under another licence.
-13. **Which processes get a statement instead of a policy** is not
-    decided. Suggestions that follow what other projects do are in 4.7.
+13. **Which processes get a policy and which a statement is decided as
+    suggested in 4.7:** a policy for the utilities that only compute
+    (next after the renderer), for the storage service (after its spike)
+    and for the CDM before it is supported at all; a statement for the
+    browser, the network service, video capture, the OS print backend
+    and the GPU process with NVIDIA's driver, the last with the
+    mitigations of tier 5; a statement now and a policy later for audio;
+    and the GPU process with Mesa left until there is a Mesa machine.
+14. **The digest by which the installer knows 0.20.3.18 is confirmed**
+    against the owner's own package file.
+15. **The report for the FreeBSD port's maintainers** is with the owner
+    to read before anything is sent.
 
 ### 8.4 What this plan does not establish
 

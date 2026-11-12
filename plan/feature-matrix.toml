@@ -1068,7 +1068,7 @@ built = "no"
 tested = "none"
 where = ["plan/03-ARCHITECTURE.md"]
 source = ["plan/06-SECURITY-MODEL.md §5", "plan/03-ARCHITECTURE.md §4.2"]
-notes = "The target table exists in plan/03 section 4.2."
+notes = "The target table exists in plan/03 section 4.2. Which processes get a policy and which a statement was decided by the owner on 12 Nov 2026 (plan/18 sections 4.7 and 8.3): a policy for compute-only utilities, the storage service and the CDM; a statement for the browser, the network service, video capture, the OS print backend and the GPU process with NVIDIA's driver; audio a statement now and a policy later."
 
 [[feature]]
 id = "S-HRD-01"
