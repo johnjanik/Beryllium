@@ -829,7 +829,12 @@ and `--from`; the key lists are in `freebsd/release-keys` and inside
 `install.sh`, held equal by a test; the fingerprint is in `SECURITY.md`,
 the README, `beryllium(1)` and each release's notes; and every case of
 5.5 is a test, with real signatures from keys made in the test. What is
-left: step 6, the first signed release (0.20.3.19); the hardware tokens
+left: step 6, the first signed release (0.20.3.19: its package was built
+and tested on 12 November 2026 and is not published yet; the file on the
+build machine has SHA-256
+`01de225e838fa68fecee2bf98e42dd1c9e23b7006d5c69b554836fd9c877139b`,
+which the signed `RELEASE` must list for
+`beryllium-FreeBSD-16-amd64.pkg`); the hardware tokens
 (two YubiKey 5C NFC, ordered 12 November 2026), which must sign a release
 before the key file's validity ends on 1 January 2027; and the
 fingerprint somewhere outside GitHub.
@@ -1323,9 +1328,10 @@ as a defect with its cause. README item 7 goes.
 | Build | Carries | Proves |
 |---|---|---|
 | 0.20.3.18, built and published 12 November 2026 | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, two runs of 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md); the suite passing in six runs, three of them with the lockdown |
-| 0.20.3.19 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default; the headers of the two noise patches brought up to date (done 12 November 2026, with the revision); the first manifest that records a compiler cache or its absence | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 |
-| 0.20.3.20 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
-| 0.20.3.21 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
+| 0.20.3.19, built 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. To be the first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). Still to come from it: the first run of the signing on the owner's machine, and the round trip through GitHub |
+| 0.20.3.20 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
+| 0.20.3.21 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
+| 0.20.3.22 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
 | separate spikes | allocator, BackupRefPtr, control-flow integrity (6.3); the storage service in its restricted mode (4.2 tier 2); item 2 stage B | an answer each |
 

@@ -739,7 +739,9 @@ FreeBSD test bed, so an increment must be worth a build.
    noise: 1012 pixels moved on one site and 1016 on the other, other
    pixels, none of the four sets, the same on a second read, none with
    the feature off. The canvas sweeps are exact on the CPU and the
-   default canvas, both displays still reporting HDR. Media, pages,
+   default canvas. One of the two displays still reported HDR, the 2560
+   by 1600 one; on 0.20.3.17 both did (this line first said both, and
+   was corrected from the reports the same day). Media, pages,
    fonts, the toolbar, the idle network checks and the stability tests
    as before. The noise battery ran twice on this build the same
    morning (freebsd/privacy/noise-hash/README.md).
@@ -844,8 +846,66 @@ FreeBSD test bed, so an increment must be worth a build.
    --tally` keeps and does not count a whole-suite lockdown run made
    before 12 November 2026 (18-REMAINING-WORK.md section 3.2). The 08:56
    run was made a commit before that mark and is evidence, not a count.
-   **Then attestation** (next, build 0.20.3.19; 0.20.3.18 carried the
-   two noise patches only): the browser checks
+   **0.20.3.19, built 12 November 2026: the browser of 0.20.3.18 built
+   again, and it behaves as 0.20.3.18 did.** No patch's code changed
+   between the two builds. The two noise patches had their headers
+   brought up to date, and the port now writes whether a compiler cache
+   was used into the build manifest (18-REMAINING-WORK.md section 8.2);
+   the manifest of this package has not been read yet, the release tool
+   reads it. The package file on the build machine has SHA-256
+   `01de225e838fa68fecee2bf98e42dd1c9e23b7006d5c69b554836fd9c877139b`.
+   Three runs that afternoon, one after another, four reports; no test
+   fails in any.
+   Without the lockdown (13:46; 35 pass, 4 skipped as on 0.20.3.18): no
+   process in capability mode, as the default is, and the status page
+   says so of the GPU process. One thread under lldb at both moments.
+   Canvas noise on 1047 pixels on one site and 1018 on the other, other
+   pixels, none of the four sets, the same on a second read, none with
+   the feature off; the canvas sweeps exact on the CPU and the default
+   canvas. All six clips play, the five with video without a dropped
+   frame. Pages, fonts, the ten toolbar layouts, the idle network checks
+   and the stability tests as before.
+   With the lockdown (13:49, started 14 seconds after the first run
+   ended; 36 pass, 3 skipped): the gate passes, the second run with the
+   whole log read and the first on this build. The check read 310 lines,
+   all the lockdown wrote, and every one is accounted for: eight lockdown
+   reports, one for every renderer of the session, each with `threads=1`
+   and `CrRendererMain`; 14 socket pairs made by confined renderers, 8 on
+   the main thread and 6 on the compositor thread, the same number from
+   the same two places as on 0.20.3.12 and in the whole-log run of
+   0.20.3.18, with their 14 stack lines; 274 lines of the browser cutting
+   what it sent, 6 to 119 per renderer; no descriptor refused on arrival
+   and no failure.
+   Four renderers in capability mode by the kernel's answer and no other
+   process; 20 to 36 descriptors per renderer and none outside the
+   policy (one renderer ended before it was read); one thread under lldb
+   at both moments; canvas noise on 1051 and 985 pixels.
+   This run was made with the suite of 12 November 2026, alone on the
+   machine and with windows, so its ledger line carries the gate's mark
+   and `run --tally` counts it, the first run that does. The count that
+   decides the default is made on the release candidate and each version
+   starts its own (18-REMAINING-WORK.md section 3.2), so what this run
+   adds is evidence for 0.20.3.19 and a first use of the counting.
+   The Capsicum survey alone, with the lockdown (14:16): 20 renderer
+   processes, 9 distinct refusals, 16 sysctls read, the three numbers of
+   the survey of 0.20.3.18. All 20 renderers wrote the lockdown marker.
+   After it the kernel refused each of them one call, once,
+   `cpuset_getaffinity` (20 refusals; 19 on 0.20.3.18), and the one
+   sysctl they read was `hw.ncpu`. One more process, which started and
+   ended between two samples of the browser's list, wrote the marker and
+   shows the same refusal and the same sysctl. For the other process
+   types the lists are those of 0.20.3.18: the sysctls read are the same
+   line for line, and what differs is the names of cache files and one
+   count (the GPU process made 75 path lookups where it made 76).
+   One difference in the machine: neither display reported HDR in these
+   runs (both 8 bits per component, `screen` depth 24). One did that
+   morning and both did on 0.20.3.17.
+   Not run on this build: the noise battery, the YouTube test
+   (`--network`) and the video diagnosis (`--diagnose` of the whole
+   suite). With no code changed, the results of 0.20.3.18 stand for
+   them.
+   **Then attestation** (next, build 0.20.3.20; 0.20.3.18 carried the
+   two noise patches only and 0.20.3.19 no code change): the browser checks
    each renderer's capability mode with the kernel (`kern.proc.pid`,
    `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
    ends an unconfined one before it gets a navigation; `beryllium://sandbox`
