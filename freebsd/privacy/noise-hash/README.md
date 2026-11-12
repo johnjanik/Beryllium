@@ -510,7 +510,8 @@ November 2026. Before that build its new function had been compiled outside the
 tree against Chromium's own headers, where it agreed with `model.py` on
 240 cases.
 
-It leaves one kind of pixel alone: one whose whole 3 by 3 neighbourhood
+It leaves one kind of pixel alone (confirmed by the owner on 12 November
+2026): one whose whole 3 by 3 neighbourhood
 in the read is one exact colour. WebGL pages read flat colour back for
 exact values (the colour under the pointer names the object drawn
 there), and Helium's noise changes one such pixel in four. Tor Browser's
