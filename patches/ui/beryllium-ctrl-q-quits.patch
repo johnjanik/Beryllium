@@ -1,0 +1,49 @@
+Beryllium: Ctrl+Q quits the browser
+
+Purpose: on FreeBSD desktops Ctrl+Q is the usual way to quit an
+  application: KDE's standard Quit shortcut, GNOME's, and Firefox's on
+  Linux and the BSDs. Beryllium has no quit shortcut at all, because
+  Chromium 156 maps IDC_EXIT to no key outside macOS and ChromeOS, so a
+  user who presses Ctrl+Q gets nothing, and Alt+F4 closes only one
+  window. This maps Ctrl+Q to IDC_EXIT, the same command as the app
+  menu's Exit item.
+  Effects: the app menu's Exit item now shows "Ctrl+Q". IDC_EXIT is
+  already a reserved command (BrowserCommandController::
+  IsReservedCommandOrKey), so a web page cannot take Ctrl+Q for itself,
+  and it works in full screen too. Quitting goes through the usual
+  path: beforeunload handlers and the in-progress download warning still
+  run. Helium's keyboard shortcuts page (helium/core/custom-keyboard-
+  shortcuts.patch) lists Exit as a command without a default on Linux;
+  with this patch it shows Ctrl+Q as its default, which the user can
+  remove or change there (its BuildCurrentDefaults() keeps a table
+  default and only adds an empty entry for commands that have none).
+  Ctrl+Q has no other meaning in Chromium's or Helium's tables.
+  Not FreeBSD-specific: written for Linux and the BSDs alike.
+Stage: 4 (Beryllium series). Applies over the BSD patch for this file
+  (stage 2) and Helium's ungoogled-chromium/remove-f1-shortcut.patch,
+  helium/core/keyboard-shortcuts.patch, helium/ui/layout/shortcuts.patch
+  and helium/ui/layout/zen-mode-wiring.patch (stage 3).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports files of this repository, by applying those stages to
+  the upstream file by hand (the same steps as freebsd/tools/patch-workbench).
+Test: not yet automated (the browser suite cannot send keys). By hand:
+  open two windows with a few tabs, press Ctrl+Q: every window closes
+  and the process exits; the app menu shows Exit with Ctrl+Q; Settings >
+  Keyboard shortcuts lists Exit with Ctrl+Q and lets it be removed.
+security-review: not required (keyboard shortcut only)
+
+--- a/chrome/browser/ui/accelerator_table.cc
++++ b/chrome/browser/ui/accelerator_table.cc
+@@ -66,6 +66,12 @@ const AcceleratorMapping kAcceleratorMap[] = {
+     {ui::VKEY_W, ui::EF_PLATFORM_ACCELERATOR, IDC_CLOSE_TAB},
+     {ui::VKEY_W, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
+      IDC_CLOSE_WINDOW},
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
++    // Beryllium: Ctrl+Q quits, as it does in Firefox and in KDE and GNOME
++    // applications. Chromium has no quit shortcut on Linux; IDC_EXIT is a
++    // reserved command, so a page cannot take Ctrl+Q for itself.
++    {ui::VKEY_Q, ui::EF_PLATFORM_ACCELERATOR, IDC_EXIT},
++#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_BSD)
+     {ui::VKEY_F, ui::EF_PLATFORM_ACCELERATOR, IDC_FIND},
+     {ui::VKEY_A, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
+      IDC_TAB_SEARCH},

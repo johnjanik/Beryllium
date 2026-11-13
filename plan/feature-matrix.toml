@@ -457,6 +457,21 @@ tests = ["freebsd/tools/tests/test_port_makefile.py"]
 source = ["plan/04-BUILD-AND-PORTING-PLAN.md §3"]
 
 [[feature]]
+id = "F-UI-05"
+group = "Interface"
+title = "Ctrl+Q quits"
+need = "Ctrl+Q quits the browser, closing every window, as Quit does in KDE, GNOME and Firefox; the app menu's Exit item shows it."
+priority = "should"
+phase = 1
+implemented = "done"
+built = "no"
+tested = "planned"
+where = ["patches/ui/beryllium-ctrl-q-quits.patch"]
+planned_test = "By hand until the suite can send keys: with two windows open, Ctrl+Q closes both and the process exits; the app menu's Exit item shows Ctrl+Q; Settings > Keyboard shortcuts lists Exit with Ctrl+Q and lets it be removed."
+source = ["not in the plan"]
+notes = "Chromium 156 has no quit shortcut outside macOS and ChromeOS; reported by a user who pressed Ctrl+Q and found the browser still running."
+
+[[feature]]
 id = "F-ID-01"
 group = "Identity"
 title = "Called Beryllium everywhere"

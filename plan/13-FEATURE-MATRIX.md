@@ -8,7 +8,7 @@ Status as of 2026-11-12, latest release v0.20.3.20. Every feature the project mu
 
 | Area | Features | Must for first release | of which implemented | of which tested |
 |---|---|---|---|---|
-| Browser functionality | 40 | 19 | 16 | 12 |
+| Browser functionality | 41 | 19 | 16 | 12 |
 | Privacy | 32 | 18 | 10 | 9 |
 | Security | 59 | 45 | 7 | 11 |
 | Build, packaging and install | 22 | 16 | 11 | 11 |
@@ -124,6 +124,7 @@ What a user does with the browser on FreeBSD. Evidence "owner, 0.20.3.1" means t
 | `F-UI-02` | **Onboarding page.** The first-run page is Beryllium's: it explains that online services are off and that updates come through pkg, and links nowhere Helium-specific. *Logo replaced; text unchanged; still links Helium's privacy policy and terms.* | must | 1 | **partial**<br>`branding/chromium` | v0.20.3.1-1 | **none** | plan/04-BUILD-AND-PORTING-PLAN.md §8<br>plan/01-PROJECT-CHARTER.md D3<br>plan/12-WORK-PLAN-AND-RED-TEAM.md §11 |
 | `F-UI-03` | **Managed policies.** Administrators can set policies in /usr/local/etc/beryllium/policies/managed/. | should | 1 | **done**<br>`patches/platform/beryllium-paths-and-branding.patch` | v0.20.3.1-1 | **none** | plan/04-BUILD-AND-PORTING-PLAN.md §7 |
 | `F-UI-04` | **chromedriver for automation.** Port option DRIVER installs beryllium-chromedriver. | should | 1 | **done**<br>`freebsd/ports/www/beryllium/Makefile` | v0.20.3.1-1 | **written**<br>`freebsd/tools/tests/test_port_makefile.py` | plan/04-BUILD-AND-PORTING-PLAN.md §3 |
+| `F-UI-05` | **Ctrl+Q quits.** Ctrl+Q quits the browser, closing every window, as Quit does in KDE, GNOME and Firefox; the app menu's Exit item shows it. *Chromium 156 has no quit shortcut outside macOS and ChromeOS; reported by a user who pressed Ctrl+Q and found the browser still running.* | should | 1 | **done**<br>`patches/ui/beryllium-ctrl-q-quits.patch` | no | **planned**<br>By hand until the suite can send keys: with two windows open, Ctrl+Q closes both and the process exits; the app menu's Exit item shows Ctrl+Q; Settings > Keyboard shortcuts lists Exit with Ctrl+Q and lets it be removed. | not in the plan |
 
 ### Identity
 
