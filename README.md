@@ -511,8 +511,9 @@ set it, and the launcher will not start the browser without it.
   installed with the package since 0.20.3.17 (`man beryllium`,
   `man beryllium-sandbox`); earlier releases shipped Chromium's generic
   page. From a checkout on FreeBSD: `man man/beryllium.1`.
-- **This README** for status, install and known issues, and
-  [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+- **This README** for status, install and known issues,
+  [SECURITY.md](SECURITY.md) for reporting vulnerabilities, and
+  [CONTRIBUTING.md](CONTRIBUTING.md) for sending a report or a change.
 - **The plan documents** in [plan/](plan/00-INDEX.md), with the
   [feature matrix](plan/13-FEATURE-MATRIX.md) of what is implemented,
   built and tested, and the
@@ -674,7 +675,12 @@ send changes upstream.
 
 ## Contributing
 
-Issues and pull requests are welcome. Changes that touch process creation,
+Issues and pull requests are welcome, and test reports from other
+machines most of all: the browser has been tested on one.
+[CONTRIBUTING.md](CONTRIBUTING.md) says what helps, what to check before
+writing a change, and what a change needs before it is merged. In short:
+ask in an issue before changing how the browser behaves, run the checks,
+and say what you built and tested. Changes that touch process creation,
 IPC, file descriptors, shared memory, the GPU process, the network service
 or sandbox setup require a security review before merging. How patches are
 layered is described in [the patch strategy](plan/05-PATCH-STRATEGY.md).
