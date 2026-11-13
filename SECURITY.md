@@ -44,8 +44,10 @@ A useful report says:
 - what you did, what happened, and what the impact is (what a page or a
   compromised process can reach that it should not);
 - if the test suite is relevant, its `report.txt`
-  (`freebsd/tests/browser/run`; it uses throwaway profiles and contains
-  no personal data).
+  (`freebsd/tests/browser/run`; it uses throwaway profiles and reads
+  nothing of yours. The report does hold your machine's host name, on its
+  third line, and the diagnostic survey holds paths with your user name;
+  remove them if you prefer).
 
 What to expect: an acknowledgement within 3 days and an assessment
 within 7; the timeline for a fix or a mitigation is told to you after the
