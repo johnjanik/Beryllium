@@ -415,6 +415,13 @@ set it, and the launcher will not start the browser without it.
   keeps them on, with no server until you enter one. What each service
   does is in [the privacy plan](plan/07-PRIVACY-INVARIANTS-PLAN.md).
 - Managed policies go in `/usr/local/etc/beryllium/policies/managed/`.
+- **A key that quits.** Like Chromium on Linux and the BSDs, Beryllium has
+  no key that quits the whole browser. To have one, open Settings, then
+  Keyboard shortcuts, find Exit and give it a shortcut such as Ctrl+Q
+  (checked by hand on FreeBSD, November 2026). It is not set by default
+  because it acts without asking: every window closes at once, and Ctrl+Q
+  sits next to Ctrl+W. Firefox and LibreWolf do set Ctrl+Q by default,
+  and they ask before quitting.
 
 ### Known issues
 
