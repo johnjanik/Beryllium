@@ -457,6 +457,21 @@ tests = ["freebsd/tools/tests/test_port_makefile.py"]
 source = ["plan/04-BUILD-AND-PORTING-PLAN.md §3"]
 
 [[feature]]
+id = "F-UI-05"
+group = "Interface"
+title = "A quit shortcut the user can set"
+need = "A user can give Exit a keyboard shortcut, such as Ctrl+Q, on the Keyboard shortcuts page of Settings, and it then quits the browser, closing every window. None is set by default."
+priority = "should"
+phase = 1
+implemented = "inherited"
+built = "v0.20.3.1-1"
+tested = "manual"
+where = ["helium/patches/helium/core/custom-keyboard-shortcuts.patch", "helium/patches/helium/settings/custom-keyboard-shortcuts-page.patch"]
+evidence = "owner, by hand on the owner's machine (FreeBSD 16.0-CURRENT, KDE Plasma on Wayland), reported 14 Nov 2026: Ctrl+Q given to Exit on the Keyboard shortcuts page quits the browser"
+source = ["not in the plan: asked for in pull request 44"]
+notes = "Chromium 156 has no quit key on Linux or the BSDs, and Helium lists Exit among the commands without a default. Pull request 44 (13 Nov 2026, the first from outside) made Ctrl+Q the default and was closed: the setting already gives the behaviour, and as a default it would close every window without asking after a slip from Ctrl+W, and would take the key from web pages, because Exit is a reserved command. Firefox and LibreWolf set Ctrl+Q by default and ask before quitting; the owner saw LibreWolf's question, with its checkbox, on FreeBSD. A default here would want the same question, which nobody has written. README, Using Beryllium, says how to set the key."
+
+[[feature]]
 id = "F-ID-01"
 group = "Identity"
 title = "Called Beryllium everywhere"
