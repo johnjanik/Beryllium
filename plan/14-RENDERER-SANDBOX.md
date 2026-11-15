@@ -997,7 +997,19 @@ FreeBSD test bed, so an increment must be worth a build.
      judged by a later reading of the page, where it must be confined and
      attested, or gone, within five seconds; a page that says yes where
      `procstat` says no is still wrong for any process. Unit tests hold
-     the first run's page as a fixture. Not yet rerun on the build.
+     the first run's page as a fixture.
+   **Rerun with the corrected test, 19:39 the same evening, with the
+   lockdown: everything passes** (39 pass, 3 skipped, the two diagnostic
+   groups and the network test). The page test caught one renderer
+   starting, pid 68788, and a later reading showed it confined and
+   attested; every other line agreed with `procstat` at once. The gate
+   read 453 lines, each accounted for: 8 lockdown reports, 14 socket
+   pairs with their stack lines, 409 cuts (407 by the browser, 2 by the
+   GPU process) and 8 attestations, none ended. With `--no-sandbox` the
+   browser again ended all 13 renderers. With the receiver's half off, 6
+   renderers said so and the 5 read held 20 to 36 descriptors, none
+   outside the policy. So 0.20.3.21 has passed the whole suite without
+   the lockdown once and with it once.
    What the page should say differently, for the next build: a renderer
    that is not ready yet is "starting", and the summary counts it apart.
    As built, a person who opens the page with the lockdown on sees one
