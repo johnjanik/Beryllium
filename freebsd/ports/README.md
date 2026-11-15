@@ -307,8 +307,22 @@ The installer sets it up when asked:
 sh install.sh --build --ccache
 ```
 
+**The first build with a cache is slower, not faster.** It compiles every
+file as usual and stores each result as well. The saving comes with the
+second build, and only for files whose inputs did not change. The first
+use, build 0.20.3.21 on 15 November 2026, took longer than a build
+without the cache (the owner's observation; the times were not
+recorded), and because that build compiled at the first attempt there
+was no second one to gain from. So the cache pays when a build is
+expected to be repeated with small changes, and costs when it is not.
+How much a second build saves has still not been measured.
+
 **For test builds only.** A release is a clean build: every object file in
-it came from the compiler during that build (plan/04). The two kinds of
+it came from the compiler during that build (plan/04). After a test
+build that passes, the release is built again without the cache:
+`sh install.sh --build`. It builds the same version, because the version
+comes from `revision.txt`, and Poudriere builds it because the release's
+package directory does not have that version yet. The two kinds of
 build are kept apart in three ways:
 
 - The cache belongs to its own Poudriere build set, `ccache`. Only a build
