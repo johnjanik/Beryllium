@@ -298,10 +298,17 @@ stands, the design, the work, the tests, and how it is to be attacked.
    only. The browser cuts every descriptor it sends a confined renderer
    before sending it, but the direct connections between a renderer and
    the GPU process, the network service and the storage service carry no
-   sender-side cut yet.
+   sender-side cut yet. Written for the next build, 0.20.3.21, with a
+   test that switches the receiver's half off; not compiled or tested
+   yet.
 2. **The kernel's word on each renderer.** The browser checks each
    renderer's capability mode with the kernel before it gets a page, and
-   a `beryllium://sandbox` page shows the answer per process.
+   a `beryllium://sandbox` page shows the answer per process. Written for
+   the next build, 0.20.3.21: the browser ends a renderer the kernel does
+   not report as confined, and the page lists every process with the
+   kernel's answer. Not compiled or tested yet. One step is left after
+   it: holding back everything the browser sends until the kernel has
+   answered.
 3. **On by default, fail closed.** The lockdown becomes the default when
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
@@ -338,7 +345,8 @@ stands, the design, the work, the tests, and how it is to be attacked.
 7. **WebGPU** finds no adapter. Chromium gives Linux and BSD a WebGPU
    adapter only when the GPU process uses Vulkan, which it does not here.
    Decided: a coming build turns WebGPU off by default, with a switch for
-   those who want it, until the GPU process has a policy.
+   those who want it, until the GPU process has a policy. Written for the
+   next build, 0.20.3.21 (`--enable-features=WebGPUService` turns it on).
 
 ## Install
 

@@ -11,6 +11,11 @@ import time
 from berytest import capsicum
 from berytest.base import BrowserTest
 from berytest.browser import DIRECT_BINARY
+from berytest.cdp import CDPError, TargetCrashed
+
+# The first build with the kernel check at connect, the status page, the
+# senders' cut on links between children and the receive-limits switch.
+BUILD_21 = (0, 20, 3, 21)
 
 
 capability_mode = capsicum.capability_mode
@@ -27,13 +32,14 @@ class Processes(BrowserTest):
         self.assertIn("renderer", types)
 
 
-class SandboxHonesty(BrowserTest):
-    """With the lockdown requested (lockdown_requested), these tests are a
-    gate: every renderer must be confined and every observation must be
-    available, or they fail. Otherwise they survey and skip."""
+class Gate(BrowserTest):
+    """What the sandbox classes share: with the lockdown requested
+    (lockdown_requested) their tests are a gate, and fail on anything short
+    of every renderer confined and every observation available; otherwise
+    they survey and skip. No tests of its own."""
 
     NEEDS_FREEBSD = True
-    # The browser's sender-side cuts are VLOG(1) lines of capsicum_rights.cc.
+    # The senders' cuts are VLOG(1) lines of capsicum_rights.cc.
     BROWSER_ARGS = ("--vmodule=capsicum_rights=1",)
     # How long a renderer the browser has just listed may take to reach its
     # lockdown point before it counts as unconfined.
@@ -61,6 +67,71 @@ class SandboxHonesty(BrowserTest):
         if self.strict():
             self.fail(why + " (the lockdown was requested, so this is a failure)")
         self.skipTest(why)
+
+    def older_build(self, what):
+        """A check that needs a build from 0.20.3.21: a skip on an older
+        package, and what unavailable() makes of it on a newer one, where
+        its absence is a fault."""
+        version = capsicum.installed_version()
+        if version and version < BUILD_21:
+            self.skipTest(f"{what}: this is build {'.'.join(map(str, version))}, and it "
+                          "comes with 0.20.3.21")
+        self.unavailable(what)
+
+    def descriptors_follow_the_policy(self):
+        """With the lockdown on, every descriptor a renderer holds has a type
+        the policy allows and no more rights than the policy gives that type
+        (S-REN-04, S-REN-05); files are read-only resource files."""
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        renderers = [p for p in procs if p["type"] == "renderer"]
+        modes = self.renderer_modes(procs)
+        confined = [p for p in renderers if modes.get(p["id"]) is True]
+        if self.strict():
+            self.assertEqual(self.unconfined(modes), {},
+                             f"renderers not in capability mode {self.GRACE_SECONDS:g} s after "
+                             "the browser listed them, or unreadable, although the lockdown "
+                             "was requested")
+        elif not confined:
+            self.skipTest("no renderer in capability mode; this run did not switch the "
+                          "lockdown on (run --lockdown)")
+        # Every socket of every Beryllium process, so a socket a renderer holds
+        # can be traced to the process holding its other end.
+        types = {p["id"]: p["type"] for p in procs}
+        sockets = {p["id"]: capsicum.socket_peers(p["id"]) for p in procs}
+        holders = capsicum.socket_holders(sockets, types)
+        problems, lines, unread, gone = [], [], [], []
+        for p in confined:
+            fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
+            if not caps:
+                (unread if capsicum.process_alive(p["id"]) else gone).append(p["id"])
+                continue
+            found = capsicum.policy_problems(fds, caps)
+            problems += [f"renderer {p['id']}: {x}" for x in found]
+            lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
+                         f"{len(found)} outside the policy")
+            socks = sockets.get(p["id"], {})
+            for d in fds:  # procstat -f knows whether a socket is blocking
+                if d["fd"] in socks:
+                    socks[d["fd"]]["flags"] = d["flags"]
+            notes = capsicum.socket_notes(caps, socks, holders, p["id"])
+            if notes:
+                waiting = capsicum.threads_waiting_on_sockets(capsicum.threads(p["id"]))
+                notes.append("threads waiting on a socket: " + (", ".join(waiting) or "none"))
+            lines += [f"    {x}" for x in notes]
+        if gone:
+            lines.append(f"renderers that ended before they were read: {gone}")
+        if unread and len(unread) + len(gone) == len(confined):
+            self.unavailable("procstat could not read renderer descriptors "
+                             "(security.bsd.unprivileged_proc_debug=0?)")
+        if unread and self.strict():
+            problems.append(f"descriptors unreadable for renderers {unread}")
+        self.note("\n".join(lines + problems))
+        self.assertEqual(problems, [], "confined renderers hold descriptors outside the policy")
+
+
+class SandboxHonesty(Gate):
+    """The gate itself (see Gate)."""
 
     def test_capability_mode_per_process(self):
         """Every process's capability mode, from the kernel; with the lockdown
@@ -134,52 +205,34 @@ class SandboxHonesty(BrowserTest):
         """With the lockdown on, every descriptor a renderer holds has a type
         the policy allows and no more rights than the policy gives that type
         (S-REN-04, S-REN-05); files are read-only resource files."""
+        self.descriptors_follow_the_policy()
+
+    def test_sandbox_page_matches_the_kernel(self):
+        """beryllium://sandbox (from 0.20.3.21) against procstat -s: every
+        line's capability mode is the kernel's for that pid, the summary is
+        the sum of the lines, and with the lockdown on every renderer was
+        asked to lock down and attested (S-STA-02, S-STA-03)."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
-        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
-        renderers = [p for p in procs if p["type"] == "renderer"]
-        modes = self.renderer_modes(procs)
-        confined = [p for p in renderers if modes.get(p["id"]) is True]
-        if self.strict():
-            self.assertEqual(self.unconfined(modes), {},
-                             f"renderers not in capability mode {self.GRACE_SECONDS:g} s after "
-                             "the browser listed them, or unreadable, although the lockdown "
-                             "was requested")
-        elif not confined:
-            self.skipTest("no renderer in capability mode; this run did not switch the "
-                          "lockdown on (run --lockdown)")
-        # Every socket of every Beryllium process, so a socket a renderer holds
-        # can be traced to the process holding its other end.
-        types = {p["id"]: p["type"] for p in procs}
-        sockets = {p["id"]: capsicum.socket_peers(p["id"]) for p in procs}
-        holders = capsicum.socket_holders(sockets, types)
-        problems, lines, unread, gone = [], [], [], []
-        for p in confined:
-            fds, caps = capsicum.descriptors(p["id"]), capsicum.rights(p["id"])
-            if not caps:
-                (unread if capsicum.process_alive(p["id"]) else gone).append(p["id"])
-                continue
-            found = capsicum.policy_problems(fds, caps)
-            problems += [f"renderer {p['id']}: {x}" for x in found]
-            lines.append(f"renderer {p['id']}: {len(caps)} descriptors, "
-                         f"{len(found)} outside the policy")
-            socks = sockets.get(p["id"], {})
-            for d in fds:  # procstat -f knows whether a socket is blocking
-                if d["fd"] in socks:
-                    socks[d["fd"]]["flags"] = d["flags"]
-            notes = capsicum.socket_notes(caps, socks, holders, p["id"])
-            if notes:
-                waiting = capsicum.threads_waiting_on_sockets(capsicum.threads(p["id"]))
-                notes.append("threads waiting on a socket: " + (", ".join(waiting) or "none"))
-            lines += [f"    {x}" for x in notes]
-        if gone:
-            lines.append(f"renderers that ended before they were read: {gone}")
-        if unread and len(unread) + len(gone) == len(confined):
-            self.unavailable("procstat could not read renderer descriptors "
-                             "(security.bsd.unprivileged_proc_debug=0?)")
-        if unread and self.strict():
-            problems.append(f"descriptors unreadable for renderers {unread}")
-        self.note("\n".join(lines + problems))
-        self.assertEqual(problems, [], "confined renderers hold descriptors outside the policy")
+        page = self.browser.new_page()
+        try:
+            page.navigate(self.browser.url("sandbox"), timeout=30)
+            text = page.eval("document.body ? document.body.innerText : ''")
+        finally:
+            self.browser.close_page(page)
+        status = capsicum.parse_sandbox_page(text)
+        if status is None:
+            self.older_build("beryllium://sandbox is not Beryllium's status page")
+        modes = capsicum.capability_modes([r["pid"] for r in status["rows"]])
+        problems = capsicum.sandbox_page_problems(status, modes, self.strict())
+        self.note("\n".join(
+            [f"{r['kind']} pid {r['pid']}: page {r['mode']}, procstat "
+             f"{ {True: 'yes', False: 'no', None: 'unreadable'}.get(modes.get(r['pid']), 'gone') }"
+             f"; requested {r['requested']}, attested {r['attested']}" for r in status["rows"]]
+            + [f"summary: {status['summary']}"]
+            + [f"{k}: {v}" for k, v in sorted(status["settings"].items())]
+            + problems))
+        self.assertEqual(problems, [], "beryllium://sandbox disagrees with the kernel "
+                                       "or with itself (RT-17)")
 
     def test_lockdown_log(self):
         """What the lockdown wrote to the browser's log (shared by its
@@ -216,6 +269,13 @@ class SandboxHonesty(BrowserTest):
                            "kernel names; see the ThreadsAtLockdown test for which they are)")
         cuts = capsicum.sent_cuts(lines)
         refused = [l for l in lines if "bound for confined renderer" in l and "every right removed" in l]
+        # From 0.20.3.21: who cut (the browser, and the children that hold a
+        # link to a renderer), and the browser's check of each renderer with
+        # the kernel when its channel connects.
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        senders = capsicum.cuts_by_sender(lines, {p["id"]: p["type"] for p in procs})
+        attested, ended = capsicum.attestations(lines)
+        limits_off = [l for l in lines if "receive-side limits are off" in l]
         # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
         # error), and the stack trace behind the first socket pair at each
         # site and thread (one per renderer process; the first of each kind).
@@ -240,7 +300,10 @@ class SandboxHonesty(BrowserTest):
                         if names_note else "")
                      if threads_at_lockdown else "")
                   + f"\ndescriptors the browser cut before sending, per renderer: {cuts or 'none'}"
-                  + (f"; refused outright: {len(refused)}" if refused else "") + "\n"
+                  + (f"; refused outright: {len(refused)}" if refused else "")
+                  + f"\ncuts by the process that made them: {senders or 'none'}"
+                  + f"\nrenderers the kernel attested when they connected: {len(attested)}"
+                  + (f"; ended by that check: {ended}" if ended else "") + "\n"
                   + "\n".join((received + failed + refused + made[:10])[:60])
                   + (("\nthread count errors:\n" + "\n".join(thread_errors[:6])) if thread_errors else "")
                   + (("\nwhere the socket pairs are made:\n" + "\n".join(traces)) if traces else ""))
@@ -265,6 +328,25 @@ class SandboxHonesty(BrowserTest):
                                       "confined renderer (is --vmodule=capsicum_rights=1 on?)")
                 self.assertEqual(refused, [], "the browser sent a confined renderer a descriptor "
                                               "the policy has no kind for")
+            # From 0.20.3.21 the browser asks the kernel about every renderer
+            # it launched with the lockdown on. A build that writes these
+            # lines must have attested every renderer that reported its own
+            # lockdown, and ended none.
+            if attested or ended:
+                self.assertEqual(ended, {}, "the browser ended renderers the kernel did not "
+                                            "attest, in a run where every renderer should "
+                                            "have locked down")
+                missing = sorted(set(capsicum.locked_pids(locked)) - set(attested))
+                if missing:
+                    # A renderer reports its lockdown a moment before its
+                    # channel connects, which is when the browser checks.
+                    time.sleep(1.5)
+                    again = self.browser.log_lines("beryllium-sandbox", limit=None)
+                    missing = sorted(set(missing) - set(capsicum.attestations(again)[0]))
+                self.assertEqual(missing, [], "renderers that reported their lockdown and "
+                                              "were not attested by the browser's check")
+            self.assertEqual(limits_off, [], "a renderer ran with its receive-side limits "
+                                             "off in the ordinary gate")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which
@@ -345,3 +427,73 @@ class ThreadsAtLockdown(BrowserTest):
             lines.append("lldb did not get as far as the lockdown; the end of its output:")
             lines += ["  " + l for l in text.splitlines()[-12:]]
         self.note("\n".join(lines))
+
+
+
+class SenderAlone(Gate):
+    """The lockdown on and the receiver's half off (BerylliumReceiveSideLimits
+    disabled, from 0.20.3.21): a confined renderer does nothing to what it
+    receives, as a renderer that had been taken over would not. Every
+    descriptor of every renderer must still be inside the policy, which
+    holds only if every sender cuts: the browser, the GPU process, the
+    network service and the storage service (S-IPC-01, review finding
+    BER-05). A survey without the lockdown has nothing to show here."""
+
+    BROWSER_ARGS = Gate.BROWSER_ARGS + ("--disable-features=BerylliumReceiveSideLimits",)
+
+    def test_the_senders_cut_alone_keeps_the_policy(self):
+        if not self.strict():
+            self.skipTest("the lockdown was not requested (run --lockdown)")
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        time.sleep(1.0)
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
+        off = [l for l in lines if "receive-side limits are off" in l]
+        if not off:
+            # No renderer said its limits are off: the build has no such
+            # switch, or it did not take, and the test below would pass for
+            # the wrong reason.
+            self.older_build("no renderer reported its receive-side limits off")
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        senders = capsicum.cuts_by_sender(lines, {p["id"]: p["type"] for p in procs})
+        self.note(f"renderers that said their receive-side limits are off: {len(off)}"
+                  f"\ncuts by the process that made them: {senders or 'none'}")
+        self.descriptors_follow_the_policy()
+
+
+class UnconfinedRenderer(BrowserTest):
+    """A renderer that does not lock down while the browser expects it to
+    (from 0.20.3.21, S-STA-01). --no-sandbox makes RendererMain skip the
+    lockdown; with the lockdown feature on, the browser still registers the
+    renderer as a confined peer, asks the kernel when its channel connects,
+    is told no, and ends it. The page must never be usable."""
+
+    NEEDS_FREEBSD = True
+    BROWSER_ARGS = ("--no-sandbox",)
+
+    def test_an_unconfined_renderer_is_ended(self):
+        if not capsicum.lockdown_requested(self.ctx.options):
+            self.skipTest("the lockdown was not requested (run --lockdown)")
+        answered, problem = None, ""
+        try:
+            page = self.browser.new_page(self.ctx.fixtures().url("busy.html"), timeout=20)
+            time.sleep(1.0)
+            answered = page.eval("document.title", timeout=10)
+        except (TargetCrashed, CDPError) as e:
+            problem = f"{type(e).__name__}: {e}"
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
+        attested, ended = capsicum.attestations(lines)
+        self.note(f"renderers ended by the browser's check: {ended or 'none'}; attested: "
+                  f"{attested or 'none'}; the page: "
+                  + (f"answered a script with {answered!r}" if problem == "" else problem))
+        if not attested and not ended:
+            version = capsicum.installed_version()
+            if version and version < BUILD_21:
+                self.skipTest("this build does not ask the kernel about its renderers "
+                              "(the check comes with 0.20.3.21)")
+            self.fail("the browser wrote nothing about checking its renderers with the kernel")
+        self.assertTrue(ended, "no renderer was ended, although none could lock down")
+        self.assertEqual(attested, [], "a renderer was attested with --no-sandbox, where "
+                                       "RendererMain skips the lockdown")
+        self.assertNotEqual(problem, "", "a page in a renderer that never locked down "
+                                         f"answered a script ({answered!r})")
+

@@ -1,0 +1,249 @@
+Beryllium: the GPU process, the network service and the storage service cut what they send a confined renderer
+
+Purpose: plan/18 section 1 (feature matrix S-IPC-01; adversarial review
+  plan/16, finding BER-05; README "Still to finish", item 1). The browser
+  cuts every descriptor it sends a confined renderer
+  (beryllium-sender-side-rights.patch). A renderer also holds direct links
+  to other children: in the survey of 10 November 2026 one renderer held two
+  to the GPU process, one to the network service and one to the storage
+  service. What travels on those links was limited by the receiving
+  renderer only, which a compromised renderer need not do.
+  A child does not know who is at the other end of a link: the browser makes
+  the link and hands each child one end. So the browser, which knows which
+  of its children are confined, says so on the link.
+  - mojo/core/ipcz_driver/transport.h: a member, beryllium_peer_confined_.
+  - mojo/core/ipcz_driver/driver.cc, CreateTransports(): when the browser
+    makes a link between children A and B, the end B will hold is marked if
+    A is a registered confined peer, and the end A will hold if B is.
+  - mojo/core/ipcz_driver/transport.cc: the mark travels in TransportHeader,
+    in the byte that was padding, so the header keeps its size. Serialize()
+    writes it, Deserialize() reads it, and Transmit() cuts every descriptor
+    sent over a marked transport, as it already did on the browser's own
+    transports to confined renderers.
+  - base/posix/capsicum_rights.{h,cc}: LimitSentDescriptor() accepts a peer
+    pid of 0, for a sender that knows the peer is confined and not which
+    process it is. Its log line then names no pid; the process that wrote
+    the line is the sender.
+  Who may set the mark: a set mark means "cut what you send", so it is
+    believed from anyone, and a forged one makes a sender cut more than it
+    had to. A clear mark is believed only from a source the receiving end
+    trusts, which for a child is its broker, the browser. A transport that
+    arrives from any other source while the lockdown is on is treated as
+    marked.
+  What changes for a renderer: nothing it could do before. Descriptors that
+    used to arrive whole and be cut by the renderer now arrive cut; the
+    policy per kind is the same one. With the lockdown off (the default) no
+    link is marked and nothing changes.
+  The wire format changes within one build only: every process is the same
+    binary. A helper binary from another build must not be mixed in.
+Not covered here: descriptors that do not travel over a Mojo transport
+  (plan/18 section 1.5: the list of sendmsg calls with SCM_RIGHTS in the
+  tree as built), and the committed table of which process types may hold a
+  link to a renderer.
+Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
+  and beryllium-sender-side-rights.patch, whose Transmit() hunk this
+  extends.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.21).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
+  counts the cut lines by the type of the process that wrote them (the pid
+  at the start of each log line, against the browser's process list) and
+  notes them; class SenderAlone requires the policy on every descriptor of
+  every renderer with the receiver's limits off, which holds only if every
+  sender cuts.
+security-review: required (IPC boundary, descriptor rights)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -428,22 +428,27 @@
+ }
+ 
+ void LimitSentDescriptor(int fd, pid_t peer) {
++  // The browser knows the renderer's pid. Another child sending over a link
++  // the browser marked does not (|peer| is 0); the log line then names no
++  // pid, and the sender is the process that wrote the line.
++  const std::string to =
++      peer > 0 ? "confined renderer pid " + NumberToString(peer)
++               : std::string("confined renderer on a link the browser marked");
+   std::string what;
+   const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
+   if (kind && *kind != DescriptorKind::kDirectory) {
+     if (!LimitDescriptorRights(fd, *kind)) {
+       PLOG(ERROR) << "beryllium-sandbox: " << what << " (fd " << fd
+-                  << ") bound for confined renderer pid " << peer
+-                  << " could not be limited";
++                  << ") bound for " << to << " could not be limited";
+       RemoveAllRights(fd);
+       return;
+     }
+     VLOG(1) << "beryllium-sandbox: cut " << what << " (fd " << fd
+-            << ") bound for confined renderer pid " << peer;
++            << ") bound for " << to;
+     return;
+   }
+   LOG(ERROR) << "beryllium-sandbox: " << what << " (fd " << fd
+-             << ") bound for confined renderer pid " << peer
++             << ") bound for " << to
+              << ", which it may not hold: every right removed before sending";
+   RemoveAllRights(fd);
+ }
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -114,6 +114,8 @@
+ // sent copy carries the rights of the descriptor at sendmsg() time, so this
+ // is the boundary: the receiving renderer limits what it receives as well,
+ // but a compromised renderer need not (plan/06 section 3.2, S-IPC-01).
++// |peer| is 0 when the sender is another child, which knows from the
++// transport that the other end is confined and does not know its pid.
+ BASE_EXPORT void LimitSentDescriptor(int fd, pid_t peer);
+ 
+ // True once this process is in capability mode (a process never leaves it).
+--- a/mojo/core/ipcz_driver/driver.cc
++++ b/mojo/core/ipcz_driver/driver.cc
+@@ -22,6 +22,10 @@
+ #include "mojo/public/cpp/platform/platform_handle.h"
+ #include "third_party/ipcz/include/ipcz/ipcz.h"
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ namespace mojo::core::ipcz_driver {
+ 
+ namespace {
+@@ -164,6 +168,24 @@
+     transport_from_b_to_a->set_is_trusted_by_peer(
+         our_transport_to_b->is_trusted_by_peer());
+ 
++#if BUILDFLAG(IS_FREEBSD)
++    // Beryllium (plan/18 section 1; S-IPC-01): if A is a confined renderer,
++    // the end B will hold leads to a confined process, and B must cut every
++    // descriptor it sends over it; likewise for B. Only the browser has the
++    // registry of confined peers, so only a link the browser makes is marked
++    // here; a link relayed onward keeps the mark its source end carried.
++    const auto leads_to_confined = [](const Transport& ours) {
++      const base::Process& process = ours.remote_process();
++      return ours.beryllium_peer_confined() ||
++             (process.IsValid() && !process.is_current() &&
++              base::freebsd::IsConfinedPeer(process.Pid()));
++    };
++    transport_from_a_to_b->set_beryllium_peer_confined(
++        leads_to_confined(*our_transport_to_b));
++    transport_from_b_to_a->set_beryllium_peer_confined(
++        leads_to_confined(*our_transport_to_a));
++#endif
++
+     *new_transport_from_a_to_b =
+         ObjectBase::ReleaseAsHandle(std::move(transport_from_a_to_b));
+     *new_transport_from_b_to_a =
+--- a/mojo/core/ipcz_driver/transport.cc
++++ b/mojo/core/ipcz_driver/transport.cc
+@@ -130,8 +130,15 @@
+   uint8_t is_peer_trusted;
+   uint8_t is_trusted_by_peer;
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: whether the other end of this transport is a confined
++  // renderer (Transport::beryllium_peer_confined_). Encodes a `bool`. It
++  // takes the byte that was padding, so the header keeps its size.
++  uint8_t beryllium_is_peer_confined;
++#else
+   // Padding for 8-byte size alignment.
+   uint8_t reserved[1];
++#endif
+ };
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -416,14 +423,20 @@
+   // kind's Capsicum rights (base/posix/capsicum_rights.h; plan/06 section
+   // 3.2, S-IPC-01). The renderer limits what it receives as well, but a
+   // compromised renderer need not, so the sender is the boundary. The
+-  // remote process is known on the transports the browser made for the
+-  // children it launched; sends from other processes are untouched here.
+-  if (remote_process_.IsValid() && !remote_process_.is_current() &&
+-      base::freebsd::IsConfinedPeer(remote_process_.Pid())) {
++  // browser knows the remote process on the transports it made for the
++  // children it launched. Another child (the GPU process, the network
++  // service, the storage service) does not know who is at the other end of
++  // a link the browser made for it, and goes by the bit the browser set on
++  // that link (beryllium_peer_confined_); its cut is logged without a pid.
++  const bool beryllium_to_confined_pid =
++      remote_process_.IsValid() && !remote_process_.is_current() &&
++      base::freebsd::IsConfinedPeer(remote_process_.Pid());
++  if (beryllium_to_confined_pid || beryllium_peer_confined_) {
+     for (const PlatformHandle& handle : platform_handles) {
+       if (handle.is_valid_fd()) {
+-        base::freebsd::LimitSentDescriptor(handle.GetFD().get(),
+-                                           remote_process_.Pid());
++        base::freebsd::LimitSentDescriptor(
++            handle.GetFD().get(),
++            beryllium_to_confined_pid ? remote_process_.Pid() : 0);
+       }
+     }
+   }
+@@ -674,6 +687,9 @@
+   header.is_same_remote_process = remote_process_.is_current();
+   header.is_peer_trusted = is_peer_trusted();
+   header.is_trusted_by_peer = is_trusted_by_peer();
++#if BUILDFLAG(IS_FREEBSD)
++  header.beryllium_is_peer_confined = beryllium_peer_confined_;
++#endif
+ 
+   if (ShouldSerializeProcessHandle(transmitter)) {
+     DCHECK_EQ(handles.size(), 2u);
+@@ -747,6 +763,19 @@
+              from_transport.remote_process_trust());
+   transport->set_is_peer_trusted(is_new_peer_trusted);
+   transport->set_is_trusted_by_peer(is_trusted_by_peer);
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: the bit says "cut what you send over this", so a set bit is
++  // taken from anyone: at worst a sender cuts more than it had to. A clear
++  // bit is believed only from a source this end trusts, which for a child
++  // is the browser that made the link. A transport that arrives from
++  // anywhere else while the lockdown is on is treated as leading to a
++  // confined process: cut when in doubt (plan/18 section 1.5).
++  transport->set_beryllium_peer_confined(
++      header.beryllium_is_peer_confined != 0 ||
++      (!is_source_trusted &&
++       base::FeatureList::IsEnabled(
++           base::freebsd::kBerylliumCapsicumRenderer)));
++#endif
+ 
+   // Inherit the IO task used by the receiving Transport. Deserialized
+   // transports are always adopted by the receiving node, and we want any given
+--- a/mojo/core/ipcz_driver/transport.h
++++ b/mojo/core/ipcz_driver/transport.h
+@@ -105,6 +105,14 @@
+   void set_is_elevated(bool elevated) { is_elevated_ = elevated; }
+   bool is_elevated() const { return is_elevated_; }
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: see beryllium_peer_confined_ below.
++  void set_beryllium_peer_confined(bool confined) {
++    beryllium_peer_confined_ = confined;
++  }
++  bool beryllium_peer_confined() const { return beryllium_peer_confined_; }
++#endif
++
+   // Indicates whether the remote peer on this transport is trusted as a source
+   // of privileged objects (e.g. HandleOwner::kRecipient handles or
+   // broker-destined transports). A non-broker implicitly trusts its broker;
+@@ -285,6 +293,17 @@
+   // recipient-owned handles from a less-privileged broker.
+   bool is_elevated_ = false;
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium: the process at the other end of this transport is a confined
++  // renderer, so every descriptor sent over it is cut to its kind's Capsicum
++  // rights first (Transmit(); base/posix/capsicum_rights.h; plan/18 section
++  // 1). The browser knows which of its children are confined and sets this
++  // on the two ends of a link it makes between two of them
++  // (Driver::CreateTransports); it travels to the child in TransportHeader.
++  // A child never learns its peer's pid, so this bit is all it has.
++  bool beryllium_peer_confined_ = false;
++#endif
++
+   // Indicates whether the remote process is "untrusted" in Mojo parlance,
+   // meaning this Transport restricts what kinds of objects can be transferred
+   // from this end (kTrusted or kUntrusted on Windows, kUntracked elsewhere.)

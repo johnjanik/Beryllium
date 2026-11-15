@@ -16,6 +16,11 @@ security/beryllium-descriptor-rights.patch
 security/beryllium-capsicum-renderer.patch
 security/beryllium-renderer-tracing-after-lockdown.patch
 security/beryllium-sender-side-rights.patch
+security/beryllium-kernel-attested-renderer.patch
+security/beryllium-receive-limits-switch.patch
+security/beryllium-sender-cut-on-child-links.patch
+security/beryllium-sandbox-status-page.patch
+security/beryllium-webgpu-off-by-default.patch
 privacy/beryllium-services-off-by-default.patch
 privacy/beryllium-noise-hash-whole-token.patch
 privacy/beryllium-noise-snapshot-channel-order.patch

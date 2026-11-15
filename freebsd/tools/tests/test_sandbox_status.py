@@ -1,0 +1,420 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""What build 0.20.3.21 adds to the sandbox, as the test suite reads it:
+
+- the browser's check of each renderer with the kernel when its channel
+  connects (the "attested" and "ended" lines);
+- beryllium://sandbox, written by the browser as plain lines;
+- the cut lines of senders other than the browser;
+- the switch that turns a renderer's receive-side limits off.
+
+The browser is not run here. The parsers are tested on the text the patches
+write, and the patches are checked to still write that text, so the two
+cannot drift apart without a failure."""
+
+import argparse
+import importlib.util
+import os
+import re
+import sys
+import unittest
+from unittest import mock
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+SUITE = os.path.join(REPO, "freebsd", "tests", "browser")
+sys.path.insert(0, SUITE)
+
+spec = importlib.util.spec_from_file_location(
+    "test_50_sandbox_status", os.path.join(SUITE, "tests", "test_50_sandbox.py"))
+sandbox = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sandbox)
+capsicum = sandbox.capsicum
+
+LOCKDOWN = ["--enable-features=BerylliumCapsicumRenderer"]
+
+
+def patch_text(name):
+    with open(os.path.join(REPO, "patches", "security", name), encoding="utf-8") as f:
+        return f.read()
+
+
+def patched_text(patch, added_only=False):
+    """What a patch leaves in the files it changes, as far as the patch
+    shows it: its added lines, and its context lines unless added_only,
+    with string literals that the compiler would join (one ending a line,
+    the next starting the following line) joined here too."""
+    keep = "+" if added_only else "+ "
+    lines = [l[1:] for l in patch.splitlines()
+             if l[:1] in keep and not l.startswith("+++")]
+    text = re.sub(r'"\s*\n\s*"', "", "\n".join(lines))
+    return text.replace("\\n", "\n").replace('\\"', '"')
+
+
+def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on"):
+    """The page as beryllium-sandbox-status-page.patch writes it."""
+    renderers = [r for r in rows if r[0] == "renderer"]
+    others = [r for r in rows if r[0] not in ("renderer", "browser")]
+    if summary is None:
+        summary = (sum(r[2] == "yes" for r in renderers), len(renderers),
+                   sum(r[2] == "yes" for r in others), len(others))
+    lines = ["Beryllium sandbox status", "",
+             "Every value below was read in the browser when this page was loaded:", "",
+             "summary: renderers in capability mode: %d of %d; other child processes in "
+             "capability mode: %d of %d; the browser process is not confined" % summary, ""]
+    for kind, pid, mode, requested, was in rows:
+        lines.append(f"process: {kind} | pid: {pid} | capability mode by the kernel: {mode}"
+                     f" | lockdown requested: {requested} | attested at connect: {was}")
+    lines += ["", f"renderer lockdown (BerylliumCapsicumRenderer): {lockdown}",
+              f"renderers attested by the kernel at connect, this session: {attested}",
+              f"renderers ended because the kernel did not attest them, this session: {ended}",
+              f"receive-side limits (BerylliumReceiveSideLimits): {limits}",
+              "switches in effect that weaken a sandbox: none",
+              "kernel: FreeBSD 16.0-CURRENT"]
+    return "\n".join(lines)
+
+
+CONFINED = [("browser", 100, "no", "no", "not applicable"),
+            ("renderer", 201, "yes", "yes", "yes"),
+            ("renderer", 202, "yes", "yes", "yes"),
+            ("GPU (GPU)", 300, "no", "no", "not applicable"),
+            ("Utility (network.mojom.NetworkService)", 301, "no", "no", "not applicable")]
+OPEN = [("browser", 100, "no", "no", "not applicable"),
+        ("renderer", 201, "no", "no", "not applicable"),
+        ("GPU (GPU)", 300, "no", "no", "not applicable")]
+
+
+def kernel(rows):
+    return {pid: mode == "yes" for _, pid, mode, _, _ in rows}
+
+
+class Page(unittest.TestCase):
+    def test_the_page_is_read_line_by_line(self):
+        status = capsicum.parse_sandbox_page(page(CONFINED))
+        self.assertEqual([r["pid"] for r in status["rows"]], [100, 201, 202, 300, 301])
+        self.assertEqual(status["rows"][1], {"kind": "renderer", "pid": 201, "mode": "yes",
+                                             "requested": "yes", "attested": "yes"})
+        self.assertEqual(status["summary"], (2, 2, 0, 2))
+        self.assertEqual(status["settings"]["lockdown"], "on")
+        self.assertEqual(status["settings"]["attested_total"], "3")
+        self.assertEqual(status["settings"]["kernel"], "FreeBSD 16.0-CURRENT")
+
+    def test_another_page_is_not_the_status_page(self):
+        for text in ("", None, "Sandbox Status\nYou are not adequately sandboxed."):
+            self.assertIsNone(capsicum.parse_sandbox_page(text))
+
+    def test_a_page_that_agrees_with_the_kernel_has_no_problems(self):
+        for rows, lockdown in ((CONFINED, True), (OPEN, False)):
+            text = page(rows, lockdown="on" if lockdown else "off")
+            self.assertEqual(capsicum.sandbox_page_problems(
+                capsicum.parse_sandbox_page(text), kernel(rows), lockdown), [])
+
+    def test_a_line_that_differs_from_procstat_is_a_problem(self):
+        status = capsicum.parse_sandbox_page(page(CONFINED))
+        modes = kernel(CONFINED)
+        modes[202] = False
+        problems = capsicum.sandbox_page_problems(status, modes, True)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("pid 202: the page says capability mode yes, procstat says no", problems[0])
+
+    def test_a_process_that_ended_meanwhile_is_not_a_problem_and_an_unreadable_one_is(self):
+        status = capsicum.parse_sandbox_page(page(CONFINED))
+        modes = kernel(CONFINED)
+        modes[202] = "gone"
+        self.assertEqual(capsicum.sandbox_page_problems(status, modes, True), [])
+        modes[202] = None
+        self.assertIn("procstat could not read it",
+                      capsicum.sandbox_page_problems(status, modes, True)[0])
+
+    def test_the_summary_must_be_the_sum_of_the_lines(self):
+        status = capsicum.parse_sandbox_page(page(CONFINED, summary=(2, 2, 1, 2)))
+        problems = capsicum.sandbox_page_problems(status, kernel(CONFINED), True)
+        self.assertTrue(any("the summary says" in p for p in problems), problems)
+
+    def test_the_lockdown_line_must_match_the_run(self):
+        status = capsicum.parse_sandbox_page(page(OPEN, lockdown="on"))
+        problems = capsicum.sandbox_page_problems(status, kernel(OPEN), False)
+        self.assertTrue(any("the page says the lockdown is 'on'" in p for p in problems), problems)
+
+    def test_with_the_lockdown_on_every_renderer_was_asked_and_attested(self):
+        rows = list(CONFINED)
+        rows[2] = ("renderer", 202, "yes", "yes", "no")
+        status = capsicum.parse_sandbox_page(page(rows))
+        problems = capsicum.sandbox_page_problems(status, kernel(rows), True)
+        self.assertTrue(any("pid 202: lockdown requested yes, attested no" in p
+                            for p in problems), problems)
+
+    def test_an_empty_page_is_a_problem(self):
+        status = capsicum.parse_sandbox_page("Beryllium sandbox status\n")
+        self.assertEqual(capsicum.sandbox_page_problems(status, {}, False),
+                         ["the page lists no process"])
+
+
+def line(pid, text):
+    return f"[{pid}:{pid}:1115/100000.000000:WARNING:x.cc:1] beryllium-sandbox: {text}"
+
+
+LOG = [
+    line(201, "renderer pid=201 capability_mode=1 closed_directories=0 limited=9 threads=1 "
+              "thread_names=CrRendererMain"),
+    line(100, "renderer pid=201 attested: in capability mode by the kernel's account"),
+    line(100, "cut shared memory (fd 40) bound for confined renderer pid 201"),
+    line(300, "cut shared memory (fd 12) bound for confined renderer on a link the browser marked"),
+    line(300, "cut socket (fd 13) bound for confined renderer on a link the browser marked"),
+    line(301, "cut socket (fd 9) bound for confined renderer on a link the browser marked"),
+]
+
+
+class Log(unittest.TestCase):
+    def test_cuts_are_counted_by_the_process_that_made_them(self):
+        types = {100: "browser", 300: "GPU", 301: "utility"}
+        self.assertEqual(capsicum.cuts_by_sender(LOG, types),
+                         {"GPU": 2, "browser": 1, "utility": 1})
+        # the browser's own count, per renderer, is as before
+        self.assertEqual(capsicum.sent_cuts(LOG), {201: 1})
+
+    def test_a_sender_that_is_no_longer_listed_keeps_its_pid(self):
+        self.assertEqual(capsicum.cuts_by_sender(LOG, {100: "browser"}),
+                         {"browser": 1, "pid 300": 2, "pid 301": 1})
+
+    def test_attested_and_ended_renderers(self):
+        log = LOG + [
+            line(100, "renderer pid=202 is not in capability mode by the kernel's account; ended"),
+            line(100, "renderer pid=203 has no answer from the kernel about its capability "
+                      "mode; ended"),
+        ]
+        attested, ended = capsicum.attestations(log)
+        self.assertEqual(attested, [201])
+        self.assertEqual(sorted(ended), [202, 203])
+        self.assertIn("has no answer from the kernel", ended[203])
+        self.assertEqual(capsicum.locked_pids(log), [201])
+
+    def test_versions(self):
+        self.assertEqual(capsicum.version_tuple("beryllium-0.20.3.21"), (0, 20, 3, 21))
+        self.assertEqual(capsicum.version_tuple("0.21.3.1\n"), (0, 21, 3, 1))
+        self.assertEqual(capsicum.version_tuple(""), ())
+        self.assertLess(capsicum.version_tuple("0.20.3.20"), sandbox.BUILD_21)
+        self.assertGreater(capsicum.version_tuple("0.21.3.1"), sandbox.BUILD_21)
+
+
+class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
+    """The parsers above against the text of the patches themselves."""
+
+    def test_the_status_page(self):
+        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        self.assertIn(capsicum.PAGE_TITLE, said)
+        for prefix in capsicum.PAGE_SETTINGS.values():
+            self.assertIn(prefix, said, prefix)
+        for piece in ("process: ", " | pid: ", " | capability mode by the kernel: ",
+                      " | lockdown requested: ", " | attested at connect: ",
+                      "summary: renderers in capability mode: ",
+                      "; other child processes in capability mode: ",
+                      "; the browser process is not confined"):
+            self.assertIn(piece, said, piece)
+        for word in ('"yes"', '"no"', '"unknown"', '"not applicable"', '"renderer"',
+                     '"browser"', '"on"', '"off"'):
+            self.assertIn(word, patch_text("beryllium-sandbox-status-page.patch"), word)
+
+    def test_the_attestation_lines(self):
+        patch = patch_text("beryllium-kernel-attested-renderer.patch")
+        said = patched_text(patch)
+        for piece in ("beryllium-sandbox: renderer pid=",
+                      " attested: in capability mode by the kernel's account",
+                      " is not in capability mode by the kernel's account",
+                      " has no answer from the kernel about its capability mode",
+                      "; ended"):
+            self.assertIn(piece, said, piece)
+        # No wording the gate counts as a failure of the lockdown itself.
+        self.assertNotIn("could not", patched_text(patch.split("\n--- a/", 1)[1],
+                                                   added_only=True))
+
+    def test_the_cut_lines(self):
+        said = patched_text(patch_text("beryllium-sender-cut-on-child-links.patch"))
+        self.assertIn("confined renderer pid ", said)
+        self.assertIn("confined renderer on a link the browser marked", said)
+        self.assertIn("beryllium-sandbox: cut ", said)
+        self.assertIn(") bound for ", said)
+
+    def test_the_receive_limits_line(self):
+        said = patched_text(patch_text("beryllium-receive-limits-switch.patch"))
+        self.assertIn("beryllium-sandbox: receive-side limits are off in pid ", said)
+        # Not a line the gate takes for a refused descriptor.
+        self.assertNotIn("beryllium-sandbox: received", said)
+
+
+def gate_case(cls, method, browser_args, log=(), processes=(), page_text=""):
+    t = cls(method)
+    t.GRACE_SECONDS = 0
+    t.browser = mock.Mock()
+    t.browser.conn.send.return_value = {"processInfo": list(processes)}
+    t.browser.log_lines.return_value = list(log)
+    t.browser.log_context.return_value = []
+    t.browser.url.side_effect = lambda path: f"beryllium://{path}"
+    t.browser.new_page.return_value.eval.return_value = page_text
+    t.ctx = mock.Mock()
+    t.ctx.options = argparse.Namespace(browser_args=list(browser_args))
+    t.note = mock.Mock()
+    return t
+
+
+def modes_are(by_pid):
+    return mock.patch.object(capsicum, "capability_modes",
+                             side_effect=lambda pids, **kw: {p: by_pid.get(p, "gone") for p in pids})
+
+
+def build(version):
+    return mock.patch.object(capsicum, "installed_version", return_value=version)
+
+
+class PageTest(unittest.TestCase):
+    METHOD = "test_sandbox_page_matches_the_kernel"
+
+    def test_passes_when_the_page_and_the_kernel_agree(self):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, LOCKDOWN, page_text=page(CONFINED))
+        with modes_are(kernel(CONFINED)):
+            t.test_sandbox_page_matches_the_kernel()
+
+    def test_fails_when_a_renderer_the_page_calls_confined_is_not(self):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, LOCKDOWN, page_text=page(CONFINED))
+        modes = kernel(CONFINED)
+        modes[201] = False
+        with modes_are(modes), self.assertRaises(AssertionError) as e:
+            t.test_sandbox_page_matches_the_kernel()
+        self.assertIn("disagrees with the kernel", str(e.exception))
+
+    def test_without_the_lockdown_it_checks_the_same_lines(self):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, [], page_text=page(OPEN, lockdown="off"))
+        with modes_are(kernel(OPEN)):
+            t.test_sandbox_page_matches_the_kernel()
+
+    def test_an_older_build_has_no_such_page_and_is_skipped(self):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, LOCKDOWN, page_text="Sandbox Status")
+        with build((0, 20, 3, 20)), self.assertRaises(unittest.SkipTest):
+            t.test_sandbox_page_matches_the_kernel()
+
+    def test_a_build_that_should_have_the_page_fails_the_gate_without_it(self):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, LOCKDOWN, page_text="")
+        with build((0, 20, 3, 21)), self.assertRaises(AssertionError):
+            t.test_sandbox_page_matches_the_kernel()
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, [], page_text="")
+        with build((0, 20, 3, 21)), self.assertRaises(unittest.SkipTest):
+            t.test_sandbox_page_matches_the_kernel()  # a survey skips
+
+
+class UnconfinedRendererTest(unittest.TestCase):
+    METHOD = "test_an_unconfined_renderer_is_ended"
+    ENDED = [line(100, "renderer pid=201 is not in capability mode by the kernel's account; "
+                       "ended")]
+
+    def case(self, args, log, crash=True):
+        t = gate_case(sandbox.UnconfinedRenderer, self.METHOD, args, log=log)
+        if crash:
+            t.browser.new_page.side_effect = sandbox.CDPError("the target is gone")
+        else:
+            t.browser.new_page.return_value.eval.return_value = "busy"
+        return t
+
+    def test_skipped_without_the_lockdown(self):
+        with self.assertRaises(unittest.SkipTest):
+            self.case([], self.ENDED).test_an_unconfined_renderer_is_ended()
+
+    def test_passes_when_the_renderer_was_ended_and_the_page_never_answered(self):
+        with mock.patch.object(sandbox.time, "sleep"):
+            self.case(LOCKDOWN, self.ENDED).test_an_unconfined_renderer_is_ended()
+
+    def test_fails_when_the_page_answered(self):
+        with mock.patch.object(sandbox.time, "sleep"), self.assertRaises(AssertionError) as e:
+            self.case(LOCKDOWN, self.ENDED, crash=False).test_an_unconfined_renderer_is_ended()
+        self.assertIn("answered a script", str(e.exception))
+
+    def test_fails_when_a_renderer_was_attested(self):
+        log = [line(100, "renderer pid=201 attested: in capability mode by the kernel's account")]
+        with mock.patch.object(sandbox.time, "sleep"), self.assertRaises(AssertionError) as e:
+            self.case(LOCKDOWN, log).test_an_unconfined_renderer_is_ended()
+        self.assertIn("no renderer was ended", str(e.exception))
+
+    def test_a_build_without_the_check_is_skipped_and_a_newer_one_fails(self):
+        with mock.patch.object(sandbox.time, "sleep"):
+            with build((0, 20, 3, 20)), self.assertRaises(unittest.SkipTest):
+                self.case(LOCKDOWN, []).test_an_unconfined_renderer_is_ended()
+            with build((0, 20, 3, 21)), self.assertRaises(AssertionError):
+                self.case(LOCKDOWN, []).test_an_unconfined_renderer_is_ended()
+
+
+class SenderAloneTest(unittest.TestCase):
+    METHOD = "test_the_senders_cut_alone_keeps_the_policy"
+
+    def test_the_class_switches_the_receivers_half_off(self):
+        self.assertIn("--disable-features=BerylliumReceiveSideLimits",
+                      sandbox.SenderAlone.BROWSER_ARGS)
+        self.assertIn("--vmodule=capsicum_rights=1", sandbox.SenderAlone.BROWSER_ARGS)
+
+    def test_skipped_without_the_lockdown(self):
+        t = gate_case(sandbox.SenderAlone, self.METHOD, [])
+        with self.assertRaises(unittest.SkipTest):
+            t.test_the_senders_cut_alone_keeps_the_policy()
+
+    def test_a_run_in_which_no_renderer_said_its_limits_are_off_proves_nothing(self):
+        with mock.patch.object(sandbox.time, "sleep"):
+            t = gate_case(sandbox.SenderAlone, self.METHOD, LOCKDOWN, log=LOG)
+            with build((0, 20, 3, 21)), self.assertRaises(AssertionError):
+                t.test_the_senders_cut_alone_keeps_the_policy()
+            t = gate_case(sandbox.SenderAlone, self.METHOD, LOCKDOWN, log=LOG)
+            with build((0, 20, 3, 20)), self.assertRaises(unittest.SkipTest):
+                t.test_the_senders_cut_alone_keeps_the_policy()
+
+    def test_with_the_limits_off_it_goes_on_to_the_descriptor_policy(self):
+        log = LOG + [line(201, "receive-side limits are off in pid 201 "
+                               "(BerylliumReceiveSideLimits disabled, a test configuration)")]
+        t = gate_case(sandbox.SenderAlone, self.METHOD, LOCKDOWN, log=log)
+        t.descriptors_follow_the_policy = mock.Mock()
+        with mock.patch.object(sandbox.time, "sleep"):
+            t.test_the_senders_cut_alone_keeps_the_policy()
+        t.descriptors_follow_the_policy.assert_called_once_with()
+
+
+class GateReadsTheAttestation(unittest.TestCase):
+    """test_lockdown_log, on a build that writes the attestation lines."""
+
+    PROCS = [{"id": 100, "type": "browser"}, {"id": 201, "type": "renderer"},
+             {"id": 300, "type": "GPU"}, {"id": 301, "type": "utility"}]
+
+    def run_log_test(self, log):
+        t = gate_case(sandbox.SandboxHonesty, "test_lockdown_log", LOCKDOWN, log=log,
+                      processes=self.PROCS)
+        with mock.patch.object(sandbox.time, "sleep"):
+            t.test_lockdown_log()
+        return t
+
+    def test_passes_with_every_locked_renderer_attested(self):
+        t = self.run_log_test(LOG)
+        note = t.note.call_args[0][0]
+        self.assertIn("cuts by the process that made them: {'GPU': 2, 'browser': 1, 'utility': 1}",
+                      note)
+        self.assertIn("renderers the kernel attested when they connected: 1", note)
+
+    def test_fails_when_the_browser_ended_a_renderer(self):
+        log = LOG + [line(100, "renderer pid=202 is not in capability mode by the kernel's "
+                               "account; ended")]
+        with self.assertRaises(AssertionError) as e:
+            self.run_log_test(log)
+        self.assertIn("ended renderers the kernel did not attest", str(e.exception))
+
+    def test_fails_when_a_locked_renderer_was_never_attested(self):
+        log = LOG + [line(202, "renderer pid=202 capability_mode=1 closed_directories=0 "
+                               "limited=9 threads=1 thread_names=CrRendererMain")]
+        with self.assertRaises(AssertionError) as e:
+            self.run_log_test(log)
+        self.assertIn("were not attested", str(e.exception))
+
+    def test_fails_when_a_renderer_ran_with_its_limits_off(self):
+        log = LOG + [line(201, "receive-side limits are off in pid 201")]
+        with self.assertRaises(AssertionError) as e:
+            self.run_log_test(log)
+        self.assertIn("receive-side limits off in the ordinary gate", str(e.exception))
+
+    def test_an_older_build_writes_no_such_lines_and_passes_as_before(self):
+        self.run_log_test([l for l in LOG if "attested" not in l])
+
+
+if __name__ == "__main__":
+    unittest.main()

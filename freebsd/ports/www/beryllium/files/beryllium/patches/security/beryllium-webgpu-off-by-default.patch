@@ -1,0 +1,47 @@
+Beryllium: WebGPU is off unless asked for
+
+Purpose: plan/18 section 7, decided by the owner on 11 November 2026
+  (feature matrix F-GPU-02: "finds an adapter, or is turned off deliberately
+  and documented"). WebGPU gives every web page a second way into the GPU
+  process: Dawn, then Vulkan, then the driver. That process is not confined
+  on FreeBSD and will stay so with NVIDIA's driver. As built, the status
+  page listed WebGPU as enabled while pages were given no adapter, because
+  Chromium gives Linux and the BSDs an adapter only when the GPU process
+  composites with Vulkan, which it does not here. Nobody had chosen either
+  half of that.
+  - gpu/config/gpu_finch_features.cc: on FreeBSD the features WebGPUService
+    and WebGPUBlobCache are disabled by default. Elsewhere nothing changes.
+  To turn it on: --enable-features=WebGPUService. That exposes the GPU
+    process to WebGPU content, and on this configuration it is not known to
+    produce an adapter at all (plan/18 section 7.3, step 1, not yet run).
+Stage: 4 (Beryllium series). Applies over the BSD patch for this file
+  (stage 2).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.21).
+Test: freebsd/tests/browser/tests/test_40_rendering.py test_gpu_info
+  records the feature status the GPU page gives for webgpu, and
+  test_webgl_webgpu_canvas what a page gets from navigator.gpu; from this
+  build the first must not say enabled. What a page then sees (no
+  navigator.gpu, or no adapter) is recorded, not yet asserted.
+security-review: not required (turns a feature off by default; no new input
+  handling)
+
+--- a/gpu/config/gpu_finch_features.cc
++++ b/gpu/config/gpu_finch_features.cc
+@@ -289,7 +289,14 @@
+ 
+ // Enable WebGPU on gpu service side only. This is used with origin trial and
+ // enabled by default on supported platforms.
+-#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
++#if BUILDFLAG(IS_FREEBSD)
++// Beryllium: off unless asked for (--enable-features=WebGPUService). WebGPU
++// gives every page a second way into the GPU process (Dawn, then Vulkan,
++// then the driver), and that process is not confined on FreeBSD. As built,
++// it was reported as enabled while pages were given no adapter, which
++// nobody chose (plan/18 section 7; feature matrix F-GPU-02).
++#define WEBGPU_ENABLED base::FEATURE_DISABLED_BY_DEFAULT
++#elif BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
+     BUILDFLAG(IS_ANDROID) || BUILDFLAG(USE_WEBGPU_ON_VULKAN_VIA_GL_INTEROP)
+ #define WEBGPU_ENABLED base::FEATURE_ENABLED_BY_DEFAULT
+ #else

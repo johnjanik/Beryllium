@@ -1,0 +1,255 @@
+Beryllium: the browser asks the kernel whether each renderer is confined, and ends one that is not
+
+Purpose: plan/18 section 2, stage A (feature matrix S-STA-01; plan/06
+  section 3.1, RT-04). Until now only the renderer said whether it had
+  locked down: its own log line, and procstat run by the test suite. The
+  browser did not ask, so a renderer that skipped its lockdown would have
+  been given pages like any other.
+  - base/posix/capsicum_rights.{h,cc}: KernelSaysCapabilityMode(pid) reads
+    the process's kinfo_proc (sysctl kern.proc.pid) and returns yes, no or
+    unknown from ki_cr_flags & KI_CRF_CAPABILITY_MODE, the field procstat -s
+    prints as C. Unknown is every case in which the kernel gives no usable
+    answer: the process is gone, or a jail or MAC policy hides it. The
+    browser's record of each check (RecordAttestation, WasAttested, and two
+    session totals) sits beside the registry of confined peers and is
+    forgotten with it.
+  - content/browser/renderer_host/render_process_host_impl.cc: when a
+    renderer becomes ready (its process is launched and its channel has
+    connected, in either order), and the browser launched it with the
+    lockdown on (it is a registered confined peer), the browser asks the
+    kernel. Anything but yes ends the renderer before it is announced as
+    ready: Shutdown(), then SIGKILL, because Shutdown() asks with SIGTERM
+    and a process that is not doing what it was asked can ignore that. The
+    pid is the one the launcher got from fork, never the one the channel
+    reports.
+  Why the answer is yes for an honest renderer: RendererMain calls
+    EnableSandbox() before it creates RenderThreadImpl, whose constructor
+    accepts the Mojo invitation, so the channel cannot connect before the
+    lockdown. Every lockdown report since 0.20.3.17 shows one thread at the
+    lockdown point, which is the same fact seen from the renderer.
+  What it does with --no-sandbox: RendererMain skips EnableSandbox() when
+    that switch is present. With the lockdown feature on as well, the
+    browser still expects a confined renderer, gets none, and ends each
+    one. That is intended (plan/18 section 3.5): the check does not depend
+    on what the renderer was told.
+  With the lockdown off (the default) nothing changes: no renderer is a
+    registered confined peer, and the check returns at once.
+Known gap: the window stage B closes. Messages the browser queued before
+  the renderer connected are flushed when the launch completes, and an
+  unconfined renderer can read them in the moment before it is killed. The
+  first navigation can be among them.
+Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
+  (capsicum_rights, the registry of confined peers) and
+  beryllium-sender-side-rights.patch (the launcher registers each renderer
+  it starts with the lockdown on).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.21).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
+  reads the browser's "attested" and "ended" lines; under the gate, on a
+  build that writes them, every renderer that reported its lockdown must
+  have been attested and none may have been ended.
+  test_an_unconfined_renderer_is_ended starts a browser whose renderers
+  are told not to lock down while the browser expects them to, and
+  requires that each is ended and that its page never loads.
+security-review: required (sandbox setup, process confinement)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -11,6 +11,7 @@
+ #include <sys/filio.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
++#include <sys/sysctl.h>
+ #include <sys/time.h>
+ #include <sys/types.h>
+ #include <sys/un.h>
+@@ -40,6 +41,10 @@
+ struct ConfinedPeers {
+   Lock lock;
+   std::set<pid_t> pids;
++  // The check at channel connect (RecordAttestation).
++  std::set<pid_t> attested;
++  int attested_total = 0;
++  int ended_total = 0;
+ };
+ 
+ ConfinedPeers& Peers() {
+@@ -374,6 +379,7 @@
+ void ForgetConfinedPeer(pid_t pid) {
+   AutoLock lock(Peers().lock);
+   Peers().pids.erase(pid);
++  Peers().attested.erase(pid);
+ }
+ 
+ bool IsConfinedPeer(pid_t pid) {
+@@ -381,6 +387,44 @@
+   return Peers().pids.count(pid) != 0;
+ }
+ 
++KernelAnswer KernelSaysCapabilityMode(pid_t pid) {
++  int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
++  struct kinfo_proc kp;
++  size_t len = sizeof(kp);
++  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp) ||
++      static_cast<size_t>(kp.ki_structsize) != sizeof(kp) ||
++      kp.ki_pid != pid) {
++    return KernelAnswer::kUnknown;
++  }
++  return (kp.ki_cr_flags & KI_CRF_CAPABILITY_MODE) ? KernelAnswer::kYes
++                                                   : KernelAnswer::kNo;
++}
++
++void RecordAttestation(pid_t pid, KernelAnswer answer) {
++  AutoLock lock(Peers().lock);
++  if (answer == KernelAnswer::kYes) {
++    Peers().attested.insert(pid);
++    ++Peers().attested_total;
++  } else {
++    ++Peers().ended_total;
++  }
++}
++
++bool WasAttested(pid_t pid) {
++  AutoLock lock(Peers().lock);
++  return Peers().attested.count(pid) != 0;
++}
++
++int AttestedTotal() {
++  AutoLock lock(Peers().lock);
++  return Peers().attested_total;
++}
++
++int EndedUnattestedTotal() {
++  AutoLock lock(Peers().lock);
++  return Peers().ended_total;
++}
++
+ void LimitSentDescriptor(int fd, pid_t peer) {
+   std::string what;
+   const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -82,6 +82,24 @@
+ BASE_EXPORT void ForgetConfinedPeer(pid_t pid);
+ BASE_EXPORT bool IsConfinedPeer(pid_t pid);
+ 
++// What the kernel says about a process's capability mode: the flag
++// KI_CRF_CAPABILITY_MODE of its kinfo_proc (kern.proc.pid), which procstat -s
++// prints as C. kUnknown when the kernel gives no answer: the process is
++// gone, or a jail or a MAC policy hides it. Nothing the process itself says
++// is used.
++enum class KernelAnswer { kYes, kNo, kUnknown };
++BASE_EXPORT KernelAnswer KernelSaysCapabilityMode(pid_t pid);
++
++// The browser's record of the check it makes when a confined peer's channel
++// connects (content/browser/renderer_host, plan/18 section 2): kYes is an
++// attested renderer; anything else is a renderer the browser ended. The
++// entry for a pid goes with ForgetConfinedPeer(); the totals are for the
++// session.
++BASE_EXPORT void RecordAttestation(pid_t pid, KernelAnswer answer);
++BASE_EXPORT bool WasAttested(pid_t pid);
++BASE_EXPORT int AttestedTotal();
++BASE_EXPORT int EndedUnattestedTotal();
++
+ // Cuts a descriptor this process is about to send to confined peer |peer|
+ // to its kind's rights, or removes every right when the policy has no kind
+ // for it (a device, a directory, a terminal...), logging what it was. The
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -243,6 +243,12 @@
+ #include "content/common/thread_type_switcher.mojom.h"
+ #endif
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include <signal.h>
++
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ #if BUILDFLAG(ENABLE_OOP_VIDEO_DECODER)
+ #include "content/public/browser/oop_video_decoder_factory.h"
+ #endif
+@@ -4352,6 +4358,53 @@
+   }
+ }
+ 
++#if BUILDFLAG(IS_FREEBSD)
++namespace {
++
++// Beryllium (plan/18 section 2, stage A; feature matrix S-STA-01): a
++// renderer the browser launched with the lockdown on is in capability mode
++// by the time its channel connects, because RendererMain locks down before
++// RenderThreadImpl exists and so before the Mojo invitation is accepted.
++// The browser asks the kernel, and nothing the renderer says counts: the
++// pid is the one the launcher got from fork, not the one the channel
++// reports. A renderer that is not confined, or about which the kernel gives
++// no answer, is ended before it is announced as ready. This does not depend
++// on --no-sandbox: a renderer asked to lock down that did not is ended
++// whatever the reason. Returns false when the renderer was ended.
++bool BerylliumKernelAttestsRenderer(RenderProcessHost* host) {
++  const base::Process& process = host->GetProcess();
++  if (!process.IsValid() || process.is_current()) {
++    return true;
++  }
++  const base::ProcessId pid = process.Pid();
++  if (!base::freebsd::IsConfinedPeer(pid)) {
++    return true;  // not launched with the lockdown on
++  }
++  const base::freebsd::KernelAnswer answer =
++      base::freebsd::KernelSaysCapabilityMode(pid);
++  base::freebsd::RecordAttestation(pid, answer);
++  if (answer == base::freebsd::KernelAnswer::kYes) {
++    LOG(WARNING) << "beryllium-sandbox: renderer pid=" << pid
++                 << " attested: in capability mode by the kernel's account";
++    return true;
++  }
++  LOG(ERROR) << "beryllium-sandbox: renderer pid=" << pid
++             << (answer == base::freebsd::KernelAnswer::kNo
++                     ? " is not in capability mode by the kernel's account"
++                     : " has no answer from the kernel about its capability "
++                       "mode")
++             << "; ended";
++  host->Shutdown(RESULT_CODE_KILLED);
++  // Shutdown() asks with SIGTERM, which a process that is not doing what it
++  // was asked can ignore. The pid cannot have been reused: the browser is
++  // the parent and has not reaped it.
++  kill(pid, SIGKILL);
++  return false;
++}
++
++}  // namespace
++#endif  // BUILDFLAG(IS_FREEBSD)
++
+ void RenderProcessHostImpl::OnChannelConnected(int32_t peer_pid) {
+   channel_connected_ = true;
+ 
+@@ -4361,6 +4414,11 @@
+ #endif
+ 
+   if (IsReady()) {
++#if BUILDFLAG(IS_FREEBSD)
++    if (!BerylliumKernelAttestsRenderer(this)) {
++      return;
++    }
++#endif
+     CHECK(!sent_render_process_ready_, base::NotFatalUntil::M152);
+     sent_render_process_ready_ = true;
+     // Send RenderProcessReady only if we already received the process handle.
+@@ -6244,7 +6302,16 @@
+     channel_->Flush();
+   }
+ 
++  // Beryllium: see BerylliumKernelAttestsRenderer(). The launch result and
++  // the channel connection can come in either order; the check is made by
++  // whichever comes second.
++  bool beryllium_attested = true;
++#if BUILDFLAG(IS_FREEBSD)
+   if (IsReady()) {
++    beryllium_attested = BerylliumKernelAttestsRenderer(this);
++  }
++#endif
++  if (IsReady() && beryllium_attested) {
+     CHECK(!sent_render_process_ready_, base::NotFatalUntil::M152);
+     sent_render_process_ready_ = true;
+     // Send RenderProcessReady only if the channel is already connected.
