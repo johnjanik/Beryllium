@@ -145,3 +145,86 @@ follows `freebsd/UPDATING.md` from a clean machine to update to a newer Helium
 tag, build, test and produce a signed package, with the author only answering
 questions in writing. Every question asked becomes a documentation fix. This is
 the Phase 6 exit criterion made concrete.
+
+## 8. First rehearsal of an update: Helium 0.20.3 to 0.21.3 (15 November 2026)
+
+Helium tagged 0.21.3 on 12 November 2026. It was the first release after
+Beryllium's own, so the update procedure of section 3 was rehearsed
+against it, away from the repository, to find out what an update costs.
+Nothing was changed here: the pin is still 0.20.3. Numbers are from that
+rehearsal; how each was obtained is in its report, which is not kept in
+the repository.
+
+**What the release is.** Chromium 156.0.8078.79 to 157.0.8103.78, a new
+major. Helium's series went from 346 to 354 patches: 13 added, 5
+removed, 252 files under `patches/` changed. Between 0.20.2 and 0.20.3,
+a point release, 8 patch files had changed. So updates come in two
+sizes, and this was the large one.
+
+**The BSD patch set is the deciding fact.** On 15 November FreeBSD's
+`www/chromium` was still at 156.0.8078.79_1. OpenBSD's was at
+157.0.8103.78 since 13 November. FreeBSD's port has taken 151, 152, 154
+and 156 this autumn and skipped 153 and 155; OpenBSD took every version
+within two days of Helium's tag since 21 October. So on a new Chromium
+major the set has to come from OpenBSD (05 section 5), and Beryllium is
+then ahead of the FreeBSD port, building what nobody has built on
+FreeBSD.
+
+| Step | Result |
+|---|---|
+| The current 1,696 FreeBSD patches applied to Chromium 157 | 1,309 clean, 280 with a line offset, 40 with fuzz, 67 failed |
+| FreeBSD's and OpenBSD's sets compared at 156 | the same 1,696 files, 1,695 identical and 1 differing in a line number; OpenBSD has 8 more. No FreeBSD-only patch, so nothing to merge by hand |
+| OpenBSD's 157 set, renamed to FreeBSD's form (1,676 patches), applied to Chromium 157 | 1,675 clean, 1 with an offset, 0 failed |
+| Of the 217 patches on security paths (RT-10) | 202 unchanged, 12 changed, 3 new: 15 to read |
+| Helium 0.21.3 on that set | 11 failing sections in 9 patches of 2,561; `patch-conflicts` wrote 7 refreshes by three-way merge, 0 by hand; then no failure |
+| The 10 existing refreshes | 1 still matched its original; 9 had to be deleted first, or the tool applies them in place of Helium's changed patches |
+| Beryllium's 20 patches | all apply: 9 clean, 11 with a line offset |
+| The repository's checks with the pin moved | `helium-linux-conditions`, `helium-bsd-crashpad-calls` and the GN argument check pass unchanged; the matrix names a patch Helium removed (`prefer-https-by-default`, which Chromium 157 makes unnecessary) |
+| Machine time for all of the above | about 17 minutes |
+
+**What is real work.**
+
+1. *A second built-in server.* Helium 0.21.3 adds web push with its own
+   default server (`wss://push.helium.computer/`). It is behind a feature
+   that is off and behind the services switch that Beryllium keeps off,
+   so a new profile still contacts nobody. But a user who turns services
+   on with a server of their own would reach Helium's push server once
+   Helium enables the feature. `beryllium-services-off-by-default.patch`
+   has to empty that default as it did the first, with a test.
+2. *Fifteen changed patches on security paths to read,* among them
+   `sandbox/policy/sandbox_type.cc`, `content/utility/utility_main.cc`
+   and `chrome/app/chrome_main_delegate.cc`, which Beryllium's own
+   patches sit beside.
+3. *A Rust tool the port must build.* OpenBSD's 157 port builds
+   `cc_bindings_from_rs` (crubit) inside the port: a new distfile, 94
+   crates, and two GN arguments. It took OpenBSD three commits over six
+   days. Whether FreeBSD's `lang/rust` can build it is not known.
+4. *The build.* Nobody has compiled Chromium 157 with this set on
+   FreeBSD as far as the ports tree shows. Each failed attempt costs
+   hours on the build machine.
+
+**What the tools lack.** `import-bsd-patches` takes a FreeBSD ports
+checkout only: it needs an OpenBSD mode (the renaming, the header line,
+the OpenBSD commit in `IMPORTED-FROM`). Its review record is keyed by a
+file's SHA-256 and would list 214 of 217 patches as changed where 15
+are; it should compare hunks. `patch-conflicts` should ignore a refresh
+whose `Original sha256` no longer matches. `distinfo` for the Helium
+tarball has to be made on the build machine.
+
+**What this says about cadence.** Helium made 16 tags in nine weeks,
+with a new Chromium major about every two weeks. The patch work of an
+update is small and mostly done by the tools. The cost is the build and,
+on a new major, being ahead of FreeBSD's port. Two ways to keep up
+follow from that, and the choice is the owner's:
+
+- *Follow FreeBSD's port.* Update when `www/chromium` reaches Helium's
+  Chromium version. The patch set has then been built on FreeBSD by its
+  maintainers. Beryllium is as current as FreeBSD's own Chromium and no
+  more, and waits when the port skips a major.
+- *Follow Helium, from OpenBSD's set.* Update within days of each tag.
+  Beryllium carries every Chromium security fix sooner, and pays for it
+  in failed builds and in port work the FreeBSD maintainers have not
+  done yet (the Rust tool is this release's example).
+
+The 72-hour target of section 1 assumes the second. It has not been met
+for 0.21.1 (4 November), 0.21.2 (10 November) or 0.21.3.

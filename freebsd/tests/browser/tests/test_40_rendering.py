@@ -12,8 +12,13 @@ rasterizer itself."""
 import json
 import re
 
+from berytest import capsicum
 from berytest.base import BrowserTest
 from berytest.browser import Browser
+
+# The first build with WebGPU off by default
+# (patches/security/beryllium-webgpu-off-by-default.patch).
+WEBGPU_OFF_FROM = (0, 20, 3, 21)
 
 PROBE = """(async () => {
   const out = {};
@@ -279,3 +284,13 @@ class Rendering(BrowserTest):
             lines.append(f"GPUs and displays (beryllium://gpu): not read: {e}")
         self.note("\n".join(lines))
         self.assertTrue(gpu.get("devices"), "no GPU information")
+        # From 0.20.3.21 WebGPU is off unless asked for (plan/18 section 7,
+        # F-GPU-02): the GPU process is not confined, and "enabled" with no
+        # adapter was a state nobody chose. What a page then gets from
+        # navigator.gpu is recorded by test_webgl_webgpu_canvas.
+        asked = any("WebGPUService" in a or "enable-unsafe-webgpu" in a
+                    for a in (self.ctx.options.browser_args or []))
+        if capsicum.installed_version() >= WEBGPU_OFF_FROM and not asked:
+            self.assertNotEqual(status.get("webgpu"), "enabled",
+                                "the GPU page lists WebGPU as enabled, and from 0.20.3.21 "
+                                "it is off unless --enable-features=WebGPUService is given")

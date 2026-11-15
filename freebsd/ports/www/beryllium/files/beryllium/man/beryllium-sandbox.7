@@ -8,7 +8,7 @@
 .\" (plan/13-FEATURE-MATRIX.md); this page claims nothing a test does not
 .\" back.
 .\" One sentence per line; check with freebsd/tools/check-man.
-.Dd November 10, 2026
+.Dd November 15, 2026
 .Dt BERYLLIUM-SANDBOX 7
 .Os Beryllium @@VERSION@@
 .Sh NAME
@@ -95,6 +95,29 @@ rights, which is why the policy below matters as much as the mode.
 .Pp
 If any step fails, the renderer ends.
 A renderer asked to confine itself never runs unconfined.
+.Pp
+The browser does not take the renderer's word for it.
+When a renderer it launched with the lockdown on becomes ready, the
+browser asks the kernel whether that process is in capability mode, and
+ends the renderer unless the answer is yes.
+No answer counts as no.
+This holds whatever the renderer was told: with
+.Fl -no-sandbox ,
+under which a renderer skips its lockdown, every renderer is ended.
+What the browser sent before the renderer connected can still be read by
+it in the moment before it is ended.
+.Pp
+The page
+.Pa beryllium://sandbox
+lists the browser, every renderer and every other child process with its
+capability mode as the kernel gives it when the page is loaded, whether
+the browser asked it to lock down, and whether the check passed.
+Nothing on it is a process's own report.
+.Pp
+Other processes that hold a direct link to a renderer, namely the GPU
+process, the network service and the storage service, cut every descriptor
+they send over it to the rights of its kind, as the browser does.
+The browser marks such a link when it makes it.
 .Ss Descriptor policy
 At the lockdown point a descriptor is admitted by what it is and where it
 comes from:
@@ -240,6 +263,9 @@ procstat -fC 12345
 Both need
 .Va security.bsd.unprivileged_proc_debug
 set to 1.
+The page
+.Pa beryllium://sandbox
+shows capability mode for every process without it.
 .Pp
 From a checkout of the repository, run the sandbox tests with the lockdown
 on.
@@ -319,6 +345,8 @@ The closing of inherited descriptors followed in 0.20.3.4, anonymous
 shared memory in 0.20.3.5, the descriptor policy in 0.20.3.8, admission by
 place and shape in 0.20.3.10, limits at creation in 0.20.3.12 and the
 browser's limits before sending in 0.20.3.13.
+The browser's check of each renderer with the kernel, the status page and
+the limits other processes apply before sending followed in 0.20.3.21.
 .Sh CAVEATS
 A process in capability mode cannot write a core dump.
 To see which call a confined renderer was refused, enable

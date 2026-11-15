@@ -415,6 +415,159 @@ def sent_cuts(log_lines):
     return dict(sorted(out.items()))
 
 
+# From 0.20.3.21 a child that sends over a link the browser marked cuts too
+# (the GPU process, the network service, the storage service). It does not
+# know the renderer's pid, so its line names none; the pid at the start of
+# the log line is the sender's.
+SENDER_CUT_RE = re.compile(
+    r"^\[(\d+):[^\]]*\]\s*beryllium-sandbox: cut (.*?) \(fd \d+\) bound for confined renderer")
+
+
+def cuts_by_sender(log_lines, types):
+    """{sender's process type: count} of the cut lines, by the process that
+    wrote each (the pid in the log line's prefix, looked up in types, a
+    {pid: type} of the browser's process list). A sender the list does not
+    have (it ended) is counted under "pid N"."""
+    out = collections.Counter()
+    for line in log_lines:
+        m = SENDER_CUT_RE.search(line)
+        if m:
+            pid = int(m.group(1))
+            out[types.get(pid) or f"pid {pid}"] += 1
+    return dict(sorted(out.items()))
+
+
+# From 0.20.3.21 the browser asks the kernel about each renderer it launched
+# with the lockdown on, when the renderer's channel connects, and says what
+# it was told (content/browser/renderer_host/render_process_host_impl.cc).
+ATTESTED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) attested: in capability mode")
+ENDED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) "
+                      r"(is not in capability mode by the kernel's account"
+                      r"|has no answer from the kernel about its capability mode); ended")
+LOCKED_PID_RE = re.compile(r"renderer pid=(\d+)\b.*capability_mode=1")
+
+
+def attestations(log_lines):
+    """(attested, ended): the pids the browser's check passed, in order,
+    and {pid: what the kernel said} for the renderers it ended."""
+    attested, ended = [], {}
+    for line in log_lines:
+        m = ATTESTED_RE.search(line)
+        if m:
+            attested.append(int(m.group(1)))
+            continue
+        m = ENDED_RE.search(line)
+        if m:
+            ended[int(m.group(1))] = m.group(2)
+    return attested, ended
+
+
+def locked_pids(log_lines):
+    """The pids of the renderers that reported their own lockdown."""
+    return [int(m.group(1)) for m in map(LOCKED_PID_RE.search, log_lines) if m]
+
+
+# beryllium://sandbox as 0.20.3.21 writes it
+# (patches/security/beryllium-sandbox-status-page.patch): plain lines.
+PAGE_TITLE = "Beryllium sandbox status"
+PAGE_ROW_RE = re.compile(
+    r"^process: (.*?) \| pid: (\d+) \| capability mode by the kernel: (yes|no|unknown)"
+    r" \| lockdown requested: (yes|no) \| attested at connect: (yes|no|not applicable)$")
+PAGE_SUMMARY_RE = re.compile(
+    r"^summary: renderers in capability mode: (\d+) of (\d+); other child processes in "
+    r"capability mode: (\d+) of (\d+); the browser process is not confined$")
+PAGE_SETTINGS = {
+    "lockdown": "renderer lockdown (BerylliumCapsicumRenderer): ",
+    "attested_total": "renderers attested by the kernel at connect, this session: ",
+    "ended_total": "renderers ended because the kernel did not attest them, this session: ",
+    "receive_limits": "receive-side limits (BerylliumReceiveSideLimits): ",
+    "weakening_switches": "switches in effect that weaken a sandbox: ",
+    "kernel": "kernel: ",
+}
+
+
+def parse_sandbox_page(text):
+    """The status page's text as {"rows": [{kind, pid, mode, requested,
+    attested}], "summary": (renderers confined, renderers, others confined,
+    others) or None, "settings": {...}}; None when the text is not
+    Beryllium's status page (a build before 0.20.3.21 has Chromium's page,
+    which shows nothing on FreeBSD)."""
+    if not text or PAGE_TITLE not in text:
+        return None
+    rows, summary, settings = [], None, {}
+    for line in text.splitlines():
+        line = line.strip()
+        m = PAGE_ROW_RE.match(line)
+        if m:
+            rows.append({"kind": m.group(1), "pid": int(m.group(2)), "mode": m.group(3),
+                         "requested": m.group(4), "attested": m.group(5)})
+            continue
+        m = PAGE_SUMMARY_RE.match(line)
+        if m:
+            summary = tuple(int(g) for g in m.groups())
+            continue
+        for key, prefix in PAGE_SETTINGS.items():
+            if line.startswith(prefix):
+                settings[key] = line[len(prefix):]
+    return {"rows": rows, "summary": summary, "settings": settings}
+
+
+def sandbox_page_problems(status, kernel_modes, lockdown):
+    """What on the page disagrees with the kernel or with itself.
+    kernel_modes: {pid: True | False | None | "gone"} from procstat -s for
+    every pid the page lists; lockdown: whether this run asked for it."""
+    problems = []
+    rows = status["rows"]
+    if not rows:
+        return ["the page lists no process"]
+    word = {True: "yes", False: "no"}
+    for r in rows:
+        actual = kernel_modes.get(r["pid"])
+        if actual == "gone":
+            continue  # it ended between the page and procstat
+        if actual is None:
+            problems.append(f"{r['kind']} pid {r['pid']}: procstat could not read it, "
+                            f"and the page says {r['mode']}")
+        elif r["mode"] != word[actual]:
+            problems.append(f"{r['kind']} pid {r['pid']}: the page says capability mode "
+                            f"{r['mode']}, procstat says {word[actual]}")
+    renderers = [r for r in rows if r["kind"] == "renderer"]
+    others = [r for r in rows if r["kind"] not in ("renderer", "browser")]
+    counted = (sum(r["mode"] == "yes" for r in renderers), len(renderers),
+               sum(r["mode"] == "yes" for r in others), len(others))
+    if status["summary"] is None:
+        problems.append("the page has no summary line")
+    elif status["summary"] != counted:
+        problems.append(f"the summary says {status['summary']} and the lines add up to {counted} "
+                        "(renderers confined, renderers, others confined, others)")
+    if not any(r["kind"] == "browser" for r in rows):
+        problems.append("the page has no line for the browser process")
+    said = status["settings"].get("lockdown")
+    if said != ("on" if lockdown else "off"):
+        problems.append(f"the page says the lockdown is {said!r} and this run "
+                        f"{'asked for it' if lockdown else 'did not ask for it'}")
+    for r in renderers:
+        if lockdown and (r["requested"], r["attested"]) != ("yes", "yes"):
+            problems.append(f"renderer pid {r['pid']}: lockdown requested {r['requested']}, "
+                            f"attested {r['attested']}, with the lockdown on")
+        if not lockdown and r["requested"] != "no":
+            problems.append(f"renderer pid {r['pid']}: lockdown requested {r['requested']} "
+                            "although the lockdown is off")
+    return problems
+
+
+def version_tuple(text):
+    """"0.20.3.21" or "beryllium-0.20.3.21" as (0, 20, 3, 21); () if it is
+    not a version."""
+    m = re.search(r"(\d+(?:\.\d+)+)", text or "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
+def installed_version():
+    """The installed Beryllium package's version as a tuple, () if unknown."""
+    return version_tuple(_run(["pkg", "query", "%v", "beryllium"]))
+
+
 FRAMES_RE = re.compile(r"socket pair made at (\S+) on thread '([^']*)' came from frames: (.*)$")
 FRAME_RE = re.compile(r"^(\S+?)\+0x([0-9a-fA-F]+)$")
 SYMBOLIZERS = ("llvm-symbolizer", "/usr/local/llvm19/bin/llvm-symbolizer",

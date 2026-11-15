@@ -122,6 +122,12 @@ The debugger gives the same test without trusting a switch: break on
 `base::freebsd::LimitReceivedDescriptor` in the renderer and return from
 it at once on every hit. Both are planned; they should agree.
 
+*Written 15 November 2026, not compiled:*
+`patches/security/beryllium-receive-limits-switch.patch`, for build
+0.20.3.21. A renderer whose limits are off says so once in the log, and
+the suite's `SenderAlone` class refuses to draw a conclusion from a run
+in which no renderer said it.
+
 ## 1. Sender-side cut on every link to a confined renderer
 
 README: "What the GPU process sends a renderer is cut by the receiver
@@ -160,6 +166,17 @@ only." Matrix S-IPC-01, review finding BER-05.
   by default and would hand a renderer a device-backed buffer, which both
   sides refuse today (no kind for it). Nobody has run the lockdown on a
   Mesa compositor, so whether that breaks video there is unknown.
+
+*Written 15 November 2026, not compiled, for build 0.20.3.21:* steps 2
+and 3 of 1.3 (`beryllium-sender-cut-on-child-links.patch` and
+`beryllium-receive-limits-switch.patch`), and of step 5 the count of
+cuts by sending process and the test with the receiver's limits off
+(`SenderAlone` in `test_50_sandbox.py`). The bit took the byte that was
+padding in `TransportHeader`, so the header keeps its size. Not done:
+step 1 (the standalone harness), step 4 (no GPU memory buffer video
+frames under the lockdown, which is in a later build's row), the link
+inventory as a committed table, and the list of descriptor passing
+outside Mojo transports.
 
 ### 1.2 Design
 
@@ -285,6 +302,31 @@ Matrix S-STA-01 (the browser refuses an unconfined renderer), S-STA-02
   the page's script for desktop Linux asks for values nobody set. The
   suite loads the page and checks only that it loads. *Not yet verified:*
   what a person sees there.
+
+*Written 15 November 2026, not compiled, for build 0.20.3.21:* stage A
+(`beryllium-kernel-attested-renderer.patch`) and the page
+(`beryllium-sandbox-status-page.patch`), with the suite's tests for both
+(2.3 steps 2 to 5). Three things differ from the design below, each for
+a reason found while writing:
+
+- The check is made when the renderer becomes ready, which is the later
+  of the launch result and the channel connecting. Chromium lets the two
+  come in either order, and the process handle is only valid after the
+  first.
+- The renderer is ended with `SIGKILL` as well as `Shutdown()`.
+  `Shutdown()` sends `SIGTERM`, and a renderer that skipped its lockdown
+  cannot be trusted to die of that.
+- The page is written by the browser in C++, as plain lines, through the
+  data source's request filter. A FreeBSD branch in the page's script
+  would have changed a TypeScript resource and its build rules, which
+  this tree has never compiled a change to; one C++ file is the smaller
+  risk for a build of hours, and plain lines are what the suite compares
+  with `procstat`. The summary counts and makes no judgement.
+
+The negative test uses `--no-sandbox` with the lockdown on: RendererMain
+skips the lockdown, the browser still expects it, and must end every
+renderer. Not done: the standalone test of the kernel flag on 14, 15 and
+16 (step 1), and the launch-to-lockdown times for stage B (step 6).
 
 ### 2.2 Design
 
@@ -1325,6 +1367,11 @@ making WebGPU work is not pursued now.** Of the work plan below, steps 1
 GPU, which matters for the blocklist with or without WebGPU) stand; step
 4 waits.
 
+*Step 2 written 15 November 2026, not compiled, for build 0.20.3.21:*
+`patches/security/beryllium-webgpu-off-by-default.patch`. From that build
+`test_gpu_info` fails if the GPU page lists WebGPU as enabled without
+`--enable-features=WebGPUService`. Steps 1 and 3 are not done.
+
 ### 7.3 Work plan
 
 1. *No build.* The suite's rendering group records, in fresh browsers:
@@ -1386,7 +1433,7 @@ as a defect with its cause. README item 7 goes.
 | 0.20.3.18, built and published 12 November 2026 | the two canvas noise patches written on 11 November 2026 (a snapshot noised as `getImageData` is; noise on WebGL `readPixels`), which are outside the seven items (matrix P-FPR-04 and P-FPR-07). Nothing else: the rest of what this row first listed was not written in time and moved one build down | measured with the noise battery that day, two runs of 30 readbacks: every row for snapshots and WebGL as rehearsed (freebsd/privacy/noise-hash/README.md); the suite passing in six runs, three of them with the lockdown |
 | 0.20.3.19, built and published 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. The first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). The signing ran for the first time on the owner's machine, and the release verifies as GitHub serves it (5.1) |
 | 0.20.3.20, built and published 12 November 2026 | no change to the browser: the sources of 0.20.3.19 with the version raised (the two build manifests differ in the version alone). The second signed release, and the first published from a commit whose installer takes nothing unsigned as the latest. The sandbox patches this row listed were not written before the build and moved one build down again | that the signing and the installer's checks work a second time on a real release (5.1). No test report of this build was sent |
-| 0.20.3.21 | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
+| 0.20.3.21, patches written 15 November 2026, not compiled | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default. Five patches, each for one of these, applied in this order so that the page can be left out alone if it fails to compile: `beryllium-kernel-attested-renderer`, `beryllium-receive-limits-switch`, `beryllium-sender-cut-on-child-links`, `beryllium-sandbox-status-page`, `beryllium-webgpu-off-by-default` | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19 |
 | 0.20.3.22 | item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
 | 0.20.3.23 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
@@ -1397,8 +1444,18 @@ small and of a kind already compiled once in this tree where possible.
 
 A build made before its row's patches are written is the previous build
 with another number: 0.20.3.19 and 0.20.3.20 are both the code of
-0.20.3.18. The patches of the 0.20.3.21 row are not written yet (12
-November 2026), so a build started now would be a fourth copy.
+0.20.3.18. The patches of the 0.20.3.21 row were written on 15 November
+2026, so the next build differs from 0.20.3.20 for the first time since
+0.20.3.18.
+
+**What was and was not checked before that build.** Each patch applies
+to the files as the build will meet them (`patch-workbench`, all four
+stages, no offset). The new C++ was type-checked on Linux against
+stand-in declarations copied from the Chromium 156 headers it calls:
+that catches a wrong type or a misspelt name in the new code, and it is
+not a compile. A first build of five patches can stop at any of them. A
+test build with the compiler cache (`install.sh --build --ccache`) makes
+the second attempt cheap; the release is then built clean.
 
 ### 8.3 The owner's decisions, 11 November 2026
 

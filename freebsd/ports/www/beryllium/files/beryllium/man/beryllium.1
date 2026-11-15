@@ -4,7 +4,7 @@
 .\" Source: man/beryllium.1 in the Beryllium repository.
 .\" The port replaces @@VERSION@@ and the /usr/local prefix at install.
 .\" One sentence per line; check with freebsd/tools/check-man.
-.Dd November 10, 2026
+.Dd November 15, 2026
 .Dt BERYLLIUM 1
 .Os Beryllium @@VERSION@@
 .Sh NAME
@@ -99,6 +99,13 @@ With the lockdown on, the kernel stops a renderer with
 at the first system call capability mode refuses, instead of letting the
 call fail.
 For finding such calls.
+.It Cm BerylliumReceiveSideLimits
+On by default.
+A switch for tests.
+Disabled, a confined renderer does nothing to the descriptors it
+receives, as a renderer that had been taken over would not, so that the
+test suite can check that the senders' cuts suffice.
+It has no use otherwise.
 .It Cm BerylliumRendererSwapFile
 Off by default.
 Give each renderer of a normal profile an unlinked temporary file in
@@ -111,6 +118,13 @@ On Wayland with the NVIDIA driver, finish drawing each frame before
 handing it to the compositor.
 This avoids flicker at the cost of some time on the GPU thread, and has
 no effect with other drivers.
+.It Cm WebGPUService
+Off by default in Beryllium on
+.Fx .
+WebGPU gives every page a second way into the GPU process, which is not
+confined.
+Enabling it exposes that process to WebGPU content, and on a GPU process
+that does not composite with Vulkan it finds no adapter.
 .It Cm HeliumNoise
 On by default.
 The fingerprinting noise inherited from Helium, as a whole: canvas,
@@ -367,7 +381,8 @@ desktop took the NVIDIA GPU's buffers and refused the Intel GPU's,
 .Fl -render-node-override
 naming the Intel GPU stopped the browser at its first frame.
 .Sh BUGS
-WebGPU finds no adapter.
+WebGPU is off by default, and where it is switched on it finds no adapter
+unless the GPU process composites with Vulkan.
 .Pp
 Report problems at
 .Lk https://github.com/johnjanik/Beryllium/issues ,

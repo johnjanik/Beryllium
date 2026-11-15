@@ -919,17 +919,40 @@ FreeBSD test bed, so an increment must be worth a build.
    on 0.20.3.18 and 0.20.3.19 are what there is for this code. The
    release is signed and verifies as GitHub serves it
    (18-REMAINING-WORK.md section 5.1).
-   **Then attestation** (next, build 0.20.3.21; 0.20.3.18 carried the
-   two noise patches only, and 0.20.3.19 and 0.20.3.20 no code change):
-   the browser checks
-   each renderer's capability mode with the kernel (`kern.proc.pid`,
-   `KI_CRF_CAPABILITY_MODE`) once the renderer reports its lockdown, and
-   ends an unconfined one before it gets a navigation; `beryllium://sandbox`
-   shows the kernel's answer per process; the release's sandbox table
-   changes from "not confined".
-   [18-REMAINING-WORK.md](18-REMAINING-WORK.md) section 2 has the design
-   (the check is made when the renderer's channel connects and takes
-   nothing from the renderer's own report), the tests and the attacks.
+   **Written for build 0.20.3.21, 15 November 2026, and not compiled:**
+   five patches, the first change to the browser since 0.20.3.18
+   (18-REMAINING-WORK.md sections 0.3, 1, 2 and 7 have the design of
+   each and what differs from it).
+   - *The kernel's word* (`beryllium-kernel-attested-renderer.patch`):
+     when a renderer the browser launched with the lockdown on becomes
+     ready, the browser reads its capability mode from the kernel
+     (`kern.proc.pid`, `KI_CRF_CAPABILITY_MODE`) and ends it, with
+     `SIGKILL`, unless the answer is yes. Nothing the renderer says is
+     used, and `--no-sandbox` does not exempt it.
+   - *The page* (`beryllium-sandbox-status-page.patch`):
+     `beryllium://sandbox` lists every process with the kernel's answer,
+     read when the page is loaded, as plain lines the suite compares
+     with `procstat -s`.
+   - *The other senders* (`beryllium-sender-cut-on-child-links.patch`):
+     the browser marks each end of a link it makes between two children
+     when the other end is a confined renderer, and the GPU process, the
+     network service and the storage service then cut what they send
+     over it.
+   - *The receiver's half as a switch*
+     (`beryllium-receive-limits-switch.patch`): with
+     `BerylliumReceiveSideLimits` disabled a confined renderer does
+     nothing to what it receives, so a run can show that the senders
+     alone keep the policy.
+   - *WebGPU off unless asked for*
+     (`beryllium-webgpu-off-by-default.patch`).
+   The suite has a test for each: the page against the kernel, the
+   attestation lines in the gate, a class that runs with the receiver's
+   half off, and a class in which no renderer can lock down and each
+   must be ended. Their parsers are unit-tested against the text the
+   patches write. None of it has met a build yet. Still open after this
+   build: the window stage B closes (what a renderer can read before it
+   is ended), the standalone tests on 14, 15 and 16, and the table of
+   which process types may hold a link to a renderer.
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch. What has to be true first, and how the default
    changes in two steps, is in 18-REMAINING-WORK.md section 3.

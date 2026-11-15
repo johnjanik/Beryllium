@@ -1,0 +1,94 @@
+Beryllium: a test switch that turns off what a confined renderer does to the descriptors it receives
+
+Purpose: plan/18 section 0.3 (adversarial review plan/16, finding BER-05;
+  feature matrix S-IPC-01). A confined renderer limits every descriptor it
+  receives, and the sender cuts every descriptor before sending it. Only
+  the sender's cut is a boundary: a compromised renderer need not run its
+  own code. While both are on, a test cannot tell which of the two did the
+  work. Feature BerylliumReceiveSideLimits, on by default, is the receiver's
+  half: with --disable-features=BerylliumReceiveSideLimits,
+  LimitReceivedDescriptor() returns at once, as it would in a renderer that
+  had been taken over. Every descriptor in every renderer must then still
+  be inside the policy by procstat -C, or some sender is not cutting.
+  - base/posix/capsicum_rights.{h,cc}: the feature, and the early return.
+    The feature is read once, the first time a confining process receives a
+    descriptor, which is after its feature list exists; the browser never
+    reads it there. When it is off the process says so once in the log, so
+    a run made that way cannot be taken for an ordinary one.
+  What it does not touch: the sweep of the descriptor table at the lockdown
+    point, the limits on socket pairs a confined process makes itself, and
+    everything a sender does.
+  This is a switch for tests. Nothing is gained by using it otherwise, and
+    it joins the switches a production package ignores once the lockdown is
+    the default (plan/18 section 3.3).
+Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.21).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py, class SenderAlone,
+  test_the_senders_cut_alone_keeps_the_policy: the lockdown on and this
+  feature off, every descriptor of every renderer inside the policy, and
+  the renderer's own line in the log saying its limits are off.
+security-review: required (descriptor rights in confined processes)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -35,6 +35,8 @@
+ 
+ BASE_FEATURE(kBerylliumCapsicumRenderer, FEATURE_DISABLED_BY_DEFAULT);
+ 
++BASE_FEATURE(kBerylliumReceiveSideLimits, FEATURE_ENABLED_BY_DEFAULT);
++
+ namespace {
+ 
+ // The confined peers (ExpectConfinedPeer), read on every send with handles.
+@@ -520,10 +522,32 @@
+   }
+ }
+ 
++// Whether this confined process limits what it receives (the test switch
++// kBerylliumReceiveSideLimits). Asked only once the process is confining,
++// which is after its feature list exists, and said once in the log when the
++// answer is no, so a run made that way cannot be mistaken for another.
++bool ReceiveSideLimits() {
++  static const bool on = [] {
++    const bool enabled = FeatureList::IsEnabled(kBerylliumReceiveSideLimits);
++    if (!enabled) {
++      LOG(WARNING) << "beryllium-sandbox: receive-side limits are off in pid "
++                   << getpid()
++                   << " (BerylliumReceiveSideLimits disabled, a test "
++                      "configuration): what this process receives keeps the "
++                      "rights its sender left on it";
++    }
++    return enabled;
++  }();
++  return on;
++}
++
+ void LimitReceivedDescriptor(int fd) {
+   if (!Confining()) {
+     return;
+   }
++  if (!ReceiveSideLimits()) {
++    return;
++  }
+   std::string what;
+   const std::optional<DescriptorKind> kind = DescriptorKindOf(fd, &what);
+   if (kind && *kind != DescriptorKind::kDirectory) {
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -29,6 +29,14 @@
+ // --enable-features=BerylliumCapsicumRenderer switches it on.
+ BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumCapsicumRenderer);
+ 
++// A test switch (plan/18 section 0.3; review finding BER-05), on by default.
++// With --disable-features=BerylliumReceiveSideLimits a confined process does
++// not limit the descriptors it receives, which is how a compromised renderer
++// behaves. Every descriptor it holds must still be inside the policy, or
++// some sender is not cutting. It weakens nothing a sender does, and it is
++// never switched off for ordinary use.
++BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumReceiveSideLimits);
++
+ // The kinds of descriptor a confined process may hold, each with the rights
+ // it needs and nothing more.
+ enum class DescriptorKind {

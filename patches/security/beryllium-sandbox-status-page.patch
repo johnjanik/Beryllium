@@ -1,0 +1,228 @@
+Beryllium: beryllium://sandbox shows what the kernel says about every process
+
+Purpose: plan/18 section 2 (feature matrix S-STA-02, S-STA-03). The page
+  existed and was empty. The port registers Chromium's sandbox page on BSD,
+  but the code that fills it is compiled for Linux and ChromeOS only, and
+  the page's script asks for values nobody set.
+  - chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc: on FreeBSD the
+    page is written in the browser each time it is asked for, through the
+    data source's request filter, as plain text in a fixed shape. It runs
+    no script and uses none of Chromium's page resources. It has:
+      - one line for the browser, each renderer and each other child
+        process: its kind, its pid, capability mode by the kernel (yes, no
+        or unknown, from KernelSaysCapabilityMode), whether the browser
+        asked it to lock down, and for those whether the browser's check at
+        connect passed;
+      - a summary that counts, and makes no judgement: renderers in
+        capability mode N of M, other child processes K of L, the browser
+        process not confined;
+      - whether the lockdown feature is on, how many renderers the kernel
+        attested this session and how many the browser ended, whether the
+        receive-side limits are on, whether --no-sandbox is in effect, and
+        the kernel's name and release.
+  Nothing on the page is a process's own report. Capability mode is read
+    from the kernel when the page is loaded; reloading reads it again.
+  Why not Chromium's page with a FreeBSD branch in its script: that needs
+    changes to a TypeScript resource and its build rules, which this tree
+    has never compiled a change to. One C++ file is the smaller risk for a
+    build that takes hours, and plain lines are what the test suite needs.
+Stage: 4 (Beryllium series). Depends on
+  beryllium-kernel-attested-renderer.patch (the kernel's answer, the
+  records) and beryllium-receive-limits-switch.patch (the feature it
+  reports).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.21).
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_sandbox_page_matches_the_kernel reads the page and compares the
+  capability mode on every line with procstat -s for that pid, with the
+  lockdown on and off; freebsd/tools/tests/test_sandbox_page.py tests the
+  page's parser on a copy of the text this patch writes.
+security-review: required (sandbox reporting)
+
+--- a/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
++++ b/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
+@@ -31,8 +31,171 @@
+ #include "sandbox/policy/sandbox.h"
+ #endif
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include <unistd.h>
++
++#include "base/command_line.h"
++#include "base/feature_list.h"
++#include "base/functional/bind.h"
++#include "base/memory/ref_counted_memory.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/posix/capsicum_rights.h"
++#include "base/process/process.h"
++#include "base/strings/escape.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/system/sys_info.h"
++#include "content/public/browser/browser_child_process_host_iterator.h"
++#include "content/public/browser/child_process_data.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/common/process_type.h"
++#endif
++
+ namespace {
+ 
++#if BUILDFLAG(IS_FREEBSD)
++// Beryllium (plan/18 section 2; feature matrix S-STA-02, S-STA-03): the
++// page is written here, in the browser, each time it is asked for. Every
++// value comes from the kernel (kern.proc.pid) or from the browser's own
++// records at that moment; nothing on it is a child's own report, and the
++// page runs no script. Its lines are plain text in a fixed shape, so that
++// the test suite can compare each one with procstat.
++const char* BerylliumAnswer(base::freebsd::KernelAnswer answer) {
++  switch (answer) {
++    case base::freebsd::KernelAnswer::kYes:
++      return "yes";
++    case base::freebsd::KernelAnswer::kNo:
++      return "no";
++    case base::freebsd::KernelAnswer::kUnknown:
++      return "unknown";
++  }
++  return "unknown";
++}
++
++std::string BerylliumSandboxStatusHtml() {
++  std::string rows;
++  int renderers = 0;
++  int renderers_confined = 0;
++  int others = 0;
++  int others_confined = 0;
++
++  // One line a process: kind, pid, the kernel's answer, whether the browser
++  // asked it to lock down, whether the browser's check at connect passed.
++  const auto add_row = [&rows](const std::string& kind, base::ProcessId pid,
++                               base::freebsd::KernelAnswer answer,
++                               const char* requested, const char* attested) {
++    rows += "process: " + base::EscapeForHTML(kind) +
++            " | pid: " + base::NumberToString(pid) +
++            " | capability mode by the kernel: " + BerylliumAnswer(answer) +
++            " | lockdown requested: " + requested +
++            " | attested at connect: " + attested + "\n";
++  };
++
++  add_row("browser", getpid(),
++          base::freebsd::KernelSaysCapabilityMode(getpid()), "no",
++          "not applicable");
++
++  for (auto it = content::RenderProcessHost::AllHostsIterator(); !it.IsAtEnd();
++       it.Advance()) {
++    const base::Process& process = it.GetCurrentValue()->GetProcess();
++    if (!process.IsValid() || process.is_current()) {
++      continue;
++    }
++    const base::ProcessId pid = process.Pid();
++    const base::freebsd::KernelAnswer answer =
++        base::freebsd::KernelSaysCapabilityMode(pid);
++    const bool requested = base::freebsd::IsConfinedPeer(pid);
++    ++renderers;
++    if (answer == base::freebsd::KernelAnswer::kYes) {
++      ++renderers_confined;
++    }
++    add_row("renderer", pid, answer, requested ? "yes" : "no",
++            !requested ? "not applicable"
++                       : base::freebsd::WasAttested(pid) ? "yes" : "no");
++  }
++
++  for (content::BrowserChildProcessHostIterator it; !it.Done(); ++it) {
++    const base::Process& process = it.GetProcess();
++    if (!process.IsValid() || process.is_current()) {
++      continue;
++    }
++    const content::ChildProcessData& data = it.GetData();
++    std::string kind = content::GetProcessTypeNameInEnglish(data.process_type);
++    if (!data.metrics_name.empty()) {
++      kind += " (" + data.metrics_name + ")";
++    } else if (!data.name.empty()) {
++      kind += " (" + base::UTF16ToUTF8(data.name) + ")";
++    }
++    const base::ProcessId pid = process.Pid();
++    const base::freebsd::KernelAnswer answer =
++        base::freebsd::KernelSaysCapabilityMode(pid);
++    ++others;
++    if (answer == base::freebsd::KernelAnswer::kYes) {
++      ++others_confined;
++    }
++    add_row(kind, pid, answer, "no", "not applicable");
++  }
++
++  const base::CommandLine& command_line =
++      *base::CommandLine::ForCurrentProcess();
++  const bool lockdown =
++      base::FeatureList::IsEnabled(base::freebsd::kBerylliumCapsicumRenderer);
++  const bool receive_limits = base::FeatureList::IsEnabled(
++      base::freebsd::kBerylliumReceiveSideLimits);
++  const bool no_sandbox = command_line.HasSwitch("no-sandbox");
++
++  std::string page =
++      "<!doctype html>\n<html><head><meta charset=\"utf-8\">"
++      "<title>Sandbox status</title></head><body><pre>\n"
++      "Beryllium sandbox status\n\n"
++      "Every value below was read in the browser when this page was loaded:\n"
++      "capability mode from the kernel (kern.proc.pid, what procstat -s\n"
++      "prints as C), the rest from the browser's own records. Nothing here\n"
++      "is a process's own report. Reload the page to read again.\n\n";
++  page += "summary: renderers in capability mode: " +
++          base::NumberToString(renderers_confined) + " of " +
++          base::NumberToString(renderers) +
++          "; other child processes in capability mode: " +
++          base::NumberToString(others_confined) + " of " +
++          base::NumberToString(others) +
++          "; the browser process is not confined\n\n";
++  page += rows;
++  page += "\nrenderer lockdown (BerylliumCapsicumRenderer): ";
++  page += lockdown ? "on" : "off";
++  page += "\nrenderers attested by the kernel at connect, this session: " +
++          base::NumberToString(base::freebsd::AttestedTotal());
++  page += "\nrenderers ended because the kernel did not attest them, this "
++          "session: " +
++          base::NumberToString(base::freebsd::EndedUnattestedTotal());
++  page += "\nreceive-side limits (BerylliumReceiveSideLimits): ";
++  page += receive_limits ? "on" : "off, a test configuration";
++  page += "\nswitches in effect that weaken a sandbox: ";
++  page += no_sandbox ? "--no-sandbox" : "none";
++  page += "\nkernel: " +
++          base::EscapeForHTML(base::SysInfo::OperatingSystemName() + " " +
++                              base::SysInfo::OperatingSystemVersion());
++  page += "\n\nWith the lockdown off, no process is confined, and a page that\n"
++          "takes over a renderer has the access you have. With it on, the\n"
++          "renderers are confined and the browser, GPU, network and storage\n"
++          "processes are not. man beryllium-sandbox says what that means.\n"
++          "</pre></body></html>\n";
++  return page;
++}
++
++bool BerylliumShouldHandleRequest(const std::string& path) {
++  // The page itself, with or without a query. The other paths are the
++  // resources of Chromium's page, which this one does not use.
++  return path.empty() || path[0] == '?' || path[0] == '#';
++}
++
++void BerylliumHandleRequest(
++    const std::string& path,
++    content::WebUIDataSource::GotDataCallback callback) {
++  std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(
++      BerylliumSandboxStatusHtml()));
++}
++#endif  // BUILDFLAG(IS_FREEBSD)
++
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ static void SetSandboxStatusData(content::WebUIDataSource* source) {
+   // Get expected sandboxing status of renderers.
+@@ -81,6 +244,11 @@
+   SetSandboxStatusData(source);
+   source->UseStringsJs();
+ #endif
++
++#if BUILDFLAG(IS_FREEBSD)
++  source->SetRequestFilter(base::BindRepeating(&BerylliumShouldHandleRequest),
++                           base::BindRepeating(&BerylliumHandleRequest));
++#endif
+ }
+ 
+ }  // namespace
