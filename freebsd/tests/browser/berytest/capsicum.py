@@ -512,10 +512,28 @@ def parse_sandbox_page(text):
     return {"rows": rows, "summary": summary, "settings": settings}
 
 
-def sandbox_page_problems(status, kernel_modes, lockdown):
+def starting_renderers(status):
+    """The pids of the renderers the browser asked to lock down that the
+    page shows as not there yet: not in capability mode, or not attested.
+    The browser lists a renderer from the moment it is launched, and the
+    renderer locks down and connects a moment later. The page's own renderer
+    is caught this way whenever the page is opened in a new tab: the browser
+    writes the page while that renderer is still starting (the first run on
+    0.20.3.21, 15 November 2026, showed two)."""
+    return {r["pid"] for r in status["rows"]
+            if r["kind"] == "renderer" and r["requested"] == "yes"
+            and (r["mode"], r["attested"]) != ("yes", "yes")}
+
+
+def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
     """What on the page disagrees with the kernel or with itself.
     kernel_modes: {pid: True | False | None | "gone"} from procstat -s for
-    every pid the page lists; lockdown: whether this run asked for it."""
+    every pid the page lists; lockdown: whether this run asked for it;
+    starting: renderers the page caught while they were starting (see
+    starting_renderers), which may have locked down between the page and
+    procstat and are judged by a later reading of the page instead. A
+    process never leaves capability mode, so a page that says yes where
+    procstat says no is wrong for any process."""
     problems = []
     rows = status["rows"]
     if not rows:
@@ -528,7 +546,7 @@ def sandbox_page_problems(status, kernel_modes, lockdown):
         if actual is None:
             problems.append(f"{r['kind']} pid {r['pid']}: procstat could not read it, "
                             f"and the page says {r['mode']}")
-        elif r["mode"] != word[actual]:
+        elif r["mode"] != word[actual] and not (r["pid"] in starting and actual is True):
             problems.append(f"{r['kind']} pid {r['pid']}: the page says capability mode "
                             f"{r['mode']}, procstat says {word[actual]}")
     renderers = [r for r in rows if r["kind"] == "renderer"]
@@ -547,6 +565,8 @@ def sandbox_page_problems(status, kernel_modes, lockdown):
         problems.append(f"the page says the lockdown is {said!r} and this run "
                         f"{'asked for it' if lockdown else 'did not ask for it'}")
     for r in renderers:
+        if r["pid"] in starting:
+            continue
         if lockdown and (r["requested"], r["attested"]) != ("yes", "yes"):
             problems.append(f"renderer pid {r['pid']}: lockdown requested {r['requested']}, "
                             f"attested {r['attested']}, with the lockdown on")

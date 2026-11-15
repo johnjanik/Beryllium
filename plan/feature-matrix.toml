@@ -300,11 +300,11 @@ priority = "later"
 phase = 3
 implemented = "partial"
 built = "v0.20.3.1-1"
-tested = "failing"
+tested = "passing"
 where = ["freebsd/ports/www/beryllium/Makefile", "patches/security/beryllium-webgpu-off-by-default.patch"]
 tests = ["freebsd/tests/browser/tests/test_40_rendering.py::test_webgl_webgpu_canvas",
          "freebsd/tests/browser/tests/test_40_rendering.py::test_gpu_info"]
-evidence = "owner, 0.20.3.1, 4 Nov 2026: WebGPU enabled in the feature list but no adapter (the test records it, asserts nothing); owner, 0.20.3.18, 12 Nov 2026, seven runs: the same, webgpu=enabled in the feature list and no adapter; owner, 0.20.3.19, 12 Nov 2026, two runs: the same"
+evidence = "owner, 0.20.3.1, 4 Nov 2026: WebGPU enabled in the feature list but no adapter (the test records it, asserts nothing); owner, 0.20.3.18, 12 Nov 2026, seven runs: the same, webgpu=enabled in the feature list and no adapter; owner, 0.20.3.19, 12 Nov 2026, two runs: the same; owner, build 0.20.3.21 (not published), 15 Nov 2026, both runs: the GPU page lists webgpu=disabled_off (enabled in every build to 0.20.3.20) and test_gpu_info passes; a page still gets no adapter"
 notes = "Read from the source on 11 Nov 2026: on Linux and BSD, WebGPUDecoderImpl::CreatePreferredAdapter asks for a Vulkan adapter only when the GPU process composites with Vulkan or WebGPU-on-Vulkan beside GL is enabled, and otherwise for the null backend; the reports show vulkan=disabled_off and webgpu_on_vk_via_gl_interop=disabled_off. plan/18 section 7 recommends turning WebGPU off deliberately until the GPU process has a policy, with the probes that say whether an adapter is obtainable at all. Off by default: Written 15 Nov 2026 for build 0.20.3.21 and not compiled yet (the owner's decision of 11 Nov 2026). The features WebGPUService and WebGPUBlobCache are disabled by default on FreeBSD, and --enable-features=WebGPUService turns them on; from that build test_gpu_info fails if the GPU page lists WebGPU as enabled without that switch. What a page then gets from navigator.gpu is recorded, not asserted. This row stays failing until a build shows the new state."
 source = ["plan/12-WORK-PLAN-AND-RED-TEAM.md §11", "RT-07", "plan/18-REMAINING-WORK.md §7"]
 
@@ -926,7 +926,7 @@ where = ["patches/security/beryllium-close-inherited-descriptors.patch", "patche
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_the_senders_cut_alone_keeps_the_policy"]
-evidence = "owner, 0.20.3.4, 5 Nov 2026: the survey lists about 30 descriptors in a renderer instead of about 120, no directory or profile file, with or without the lockdown (the descriptor test still failed on shared memory, S-SHM-01); owner, 0.20.3.7, 5 Nov 2026: the descriptor test passes with and without the lockdown; owner, 0.20.3.13, 9 Nov 2026, lockdown on: the browser cut 1 to 88 descriptors per renderer before sending (VLOG cut lines), none refused outright, every renderer read within the policy; owner, 0.20.3.18, 12 Nov 2026: passes in all seven suite runs of the day; owner, 0.20.3.19 (the code of 0.20.3.18 built again), 12 Nov 2026: passes in both suite runs, one without and one with the lockdown"
+evidence = "owner, 0.20.3.4, 5 Nov 2026: the survey lists about 30 descriptors in a renderer instead of about 120, no directory or profile file, with or without the lockdown (the descriptor test still failed on shared memory, S-SHM-01); owner, 0.20.3.7, 5 Nov 2026: the descriptor test passes with and without the lockdown; owner, 0.20.3.13, 9 Nov 2026, lockdown on: the browser cut 1 to 88 descriptors per renderer before sending (VLOG cut lines), none refused outright, every renderer read within the policy; owner, 0.20.3.18, 12 Nov 2026: passes in all seven suite runs of the day; owner, 0.20.3.19 (the code of 0.20.3.18 built again), 12 Nov 2026: passes in both suite runs, one without and one with the lockdown; owner, build 0.20.3.21 (not published), 15 Nov 2026, lockdown run: the gate passes with 394 log lines each accounted for; 350 cuts, 349 by the browser and 1 by the GPU process, the first by a process other than the browser; with the receiver's limits off (SenderAlone) 6 renderers said so and the 5 read held 20 to 36 descriptors, none outside the policy"
 source = ["plan/06-SECURITY-MODEL.md §4", "plan/03-ARCHITECTURE.md §4.2"]
 notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed in 0.20.3.4 with close() and closefrom(2) between fork and exec. Rights limits on what the launcher passes: only shared memory so far (S-SHM-02, 0.20.3.5); from 0.20.3.9 the receiving renderer cuts the rest itself (beryllium-descriptor-rights.patch), which is not a boundary; from 0.20.3.13 the browser cuts every descriptor it sends a renderer launched with the lockdown on, before sendmsg (beryllium-sender-side-rights.patch: the launcher registers the pid as a confined peer, Mojo's transport cuts by kind; a writable File System Access handle keeps a writable kind). Still receiver-limited only: what other children send a renderer over the transports the browser introduced between them (in the survey of 10 Nov 2026 one renderer held direct sockets to the GPU process, the network service and the storage service); and the sender alone is not yet verified with the receiver's limit off. Design, tests and red-team plan: plan/18 section 1. Written 15 Nov 2026 for build 0.20.3.21 and not compiled yet: the browser marks each end of a link it makes between two children when the other end is a confined renderer, and the GPU process, the network service and the storage service then cut what they send over it as the browser does; and a test switch (BerylliumReceiveSideLimits off) under which a confined renderer does nothing to what it receives, so that the suite can require the policy from the senders alone (review finding BER-05). Still open from plan/18 section 1: the list of descriptor passing outside Mojo transports, and the committed table of which process types may hold a link to a renderer."
 
@@ -1204,11 +1204,12 @@ priority = "must"
 phase = 2
 implemented = "partial"
 built = "no"
-tested = "written"
+tested = "passing"
 where = ["patches/security/beryllium-kernel-attested-renderer.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_an_unconfined_renderer_is_ended",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log",
          "freebsd/tools/tests/test_sandbox_status.py"]
+evidence = "owner, build 0.20.3.21 (not published), 15 Nov 2026, lockdown run: the browser attested 8 renderers, one for each that reported its lockdown, and ended none; in a browser with --no-sandbox and the lockdown on it ended 13, attested none, and the test's page was killed before it answered a script"
 source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5", "RT-04"]
 notes = "Stage A of plan/18 section 2. Written 15 Nov 2026 for build 0.20.3.21 and not compiled yet: when a renderer the browser launched with the lockdown on becomes ready, the browser reads its capability mode from the kernel (kern.proc.pid) and ends it unless the answer is yes, whatever the renderer was told (--no-sandbox included). Still open: the messages queued before the renderer connected, which it can read in the moment before it is ended (stage B holds the invitation until the kernel says yes), and the standalone test of the kernel flag on 14, 15 and 16."
 
@@ -1225,7 +1226,7 @@ tested = "passing"
 where = ["patches/security/beryllium-honest-gpu-sandbox-status.patch", "patches/security/beryllium-sandbox-status-page.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_gpu_sandbox_claim_matches_kernel",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_sandbox_page_matches_the_kernel"]
-evidence = "owner, 0.20.3.1, suite run 4 Nov 2026: GPU process claims sandboxed=False, kernel says not in capability mode; owner, 0.20.3.18, 12 Nov 2026: passes in all seven suite runs of the day; owner, 0.20.3.19 (the code of 0.20.3.18 built again), 12 Nov 2026: passes in both suite runs, one without and one with the lockdown"
+evidence = "owner, 0.20.3.1, suite run 4 Nov 2026: GPU process claims sandboxed=False, kernel says not in capability mode; owner, 0.20.3.18, 12 Nov 2026: passes in all seven suite runs of the day; owner, 0.20.3.19 (the code of 0.20.3.18 built again), 12 Nov 2026: passes in both suite runs, one without and one with the lockdown; owner, build 0.20.3.21 (not published), 15 Nov 2026: test_gpu_sandbox_claim_matches_kernel passes in both runs; for beryllium://sandbox see S-STA-03"
 source = ["plan/06-SECURITY-MODEL.md §10", "RT-17"]
 notes = "Done for beryllium://gpu; beryllium://sandbox and the process-level flag remain. beryllium://sandbox: Written 15 Nov 2026 for build 0.20.3.21 and not compiled yet (S-STA-03)."
 
@@ -1238,10 +1239,11 @@ priority = "must"
 phase = 2
 implemented = "done"
 built = "no"
-tested = "written"
+tested = "failing"
 where = ["patches/security/beryllium-sandbox-status-page.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_sandbox_page_matches_the_kernel",
          "freebsd/tools/tests/test_sandbox_status.py"]
+evidence = "owner, build 0.20.3.21 (not published), 15 Nov 2026: without the lockdown the page's 15 lines all agree with procstat -s; with it the test failed on two renderers the page listed while they were starting (asked to lock down, not yet confined, not yet attested), one of which was confined and the other gone when procstat ran. The page was right about the instant and the test at fault: it now judges such a renderer by a later reading of the page, and has not been rerun on the build. The page should say starting for a renderer that is not ready, which is for the next build"
 source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5"]
 notes = "Written 15 Nov 2026 for build 0.20.3.21 and not compiled yet. The page is written by the browser each time it is loaded, as plain lines and with no script: one line a process with its capability mode by the kernel, whether a lockdown was requested and whether the check at connect passed; counts; the state of the lockdown and of the switches that weaken it. Chromium's own page and its script are not used on FreeBSD."
 

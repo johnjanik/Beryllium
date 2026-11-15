@@ -300,6 +300,112 @@ class PageTest(unittest.TestCase):
             t.test_sandbox_page_matches_the_kernel()  # a survey skips
 
 
+# The page of the first lockdown run on 0.20.3.21 (15 November 2026), which
+# failed this test as it was first written: two renderers were listed while
+# they were still starting. By the time procstat ran, one had locked down
+# and the other was gone.
+FIRST_RUN = [("browser", 2598, "no", "no", "not applicable"),
+             ("renderer", 41514, "yes", "yes", "yes"),
+             ("renderer", 32136, "yes", "yes", "yes"),
+             ("renderer", 5105, "yes", "yes", "yes"),
+             ("renderer", 42213, "no", "yes", "no"),
+             ("renderer", 3915, "yes", "yes", "yes"),
+             ("renderer", 42199, "no", "yes", "no"),
+             ("GPU (GPU)", 3065, "no", "no", "not applicable"),
+             ("Utility (network.mojom.NetworkService)", 3347, "no", "no", "not applicable")]
+FIRST_RUN_KERNEL = {2598: False, 41514: "gone", 32136: True, 5105: True, 42213: True,
+                    3915: True, 42199: "gone", 3065: False, 3347: False}
+LATER = [r for r in FIRST_RUN if r[1] not in (42213, 42199)] + \
+        [("renderer", 42213, "yes", "yes", "yes")]
+
+
+class clock:
+    """Time for the test's waiting: each look at the clock is a second on."""
+
+    def __enter__(self):
+        self.now = 0.0
+        self.patches = [mock.patch.object(sandbox.time, "sleep"),
+                        mock.patch.object(sandbox.time, "monotonic", side_effect=self.tick)]
+        for p in self.patches:
+            p.start()
+        return self
+
+    def tick(self):
+        self.now += 1.0
+        return self.now
+
+    def __exit__(self, *exc):
+        for p in reversed(self.patches):
+            p.stop()
+        return False
+
+
+class StartingRenderers(unittest.TestCase):
+    """A renderer the page lists before it has locked down and connected."""
+
+    METHOD = "test_sandbox_page_matches_the_kernel"
+
+    def status(self, rows=FIRST_RUN, **kw):
+        return capsicum.parse_sandbox_page(page(rows, **kw))
+
+    def test_they_are_the_requested_renderers_not_yet_confined_or_attested(self):
+        self.assertEqual(capsicum.starting_renderers(self.status()), {42213, 42199})
+        self.assertEqual(capsicum.starting_renderers(self.status(CONFINED)), set())
+        # without the lockdown nothing was requested, so nothing is starting
+        self.assertEqual(capsicum.starting_renderers(self.status(OPEN, lockdown="off")), set())
+
+    def test_the_first_run_as_the_test_first_judged_it(self):
+        problems = capsicum.sandbox_page_problems(self.status(), FIRST_RUN_KERNEL, True)
+        self.assertEqual(problems, [
+            "renderer pid 42213: the page says capability mode no, procstat says yes",
+            "renderer pid 42213: lockdown requested yes, attested no, with the lockdown on",
+            "renderer pid 42199: lockdown requested yes, attested no, with the lockdown on"])
+
+    def test_a_starting_renderer_is_not_a_disagreement(self):
+        status = self.status()
+        self.assertEqual(capsicum.sandbox_page_problems(
+            status, FIRST_RUN_KERNEL, True, capsicum.starting_renderers(status)), [])
+
+    def test_no_process_leaves_capability_mode_starting_or_not(self):
+        rows = [("renderer", 42213, "yes", "yes", "no") if r[1] == 42213 else r
+                for r in FIRST_RUN]
+        status = self.status(rows)
+        modes = dict(FIRST_RUN_KERNEL)
+        modes[42213] = False
+        problems = capsicum.sandbox_page_problems(status, modes, True,
+                                                  capsicum.starting_renderers(status))
+        self.assertEqual(problems, ["renderer pid 42213: the page says capability mode yes, "
+                                    "procstat says no"])
+
+    def run_test(self, readings, browser_args=LOCKDOWN, kernel=FIRST_RUN_KERNEL):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, browser_args)
+        t.GRACE_SECONDS = 5.0
+        t.browser.new_page.return_value.eval.side_effect = list(readings)
+        with clock(), modes_are(kernel):
+            t.test_sandbox_page_matches_the_kernel()
+        return t
+
+    def test_passes_when_a_later_reading_shows_them_confined_and_attested_or_gone(self):
+        t = self.run_test([page(FIRST_RUN), page(LATER)])
+        self.assertIn("caught while they were starting: [42199, 42213]", t.note.call_args[0][0])
+
+    def test_fails_when_one_is_still_not_there_after_the_grace(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([page(FIRST_RUN)] * 12)
+        self.assertIn("pid 42213: still not confined and attested", str(e.exception))
+
+    def test_fails_when_the_browser_ended_a_renderer_meanwhile(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([page(FIRST_RUN), page(LATER, ended=1)])
+        self.assertIn("counts 1 renderers ended", str(e.exception))
+
+    def test_without_the_lockdown_a_renderer_that_became_confined_is_a_problem(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([page(OPEN, lockdown="off")], browser_args=[],
+                          kernel={100: False, 201: True, 300: False})
+        self.assertIn("the page says capability mode no, procstat says yes", str(e.exception))
+
+
 class UnconfinedRendererTest(unittest.TestCase):
     METHOD = "test_an_unconfined_renderer_is_ended"
     ENDED = [line(100, "renderer pid=201 is not in capability mode by the kernel's account; "
