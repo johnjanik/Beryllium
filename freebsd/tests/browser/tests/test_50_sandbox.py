@@ -78,6 +78,13 @@ class Gate(BrowserTest):
                           "comes with 0.20.3.21")
         self.unavailable(what)
 
+    def read_sandbox_page(self, page):
+        """beryllium://sandbox loaded in page, as parse_sandbox_page gives
+        it. Each load makes the browser write the page afresh."""
+        page.navigate(self.browser.url("sandbox"), timeout=30)
+        return capsicum.parse_sandbox_page(
+            page.eval("document.body ? document.body.innerText : ''"))
+
     def descriptors_follow_the_policy(self):
         """With the lockdown on, every descriptor a renderer holds has a type
         the policy allows and no more rights than the policy gives that type
@@ -211,25 +218,50 @@ class SandboxHonesty(Gate):
         """beryllium://sandbox (from 0.20.3.21) against procstat -s: every
         line's capability mode is the kernel's for that pid, the summary is
         the sum of the lines, and with the lockdown on every renderer was
-        asked to lock down and attested (S-STA-02, S-STA-03)."""
+        asked to lock down and attested (S-STA-02, S-STA-03). A renderer the
+        page lists while it is still starting gets GRACE_SECONDS to show as
+        confined and attested in a later reading, or to be gone."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         page = self.browser.new_page()
         try:
-            page.navigate(self.browser.url("sandbox"), timeout=30)
-            text = page.eval("document.body ? document.body.innerText : ''")
+            status = self.read_sandbox_page(page)
+            if status is None:
+                self.older_build("beryllium://sandbox is not Beryllium's status page")
+            modes = capsicum.capability_modes([r["pid"] for r in status["rows"]])
+            # The page is written while its own renderer is starting, so
+            # with the lockdown on that renderer shows as not confined and
+            # not attested yet. It, and any other caught the same way, is
+            # judged by what a later reading says of it.
+            starting = capsicum.starting_renderers(status) if self.strict() else set()
+            still, latest = set(starting), status
+            deadline = time.monotonic() + self.GRACE_SECONDS
+            while still and time.monotonic() < deadline:
+                time.sleep(0.5)
+                again = self.read_sandbox_page(page)
+                if again is None:
+                    break
+                latest = again
+                still &= capsicum.starting_renderers(latest)
         finally:
             self.browser.close_page(page)
-        status = capsicum.parse_sandbox_page(text)
-        if status is None:
-            self.older_build("beryllium://sandbox is not Beryllium's status page")
-        modes = capsicum.capability_modes([r["pid"] for r in status["rows"]])
-        problems = capsicum.sandbox_page_problems(status, modes, self.strict())
+        problems = capsicum.sandbox_page_problems(status, modes, self.strict(), starting)
+        problems += [f"renderer pid {pid}: still not confined and attested "
+                     f"{self.GRACE_SECONDS:g} s after the page first listed it"
+                     for pid in sorted(still)]
+        ended = latest["settings"].get("ended_total")
+        if self.strict() and ended != "0":
+            problems.append(f"the page counts {ended} renderers ended by the browser's check, "
+                            "in a run where every renderer should have locked down")
         self.note("\n".join(
             [f"{r['kind']} pid {r['pid']}: page {r['mode']}, procstat "
              f"{ {True: 'yes', False: 'no', None: 'unreadable'}.get(modes.get(r['pid']), 'gone') }"
              f"; requested {r['requested']}, attested {r['attested']}" for r in status["rows"]]
             + [f"summary: {status['summary']}"]
             + [f"{k}: {v}" for k, v in sorted(status["settings"].items())]
+            + ([f"renderers the page caught while they were starting: {sorted(starting)}; "
+                + ("each was confined and attested, or gone, in a later reading" if not still
+                   else f"still not there after {self.GRACE_SECONDS:g} s: {sorted(still)}")]
+               if starting else [])
             + problems))
         self.assertEqual(problems, [], "beryllium://sandbox disagrees with the kernel "
                                        "or with itself (RT-17)")

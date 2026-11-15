@@ -953,6 +953,56 @@ FreeBSD test bed, so an increment must be worth a build.
    build: the window stage B closes (what a renderer can read before it
    is ended), the standalone tests on 14, 15 and 16, and the table of
    which process types may hold a link to a renderer.
+   **0.20.3.21, built 15 November 2026: the five patches compiled at the
+   first attempt and do what they were written to do; one test of the
+   new page failed, and the test was at fault.** Two runs that evening,
+   18:45 without the lockdown and 18:53 with it. Not published yet.
+   Without the lockdown (36 pass, 6 skipped): everything passes. WebGPU
+   is listed as `disabled_off`, where every build to 0.20.3.20 said
+   enabled; a page still gets no adapter. `beryllium://sandbox` lists the
+   browser, 11 renderers and 3 other processes, every one "no", and every
+   line agrees with `procstat -s` (two renderers were gone by then).
+   Canvas noise on 1037 and 1024 pixels. Both displays report HDR again.
+   With the lockdown (38 pass, 1 fails, 3 skipped):
+   - *The gate passes.* The check read 394 lines, all the lockdown wrote,
+     and each is accounted for: 8 lockdown reports with one thread each,
+     14 socket pairs with their 14 stack lines, 350 cut lines and 8
+     attestation lines. Four renderers in capability mode by the kernel
+     and no other process; 30 to 36 descriptors per renderer and none
+     outside the policy.
+   - *The kernel's word.* The browser attested 8 renderers, one for each
+     that reported its own lockdown, and ended none.
+   - *An unconfined renderer is ended.* With `--no-sandbox` and the
+     lockdown on, the browser ended 13 renderers, each "not in capability
+     mode by the kernel's account", attested none, and the test's page
+     was killed before it answered a script.
+   - *The other senders.* Of the 350 cuts, 349 were the browser's and 1
+     the GPU process's: the first cut by a process other than the
+     browser, so the mark on a link reaches the child and is acted on.
+     The network and storage services cut nothing in this run; whether
+     they sent a renderer any descriptor is not known from it.
+   - *The senders alone.* With the receiver's half off, 6 renderers said
+     so in the log, and the 5 that were read held 20 to 36 descriptors,
+     none outside the policy.
+   - *The failure:* `test_sandbox_page_matches_the_kernel`. The page
+     listed two renderers as asked to lock down, not in capability mode
+     and not attested: pids 42213 and 42199, the two newest. When
+     `procstat` ran a moment later the first was in capability mode and
+     the second was gone. The browser writes the page while the page's
+     own renderer is still starting, so that renderer is listed mid-start
+     every time the page is opened in a new tab; the other was the tab's
+     previous renderer on its way out. The page was right about that
+     instant, and the test compared it with a later one. Corrected in
+     the suite the same evening: a renderer the page catches starting is
+     judged by a later reading of the page, where it must be confined and
+     attested, or gone, within five seconds; a page that says yes where
+     `procstat` says no is still wrong for any process. Unit tests hold
+     the first run's page as a fixture. Not yet rerun on the build.
+   What the page should say differently, for the next build: a renderer
+   that is not ready yet is "starting", and the summary counts it apart.
+   As built, a person who opens the page with the lockdown on sees one
+   renderer "not in capability mode, not attested", which is the page's
+   own, a moment before it locks down. True, and misleading.
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch. What has to be true first, and how the default
    changes in two steps, is in 18-REMAINING-WORK.md section 3.
