@@ -47,7 +47,7 @@ reports
 .Dq Sandboxed: false
 for the GPU process, which is the kernel's answer and not a claim.
 .Ss Measures in every process
-Three measures apply to every child process, whether or not the lockdown
+Four measures apply to every child process, whether or not the lockdown
 is on.
 They limit what a compromised process can reach.
 They do not confine it.
@@ -66,6 +66,15 @@ shared read-only is read-only by its Capsicum rights.
 .It
 A renderer is given no swap file, so page content parked by a background
 tab stays in memory.
+.It
+From 0.20.3.22 a child process gives up the means to gain privileges
+.Pq Dv PROC_NO_NEW_PRIVS_CTL , see Xr procctl 2 :
+if it executes a set-user-ID file, nothing is gained.
+The browser process does not, because it starts helper programs.
+.Cm BerylliumChildNoNewPrivileges
+switches this off;
+.Ql proccontrol -m nonewprivs -q -p PID
+shows it.
 .El
 .Ss The renderer lockdown
 With the feature
@@ -80,6 +89,14 @@ It judges every descriptor it holds by the admission rule below and cuts
 each one it keeps to the rights of its kind.
 .It
 It limits its standard streams.
+.It
+From 0.20.3.22 it gives up what capability mode leaves it and it has no
+use for: new privileges, core files, new processes
+.Pq Dv RLIMIT_NPROC ,
+and being traced
+.Pq Dv PROC_TRACE_CTL .
+The last means that no other process of the same user can attach a
+debugger to it, record its system calls or read its descriptor table.
 .It
 It calls
 .Xr cap_enter 2
@@ -97,15 +114,28 @@ If any step fails, the renderer ends.
 A renderer asked to confine itself never runs unconfined.
 .Pp
 The browser does not take the renderer's word for it.
-When a renderer it launched with the lockdown on becomes ready, the
-browser asks the kernel whether that process is in capability mode, and
-ends the renderer unless the answer is yes.
-No answer counts as no.
+From 0.20.3.22 it sends a renderer nothing, not even the invitation to
+connect, until the kernel says that the process is in capability mode.
+A renderer needs nothing from the browser to get that far.
+One that has exited, that the kernel gives no answer for, or that is not
+there after ten seconds is ended without having been sent anything.
 This holds whatever the renderer was told: with
 .Fl -no-sandbox ,
-under which a renderer skips its lockdown, every renderer is ended.
-What the browser sent before the renderer connected can still be read by
-it in the moment before it is ended.
+under which a renderer skips its lockdown, every renderer is ended at
+once and no page loads.
+When the renderer has connected the browser asks the kernel once more,
+as 0.20.3.21 did, and ends the renderer unless the answer is yes.
+No answer counts as no.
+.Pp
+When it starts, the browser also finds out what the kernel does for a
+confined process, by trying it in a child process: whether capability
+mode exists, and whether a process in it is refused
+.Xr kill 2
+and
+.Xr sigqueue 2
+to another process, which FreeBSD-SA-26:28.capsicum repaired.
+A kernel that fails either is named in the log and on the status page.
+On a kernel without capability mode every renderer ends at its lockdown.
 .Pp
 The page
 .Pa beryllium://sandbox
@@ -122,6 +152,8 @@ renderer is one whenever the page opens in a new tab.
 Reload the page to see what became of it.
 A renderer listed as asked to lock down and not attested, without that
 word, is one the browser refused and is ending.
+The page also gives the result of the kernel check and, for each kind of
+process that is not confined, the reason.
 .Pp
 Other processes that hold a direct link to a renderer, namely the GPU
 process, the network service and the storage service, cut every descriptor
@@ -239,22 +271,64 @@ A received descriptor the policy has no kind for keeps no right at all.
 The browser cuts every descriptor it sends a confined renderer before it
 sends it, so the limits do not depend on the renderer's cooperation.
 .El
+.Ss Utility services
+Some utility services take bytes from the browser and give bytes back.
+From 0.20.3.22 such a service can be locked down as a renderer is, as an
+experiment that is off by default.
+With
+.Cm BerylliumCapsicumUtilities
+enabled, the browser tells three services to lock down
+.Pq the data decoder, the unzipper and the file patcher ,
+cuts what it sends them, and sends them nothing until the kernel says
+capability mode.
+.Fl -beryllium-confine-services Ns = Ns Ar name , Ns Ar name
+names further services to try, by the names
+.Fl -utility-sub-type
+carries.
+None of the three has been measured after its start, so one of them may
+end at its lockdown; the log says why.
+.Ss Processes that are not confined
+Decided on 12 November 2026, following what Chromium on Linux, OpenBSD's
+port and Firefox do.
+.Bl -tag -width "Storage service"
+.It Browser
+It holds the profile, the network and the windows of every tab.
+Other browsers leave this process unconfined too, except OpenBSD's port,
+whose limits still allow files, processes and the network.
+.It GPU
+The graphics driver opens devices and files by path whenever it likes,
+and NVIDIA's is closed code.
+.It Network service
+It makes every connection and keeps the cache by path.
+Confining it needs a broker for both, which is described in the plan and
+not scheduled.
+.It Storage service
+It opens the profile's databases by path.
+Chromium has a mode in which the browser opens them for it, which has not
+been tried here.
+.It Audio service
+It reaches the sound server by path; a policy is to follow the utilities.
+.It Video capture
+It opens cameras by path; Chromium leaves it unconfined on every desktop
+system.
+.It Other utilities
+A utility is confined once a survey shows that it needs nothing by path
+after its start.
+.El
 .Ss What is not covered
 The lockdown is experimental, off by default, and not yet a complete
 sandbox.
 .Bl -bullet
 .It
-The browser, GPU, network, storage and audio processes are not confined.
+The processes listed above are not confined.
+A page that takes over a renderer can still ask them for what they do
+for a renderer.
 .It
-What another child process sends a renderer directly is limited by the
-receiving renderer only.
-The GPU process, the network service and the storage service each hold
-a direct connection to a renderer.
+The lockdown has not been run on a Mesa graphics driver, nor on
+.Fx 14
+or 15.
 .It
-The browser does not yet ask the kernel whether a renderer is confined
-before giving it a page; the checks in
-.Sx EXAMPLES
-are made from outside.
+The switches that undo the lockdown work for any user.
 .El
 .Sh EXAMPLES
 Check that every renderer is in capability mode, shown by a
@@ -264,7 +338,11 @@ in the flags column:
 procstat -s $(pgrep -f -- --type=renderer)
 .Ed
 .Pp
-List the descriptors of one renderer with their Capsicum rights:
+List the descriptors of one renderer with their Capsicum rights.
+From 0.20.3.22 a locked-down renderer refuses this unless it was started
+traceable, with
+.Cm BerylliumRendererTraceable
+enabled beside the lockdown:
 .Bd -literal -offset indent
 procstat -fC 12345
 .Ed
@@ -295,8 +373,18 @@ The lockdown writes to the browser's log, which
 .Fl -enable-logging Ns = Ns Cm stderr
 sends to standard error.
 .Bl -diag
-.It "beryllium-sandbox: renderer pid=N capability_mode=1 closed_directories=N limited=N threads=N thread_names=..."
+.It "beryllium-sandbox: renderer pid=N capability_mode=1 closed_directories=N limited=N threads=N thread_names=... hardening=..."
 A renderer locked down.
+From 0.20.3.22 the line ends with what else the renderer gave up:
+.Li no-new-privileges ,
+.Li no-core ,
+.Li no-fork ,
+and
+.Li untraceable
+or
+.Li traceable .
+A utility service that locked down writes the same line with
+.Dq utility pid=N service=NAME .
 The line counts the directories it closed and the descriptors it limited,
 and gives the number and the names of the threads the process had at that
 point; there should be one,
@@ -320,6 +408,21 @@ Logged only with
 .It "beryllium-sandbox: ... bound for confined renderer pid N, which it may not hold: every right removed before sending"
 The browser was about to send a confined renderer a descriptor the policy
 has no kind for.
+.It "beryllium-sandbox: renderer pid=N invited M ms after its launch, in capability mode by the kernel's account"
+The browser sent the renderer its invitation, having waited for the
+kernel's answer.
+.It "beryllium-sandbox: renderer pid=N is not in capability mode by the kernel's account; ended before it was sent anything, M ms after its launch"
+The renderer did not lock down, and the browser ended it uninvited.
+.It "beryllium-sandbox: renderer pid=N refused in capability mode: syscall=S errno=E thread=T frames: ..."
+With
+.Cm BerylliumCapsicumTrap
+enabled: capability mode refused the renderer a system call.
+The frames are where the call was made and the return addresses above
+it, each as a module and an offset.
+The renderer goes on; before 0.20.3.22 the switch ended it.
+.It "beryllium-sandbox: this kernel has no capability mode ..."
+.It "beryllium-sandbox: on this kernel a process in capability mode can signal another process ..."
+The browser's check of the kernel at start failed.
 .El
 .Sh SEE ALSO
 .Xr beryllium 1 ,
@@ -331,6 +434,7 @@ has no kind for.
 .Xr cap_ioctls_limit 2 ,
 .Xr cap_rights_limit 2 ,
 .Xr memfd_create 2 ,
+.Xr procctl 2 ,
 .Xr capsicum 4 ,
 .Xr rights 4
 .Rs
@@ -358,11 +462,23 @@ The browser's check of each renderer with the kernel, the status page and
 the limits other processes apply before sending followed in 0.20.3.21.
 The status page of 0.20.3.21 had no word for a starting renderer and
 listed it as not attested; the word came with 0.20.3.22.
+0.20.3.22 also brought the calls a renderer makes beside capability mode,
+the invitation held until the kernel has answered, the check of the
+kernel at start, the report of refused calls, the experimental lockdown
+of utility services and the reasons for the processes that are not
+confined.
 .Sh CAVEATS
 A process in capability mode cannot write a core dump.
 To see which call a confined renderer was refused, enable
 .Cm BerylliumCapsicumTrap
 as well, or record the refusals with the test suite as shown above.
+.Pp
+A debugger or
+.Xr ktrace 1
+started on a renderer before its lockdown makes the lockdown fail, and
+the renderer ends, unless
+.Cm BerylliumRendererTraceable
+is enabled.
 .Pp
 The status table and
 .Sx What is not covered

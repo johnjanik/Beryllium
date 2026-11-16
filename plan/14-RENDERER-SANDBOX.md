@@ -1062,6 +1062,51 @@ FreeBSD test bed, so an increment must be worth a build.
    is the page's own code producing its own text, and it is not a build:
    whether `IsReady()` is false for exactly as long as intended is for
    the first run on 0.20.3.22 to show.
+   **Eight more patches written for 0.20.3.22, 16 November 2026, none
+   compiled** (18-REMAINING-WORK.md has each under its item):
+   - *What a renderer gives up beside ambient authority*
+     (`beryllium-renderer-hardening.patch`): `PROC_NO_NEW_PRIVS_CTL`,
+     `RLIMIT_CORE` 0, `RLIMIT_NPROC` 1 and `PROC_TRACE_CTL`, before
+     `cap_enter()`; a failed call ends the lockdown. The last one stops
+     `procstat -f` on a renderer, so the suite's classes that read
+     descriptors ask for `BerylliumRendererTraceable`, and one class
+     requires that the default cannot be read.
+   - *The last refused call* (`beryllium-capability-trap-report.patch`).
+     Read from FreeBSD's sources: `sysconf(_SC_NPROCESSORS_ONLN)` calls
+     `cpuset_getaffinity` with `CPU_LEVEL_ROOT`, which capability mode
+     refuses (it allows only the process's or thread's own set), and then
+     answers from the ELF auxiliary vector. `pthread_attr_get_np`, the
+     other candidate of the note under 0.20.3.10 above, asks for the
+     thread's own set, which is allowed, so V8's stack bounds are not it.
+     The bundled libc++ implements `hardware_concurrency()` with that
+     `sysconf`; abseil reads it once per process and keeps it; V8's own
+     use of the `sysconf` is in a function Chromium does not call. So the
+     warm-up reads abseil's count. That abseil is the caller is inferred
+     from the count of one a renderer. The same patch makes the trap
+     switch say: each refused call is written to the log with its return
+     addresses, and the renderer goes on.
+   - *No device descriptors for video*
+     (`beryllium-no-device-video-frames-under-lockdown.patch`).
+   - *The kernel, tried at start* (`beryllium-kernel-check.patch`).
+   - *Nothing sent before the kernel's answer*
+     (`beryllium-invite-after-lockdown.patch`), stage B.
+   - *Utility services* (`beryllium-utility-lockdown.patch`), an
+     experiment that is off by default, and the marker in every process.
+   - *The processes that are not confined*
+     (`beryllium-unconfined-processes.patch`): their reasons on the
+     status page, and no new privileges for every child.
+   What was checked without a build: the series applies to the pinned
+   sources; `base/posix/capsicum_rights.cc` as patched, and the lockdown's
+   code with `InitializeSandbox()`, type-check against FreeBSD 16's own
+   headers (a sysroot of 16.0-CURRENT, clang 19) with stand-ins for
+   Chromium's declarations; the trap handler was run on Linux with a
+   breakpoint in place of the kernel's trap and wrote its line with the
+   right functions; the status page's function was run with stand-ins
+   and its text is the unit tests' fixture. None of that is a build, and
+   three things in particular are for the first run to show: that
+   `RLIMIT_NPROC` 1 leaves a renderer's threads alone, that nothing in a
+   renderer's start waits for the browser before its lockdown, and that
+   abseil's is the only processor count read after it.
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch. What has to be true first, and how the default
    changes in two steps, is in 18-REMAINING-WORK.md section 3.

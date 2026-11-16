@@ -634,11 +634,12 @@ priority = "must"
 phase = 2
 implemented = "partial"
 built = "no"
-tested = "planned"
-where = ["patches/security/beryllium-capsicum-renderer.patch"]
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_nothing_is_refused_after_the_lockdown"]
+where = ["patches/security/beryllium-capsicum-renderer.patch", "patches/security/beryllium-capability-trap-report.patch"]
 planned_test = "functional suite with the sandbox on and off; the capsicum survey (run capsicum --diagnose) lists what must move before lockdown"
 source = ["plan/06-SECURITY-MODEL.md §2", "plan/06-SECURITY-MODEL.md §3.1", "plan/03-ARCHITECTURE.md §4.5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R5"]
-notes = "Survey of 4 Nov 2026 on the owner's machine: memory and shared-memory sysctls, uname, executable path and time zone are warmed up and cached; from the 2026 prototype (plan/15) also the message catalogue and libgcc_s. The lockdown marker separates start-up from later activity: in 0.20.3.4 the only call refused after it is cpuset_getaffinity (most likely libc sysconf(_SC_NPROCESSORS_ONLN), which falls back to the processor count); the open seen in 0.20.3.3 is gone. Time zones on 14.x and 15.x may fall back to UTC (plan/15 section 5)."
+notes = "Survey of 4 Nov 2026 on the owner's machine: memory and shared-memory sysctls, uname, executable path and time zone are warmed up and cached; from the 2026 prototype (plan/15) also the message catalogue and libgcc_s. The lockdown marker separates start-up from later activity: in 0.20.3.4 the only call refused after it is cpuset_getaffinity (most likely libc sysconf(_SC_NPROCESSORS_ONLN), which falls back to the processor count); the open seen in 0.20.3.3 is gone. Time zones on 14.x and 15.x may fall back to UTC (plan/15 section 5). Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: the one call every survey shows refused after the lockdown, cpuset_getaffinity, is libc's (sysconf(_SC_NPROCESSORS_ONLN) asks for the root CPU set first; read from FreeBSD's sources) and reaches a renderer through the bundled libc++'s hardware_concurrency(), which abseil reads once per process; the warm-up now reads abseil's count before the lockdown. That abseil is the caller is inferred. BerylliumCapsicumTrap now reports each refused call with its return addresses and lets the renderer go on, and class TrapReport fails on any such line, so the build says what is left."
 
 [[feature]]
 id = "S-REN-03"
@@ -832,9 +833,12 @@ title = "Kernel advisory check"
 need = "At start the browser compares the kernel with a list of security advisories (FreeBSD-SA-26:28.capsicum first) and warns on an unpatched kernel."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
+where = ["patches/security/beryllium-kernel-check.patch"]
 built = "no"
-tested = "planned"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_sandbox_page_matches_the_kernel"]
+notes = "Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: at start the browser forks a child that enters capability mode and tries kill(parent, 0) and sigqueue(parent, 0); a kernel without capability mode, or one where either call goes through (FreeBSD-SA-26:28.capsicum), is named in the log and on beryllium://sandbox. Made by trying, not by a table of versions, because a -CURRENT or locally built kernel does not carry the fix in its name. Not written: the message in the browser's window, and a table for advisories that cannot be tried."
 planned_test = "release gate: kernel advisories addressed; oracle proc.sigqueue_other"
 source = ["helium-freebsd-security-port-spec.md §13.2", "plan/08-TESTING-AND-VERIFICATION.md §3", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R8"]
 
@@ -922,13 +926,13 @@ phase = 2
 implemented = "partial"
 built = "no"
 tested = "passing"
-where = ["patches/security/beryllium-close-inherited-descriptors.patch", "patches/security/beryllium-sender-side-rights.patch", "patches/security/beryllium-descriptor-rights.patch", "patches/security/beryllium-sender-cut-on-child-links.patch", "patches/security/beryllium-receive-limits-switch.patch"]
+where = ["patches/security/beryllium-close-inherited-descriptors.patch", "patches/security/beryllium-sender-side-rights.patch", "patches/security/beryllium-descriptor-rights.patch", "patches/security/beryllium-sender-cut-on-child-links.patch", "patches/security/beryllium-receive-limits-switch.patch", "patches/security/beryllium-no-device-video-frames-under-lockdown.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_renderers_hold_no_directories_or_writable_files",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_the_senders_cut_alone_keeps_the_policy"]
 evidence = "owner, 0.20.3.4, 5 Nov 2026: the survey lists about 30 descriptors in a renderer instead of about 120, no directory or profile file, with or without the lockdown (the descriptor test still failed on shared memory, S-SHM-01); owner, 0.20.3.7, 5 Nov 2026: the descriptor test passes with and without the lockdown; owner, 0.20.3.13, 9 Nov 2026, lockdown on: the browser cut 1 to 88 descriptors per renderer before sending (VLOG cut lines), none refused outright, every renderer read within the policy; owner, 0.20.3.18, 12 Nov 2026: passes in all seven suite runs of the day; owner, 0.20.3.19 (the code of 0.20.3.18 built again), 12 Nov 2026: passes in both suite runs, one without and one with the lockdown; owner, test build of 0.20.3.21 (compiler cache, not the released package), 15 Nov 2026, lockdown run: the gate passes with 394 log lines each accounted for; 350 cuts, 349 by the browser and 1 by the GPU process, the first by a process other than the browser; with the receiver's limits off (SenderAlone) 6 renderers said so and the 5 read held 20 to 36 descriptors, none outside the policy; owner, 0.20.3.21 as released (built again without the compiler cache), 16 Nov 2026, lockdown run: the gate passes with 315 log lines each accounted for, 275 cuts of which 1 by the GPU process, and SenderAlone passes"
 source = ["plan/06-SECURITY-MODEL.md §4", "plan/03-ARCHITECTURE.md §4.2"]
-notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed in 0.20.3.4 with close() and closefrom(2) between fork and exec. Rights limits on what the launcher passes: only shared memory so far (S-SHM-02, 0.20.3.5); from 0.20.3.9 the receiving renderer cuts the rest itself (beryllium-descriptor-rights.patch), which is not a boundary; from 0.20.3.13 the browser cuts every descriptor it sends a renderer launched with the lockdown on, before sendmsg (beryllium-sender-side-rights.patch: the launcher registers the pid as a confined peer, Mojo's transport cuts by kind; a writable File System Access handle keeps a writable kind). Still receiver-limited only: what other children send a renderer over the transports the browser introduced between them (in the survey of 10 Nov 2026 one renderer held direct sockets to the GPU process, the network service and the storage service); and the sender alone is not yet verified with the receiver's limit off. Design, tests and red-team plan: plan/18 section 1. In 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026): the browser marks each end of a link it makes between two children when the other end is a confined renderer, and the GPU process, the network service and the storage service then cut what they send over it as the browser does; and a test switch (BerylliumReceiveSideLimits off) under which a confined renderer does nothing to what it receives, so that the suite can require the policy from the senders alone (review finding BER-05). Still open from plan/18 section 1: the list of descriptor passing outside Mojo transports, and the committed table of which process types may hold a link to a renderer."
+notes = "On FreeBSD /dev/fd lists only 0-2 without fdescfs, so children inherited everything the browser had open: the 0.20.3.3 survey found ~120 descriptors in a renderer, including /, /usr, /usr/local and writable profile databases. Fixed in 0.20.3.4 with close() and closefrom(2) between fork and exec. Rights limits on what the launcher passes: only shared memory so far (S-SHM-02, 0.20.3.5); from 0.20.3.9 the receiving renderer cuts the rest itself (beryllium-descriptor-rights.patch), which is not a boundary; from 0.20.3.13 the browser cuts every descriptor it sends a renderer launched with the lockdown on, before sendmsg (beryllium-sender-side-rights.patch: the launcher registers the pid as a confined peer, Mojo's transport cuts by kind; a writable File System Access handle keeps a writable kind). Still receiver-limited only: what other children send a renderer over the transports the browser introduced between them (in the survey of 10 Nov 2026 one renderer held direct sockets to the GPU process, the network service and the storage service); and the sender alone is not yet verified with the receiver's limit off. Design, tests and red-team plan: plan/18 section 1. In 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026): the browser marks each end of a link it makes between two children when the other end is a confined renderer, and the GPU process, the network service and the storage service then cut what they send over it as the browser does; and a test switch (BerylliumReceiveSideLimits off) under which a confined renderer does nothing to what it receives, so that the suite can require the policy from the senders alone (review finding BER-05). Still open from plan/18 section 1: the list of descriptor passing outside Mojo transports, and the committed table of which process types may hold a link to a renderer. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: a renderer in capability mode keeps video and camera frames out of GPU memory buffers on every driver (plan/18 section 1.3 step 4), so no sender is asked to pass it a device descriptor; on the owner's NVIDIA machine that path was off already."
 
 [[feature]]
 id = "S-IPC-02"
@@ -988,9 +992,12 @@ title = "Utility, PDF, print and media processes"
 need = "Utility processes (PDF, print, data decoder, media) are confined like renderers, each with its own descriptor allowlist."
 priority = "must"
 phase = 3
-implemented = "todo"
+implemented = "partial"
+where = ["patches/security/beryllium-utility-lockdown.patch"]
 built = "no"
-tested = "planned"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_confined_utilities_are_confined"]
+notes = "Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: an experiment behind BerylliumCapsicumUtilities, off by default. The browser decides which utility services are confined (three candidates by name: the data decoder, the unzipper, the file patcher; others with --beryllium-confine-services), tells each on its command line, cuts what it sends it, and holds its invitation until the kernel says capability mode; the utility locks down as a renderer does. The candidates are not measured: no survey has seen a short-lived utility after its start. Every process now writes the survey's marker with its type and service, which is how that will be measured. PDF, print and media utilities are not on the list."
 planned_test = "sandbox suite: every utility process of a class claimed sandboxed is in capability mode; one test per class"
 source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §5"]
 
@@ -1001,9 +1008,11 @@ title = "GPU process"
 need = "The GPU process is confined with pre-opened device nodes and a measured ioctl allowlist, or listed as unconfined with the NVIDIA residual risk published."
 priority = "must"
 phase = 3
-implemented = "todo"
+implemented = "partial"
+where = ["patches/security/beryllium-unconfined-processes.patch", "man/beryllium-sandbox.7"]
 built = "no"
 tested = "planned"
+notes = "Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: the second half of the need, as decided on 12 Nov 2026 for NVIDIA's driver: the GPU process is listed as not confined, with the reason, on beryllium://sandbox and in beryllium-sandbox(7), and it gives up new privileges. The plan's other mitigations for it (no forking, no tracing, a clean environment, no X connection under Wayland) are not written; each needs a run on the NVIDIA driver first."
 planned_test = "sandbox suite per class; attacker hook in the GPU process; ktrace across workloads"
 source = ["helium-freebsd-security-port-spec.md §5", "plan/06-SECURITY-MODEL.md §5", "plan/10-RISKS-AND-OPEN-QUESTIONS.md R10"]
 
@@ -1082,10 +1091,11 @@ priority = "must"
 phase = 3
 implemented = "partial"
 built = "no"
-tested = "none"
-where = ["plan/03-ARCHITECTURE.md"]
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_sandbox_page_matches_the_kernel"]
+where = ["plan/03-ARCHITECTURE.md", "patches/security/beryllium-unconfined-processes.patch", "man/beryllium-sandbox.7"]
 source = ["plan/06-SECURITY-MODEL.md §5", "plan/03-ARCHITECTURE.md §4.2"]
-notes = "The target table exists in plan/03 section 4.2. Which processes get a policy and which a statement was decided by the owner on 12 Nov 2026 (plan/18 sections 4.7 and 8.3): a policy for compute-only utilities, the storage service and the CDM; a statement for the browser, the network service, video capture, the OS print backend and the GPU process with NVIDIA's driver; audio a statement now and a policy later."
+notes = "The target table exists in plan/03 section 4.2. Which processes get a policy and which a statement was decided by the owner on 12 Nov 2026 (plan/18 sections 4.7 and 8.3): a policy for compute-only utilities, the storage service and the CDM; a statement for the browser, the network service, video capture, the OS print backend and the GPU process with NVIDIA's driver; audio a statement now and a policy later. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: beryllium://sandbox has one line for each kind of process that is not confined (browser, renderer while the lockdown is off, GPU, network service, storage service, audio service, video capture, other utilities) with the reason, as decided on 12 Nov 2026; the manual has the same list. The suite requires a line for every unconfined process the page lists, and that every process is confined or not as the browser means it to be. Not written: the table of what each unconfined process may hold (plan/18 section 4.4)."
 
 [[feature]]
 id = "S-HRD-01"
@@ -1094,9 +1104,12 @@ title = "Children cannot be traced or gain privileges"
 need = "Each confined child disables tracing (PROC_TRACE_CTL) and sets no-new-privileges before cap_enter."
 priority = "must"
 phase = 2
-implemented = "todo"
+implemented = "partial"
+where = ["patches/security/beryllium-renderer-hardening.patch", "patches/security/beryllium-unconfined-processes.patch"]
 built = "no"
-tested = "planned"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_a_locked_down_renderer_cannot_be_read", "freebsd/tests/browser/tests/test_50_sandbox.py::test_children_cannot_gain_privileges", "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log"]
+notes = "Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: at its lockdown a renderer (and a utility service that is locked down) sets PROC_NO_NEW_PRIVS_CTL and disables tracing with PROC_TRACE_CTL, unless BerylliumRendererTraceable leaves tracing on for a test run; a failed call ends the lockdown. Every other child sets PROC_NO_NEW_PRIVS_CTL where its sandbox would begin. The suite requires that procstat cannot read a default locked-down renderer's descriptors and that proccontrol reports no-new-privileges for every child; a ptrace attempt is the oracle's probe, not the suite's."
 planned_test = "sandbox suite: ptrace of a child fails; oracle hard.trace_disable, hard.no_new_privs"
 source = ["helium-freebsd-security-port-spec.md §6.1", "plan/06-SECURITY-MODEL.md §6"]
 
@@ -1122,11 +1135,12 @@ priority = "must"
 phase = 2
 implemented = "partial"
 built = "v0.20.3.1-1"
-tested = "planned"
+tested = "written"
+tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log"]
 planned_test = "sandbox suite: fork denied, no core dumps; oracle proc.fork_nproc1"
-where = ["freebsd/ports/www/beryllium/files/beryllium.in"]
+where = ["freebsd/ports/www/beryllium/files/beryllium.in", "patches/security/beryllium-renderer-hardening.patch"]
 source = ["plan/06-SECURITY-MODEL.md §6", "RT-15"]
-notes = "The wrapper sets ulimit -c 0 for the whole browser; the per-process limits are not done."
+notes = "The wrapper sets ulimit -c 0 for the whole browser; the per-process limits are not done. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: RLIMIT_NPROC 1 and RLIMIT_CORE 0 before cap_enter(), named in the lockdown's log line (no-fork, no-core), which the gate requires of every renderer. That fork then fails is the oracle's probe (proc.fork_nproc1); the suite does not make a renderer fork. Not verified on a machine: that the limit leaves a renderer's threads alone."
 
 [[feature]]
 id = "S-HRD-04"
@@ -1205,13 +1219,13 @@ phase = 2
 implemented = "partial"
 built = "v0.20.3.21"
 tested = "passing"
-where = ["patches/security/beryllium-kernel-attested-renderer.patch"]
+where = ["patches/security/beryllium-kernel-attested-renderer.patch", "patches/security/beryllium-invite-after-lockdown.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_an_unconfined_renderer_is_ended",
          "freebsd/tests/browser/tests/test_50_sandbox.py::test_lockdown_log",
          "freebsd/tools/tests/test_sandbox_status.py"]
 evidence = "owner, test build of 0.20.3.21 (compiler cache, not the released package), 15 Nov 2026, lockdown run: the browser attested 8 renderers, one for each that reported its lockdown, and ended none; in a browser with --no-sandbox and the lockdown on it ended 13, attested none, and the test's page was killed before it answered a script; second lockdown run the same evening: 8 attested and none ended, and all 13 ended under --no-sandbox again; owner, 0.20.3.21 as released (built again without the compiler cache), 16 Nov 2026, lockdown run: 7 attested, none ended, and all 13 ended under --no-sandbox"
 source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5", "RT-04"]
-notes = "Stage A of plan/18 section 2, in 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026): when a renderer the browser launched with the lockdown on becomes ready, the browser reads its capability mode from the kernel (kern.proc.pid) and ends it unless the answer is yes, whatever the renderer was told (--no-sandbox included). Still open: the messages queued before the renderer connected, which it can read in the moment before it is ended (stage B holds the invitation until the kernel says yes), and the standalone test of the kernel flag on 14, 15 and 16."
+notes = "Stage A of plan/18 section 2, in 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026): when a renderer the browser launched with the lockdown on becomes ready, the browser reads its capability mode from the kernel (kern.proc.pid) and ends it unless the answer is yes, whatever the renderer was told (--no-sandbox included). Still open: the messages queued before the renderer connected, which it can read in the moment before it is ended (stage B holds the invitation until the kernel says yes), and the standalone test of the kernel flag on 14, 15 and 16. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: stage B. The launcher holds the Mojo invitation until the kernel says the renderer is in capability mode, asking every 3 ms, and ends a renderer that has exited, that the kernel does not answer for, or that is not confined after ten seconds (at once under --no-sandbox) without having sent it anything. The gate requires that every attested renderer was invited first and that nothing was cut for a renderer before its invitation; the log has the time from launch to lockdown. Not verified on a machine: that nothing in a renderer's start waits for the browser before its lockdown."
 
 [[feature]]
 id = "S-STA-02"
@@ -1240,12 +1254,12 @@ phase = 2
 implemented = "done"
 built = "v0.20.3.21"
 tested = "passing"
-where = ["patches/security/beryllium-sandbox-status-page.patch"]
+where = ["patches/security/beryllium-sandbox-status-page.patch", "patches/security/beryllium-kernel-check.patch", "patches/security/beryllium-unconfined-processes.patch"]
 tests = ["freebsd/tests/browser/tests/test_50_sandbox.py::test_sandbox_page_matches_the_kernel",
          "freebsd/tools/tests/test_sandbox_status.py"]
 evidence = "owner, test build of 0.20.3.21 (compiler cache, not the released package), 15 Nov 2026: without the lockdown the page's 15 lines all agree with procstat -s; with it the test failed on two renderers the page listed while they were starting (asked to lock down, not yet confined, not yet attested), one of which was confined and the other gone when procstat ran. The page was right about the instant and the test at fault: it now judges such a renderer by a later reading of the page, and has not been rerun on the build. The page should say starting for a renderer that is not ready, which is for the next build; rerun with the corrected test the same evening, lockdown on: passes, one renderer caught starting (pid 68788) and confined and attested in a later reading, every other line agreeing with procstat at once; owner, 0.20.3.21 as released (built again without the compiler cache), 16 Nov 2026: passes without the lockdown and with it (two renderers caught starting, each confined and attested in a later reading)"
 source = ["plan/06-SECURITY-MODEL.md §10", "plan/03-ARCHITECTURE.md §5"]
-notes = "In 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026). The page is written by the browser each time it is loaded, as plain lines and with no script: one line a process with its capability mode by the kernel, whether a lockdown was requested and whether the check at connect passed; counts; the state of the lockdown and of the switches that weaken it. Chromium's own page and its script are not used on FreeBSD. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: a renderer asked to lock down that is not ready and not attested is listed as not yet (starting) and counted apart in the summary, where 0.20.3.21 lists it as attested no and counts it with the rest; the suite reads both pages."
+notes = "In 0.20.3.21 (written 15 Nov 2026, released 16 Nov 2026). The page is written by the browser each time it is loaded, as plain lines and with no script: one line a process with its capability mode by the kernel, whether a lockdown was requested and whether the check at connect passed; counts; the state of the lockdown and of the switches that weaken it. Chromium's own page and its script are not used on FreeBSD. Written 16 Nov 2026 for 0.20.3.22 and not compiled yet: a renderer asked to lock down that is not ready and not attested is listed as not yet (starting) and counted apart in the summary, where 0.20.3.21 lists it as attested no and counts it with the rest; the suite reads both pages. The same day, also not compiled: the page carries the browser's check of the kernel, a line for each kind of process that is not confined with the reason, and the state of a utility service the browser has told to lock down."
 
 [[feature]]
 id = "S-STA-04"
