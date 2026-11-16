@@ -7,6 +7,7 @@ import collections
 import os
 import shutil
 import signal
+import subprocess
 import time
 import unittest
 
@@ -26,6 +27,20 @@ BUILD_22 = (0, 20, 3, 22)
 capability_mode = capsicum.capability_mode
 
 
+def no_new_privileges(pid, run=None):
+    """What proccontrol(1) says of pid's PROC_NO_NEW_PRIVS state: "enabled",
+    "disabled", or "" when it cannot say (no such tool, no such process).
+    The kernel answers this for any process the asker may see, so a
+    renderer that has disabled tracing of itself answers too."""
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True,
+                                             timeout=10).stdout)
+    try:
+        said = run(["proccontrol", "-m", "nonewprivs", "-q", "-p", str(pid)]).strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return said if said in ("enabled", "disabled") else ""
+
+
 class Processes(BrowserTest):
     def test_process_list(self):
         """Record the browser's processes."""
@@ -35,6 +50,35 @@ class Processes(BrowserTest):
         types = {p["type"] for p in procs}
         self.assertIn("browser", types)
         self.assertIn("renderer", types)
+
+
+class ChildPrivileges(BrowserTest):
+    """From 0.20.3.22 every child process, confined or not and with or
+    without the lockdown, sets PROC_NO_NEW_PRIVS_CTL where its sandbox would
+    begin (S-HRD-01): an exec of a set-user-ID file from it gains nothing.
+    The browser process does not; it starts helper programs."""
+
+    NEEDS_FREEBSD = True
+
+    def test_children_cannot_gain_privileges(self):
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        time.sleep(1.0)
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        said = {p["id"]: (p["type"], no_new_privileges(p["id"])) for p in procs}
+        self.note("\n".join(f"{kind:<10} pid {pid}: new privileges "
+                            f"{ {'enabled': 'ruled out', 'disabled': 'possible'}.get(state, 'not read') }"
+                            for pid, (kind, state) in sorted(said.items())))
+        children = {pid: v for pid, v in said.items() if v[0] != "browser" and v[1]}
+        if not children:
+            self.skipTest("proccontrol(1) said nothing about any child process")
+        version = capsicum.installed_version()
+        if version and version < BUILD_22 and not any(s == "enabled" for _, s in children.values()):
+            self.skipTest("this build's children do not give up new privileges "
+                          "(that comes with 0.20.3.22)")
+        open_to_it = sorted(f"{kind} pid {pid}" for pid, (kind, state) in children.items()
+                            if state != "enabled")
+        self.assertEqual(open_to_it, [], "child processes that could still gain privileges "
+                                         "by executing a set-user-ID file")
 
 
 class Gate(BrowserTest):
@@ -301,7 +345,7 @@ class SandboxHonesty(Gate):
         # from 0.20.3.13, the first build to log what the browser cuts, was
         # less than the log: three or four of some eight lockdown reports.)
         lines = self.browser.log_lines("beryllium-sandbox", limit=None)
-        locked = [l for l in lines if "capability_mode=1" in l]
+        locked = capsicum.renderer_lockdown_lines(lines)
         received = [l for l in lines if "beryllium-sandbox: received" in l]
         failed = [l for l in lines if "could not" in l]
         # One line a pair. The first pair at each place in each process is
@@ -660,6 +704,87 @@ class TrapReport(Gate):
                                  "(BerylliumCapsicumTrap)")
         self.assertEqual(described, [], "calls capability mode refused a renderer after its "
                                         "lockdown, with the code that made each")
+
+
+class ConfinedUtilities(Gate):
+    """Utility services locked down as renderers are (from 0.20.3.22, an
+    experiment behind BerylliumCapsicumUtilities; S-PRC-01). The browser
+    tells a service on its list to lock down, cuts what it sends it, and
+    sends it nothing until the kernel says capability mode. Which services
+    can stand it is not known yet: none has been surveyed after its start.
+    So this class records, with the trap report on, which of them started,
+    whether each locked down, and every call each was refused, with the
+    code that made it. It fails only on what is wrong whatever the answer:
+    a utility that says it locked down and is not in capability mode by
+    the kernel, or one the browser invited before that."""
+
+    BROWSER_ARGS = Gate.BROWSER_ARGS + (
+        "--enable-features=BerylliumCapsicumUtilities,BerylliumCapsicumTrap",)
+    SETTLE_SECONDS = 4.0
+
+    @classmethod
+    def setUpClass(cls):
+        version = capsicum.installed_version()
+        if version and version < BUILD_22:
+            raise unittest.SkipTest("utility services are confined from 0.20.3.22, and the "
+                                    "trap switch ends a process at its first refused call "
+                                    "before that")
+        super().setUpClass()
+
+    def test_confined_utilities_are_confined(self):
+        if not self.strict():
+            self.skipTest("the lockdown was not requested (run --lockdown)")
+        fixtures = self.ctx.fixtures()
+        for name in ("busy.html", "text.html"):
+            self.browser.new_page(fixtures.url(name))
+        # A page that names a search description makes the browser fetch it
+        # and parse its XML in the data decoder service, where that is not
+        # switched off.
+        self.ctx.add_fixture("osdd.xml", OPENSEARCH_DESCRIPTION)
+        self.browser.new_page(self.ctx.add_fixture(
+            "osdd.html", '<!doctype html><title>search</title><link rel="search" '
+            'type="application/opensearchdescription+xml" title="t" href="osdd.xml">'))
+        time.sleep(self.SETTLE_SECONDS)
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
+        locked, failed, ended = capsicum.confined_utilities(lines)
+        modes = capsicum.capability_modes(sorted(locked)) if locked else {}
+        calls = [c for c in capsicum.refused_calls(lines) if c["pid"] in locked]
+        described = capsicum.describe_refused(calls, DIRECT_BINARY)
+        word = {True: "yes", False: "no", None: "unreadable"}
+        self.note(
+            "\n".join(
+                [f"utility {pid} ({u['service']}): locked down with {u['threads']} threads; "
+                 f"capability mode by procstat: {word.get(modes.get(pid), 'gone')}; invited "
+                 + (f"{u['invited_ms']} ms after its launch" if u["invited_ms"] is not None
+                    else "with no line saying when")
+                 for pid, u in sorted(locked.items())]
+                + [f"utility {pid}: ended at its lockdown: {why}" for pid, why in
+                   sorted(failed.items())]
+                + [f"utility {pid}: ended by the browser before it was sent anything"
+                   for pid in sorted(ended)]
+                + (["what the confined utilities were refused:"] + described if described
+                   else [])) or "no utility service on the browser's list started in this run")
+        if not locked and not failed and not ended:
+            self.skipTest("no utility service on the browser's list started in this run, "
+                          "so there is nothing to check")
+        problems = [f"utility {pid} ({u['service']}) says it locked down and procstat says "
+                    f"capability mode {word.get(modes.get(pid))}"
+                    for pid, u in sorted(locked.items())
+                    if modes.get(pid) is not True and modes.get(pid) != "gone"]
+        problems += [f"utility {pid} ({u['service']}) locked down and no line says the browser "
+                     "invited it after that" for pid, u in sorted(locked.items())
+                     if u["invited_ms"] is None]
+        self.assertEqual(problems, [], "a utility service the browser confines is not "
+                                       "confined as the browser believes")
+
+
+OPENSEARCH_DESCRIPTION = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">'
+    "<ShortName>Beryllium test</ShortName><Description>A search description for the "
+    "sandbox tests</Description>"
+    '<Url type="text/html" template="http://127.0.0.1/?q={searchTerms}"/>'
+    "</OpenSearchDescription>")
 
 
 class UnconfinedRenderer(BrowserTest):

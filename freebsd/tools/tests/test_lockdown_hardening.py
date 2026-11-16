@@ -151,10 +151,10 @@ class Refused(unittest.TestCase):
                                                   run=symbolizer)
         self.assertEqual(len(described), 2)
         self.assertTrue(described[0].startswith(
-            "cpuset_getaffinity (ECAPMODE), 3 times in 2 renderers: libc.so.7+0x9d2ca < "
+            "cpuset_getaffinity (ECAPMODE), 3 times in 2 processes: libc.so.7+0x9d2ca < "
             "libc.so.7+0x8f1b0 < Function"), described[0])
         self.assertTrue(described[0].endswith("< ?+0x8204b1c40"), described[0])
-        self.assertTrue(described[1].startswith("syscall 5 (ECAPMODE), 1 times in 1 renderers"),
+        self.assertTrue(described[1].startswith("syscall 5 (ECAPMODE), 1 times in 1 processes"),
                         described[1])
         # only the browser's own frames go to the symbolizer, each once
         self.assertEqual(asked, [["0x111", "0x5a1c100", "0x5a1c2f0"]])
@@ -437,7 +437,7 @@ class TrapReportTest(unittest.TestCase):
         t = self.case(LOG + [REPORTING, REFUSED])
         with self.assertRaises(AssertionError) as e:
             t.test_nothing_is_refused_after_the_lockdown()
-        self.assertIn("cpuset_getaffinity (ECAPMODE), 1 times in 1 renderers", str(e.exception))
+        self.assertIn("cpuset_getaffinity (ECAPMODE), 1 times in 1 processes", str(e.exception))
         self.assertIn("libc.so.7+0x9d2ca", str(e.exception))
 
     def test_a_run_in_which_no_renderer_reports_proves_nothing(self):
@@ -445,6 +445,170 @@ class TrapReportTest(unittest.TestCase):
             self.case(LOG).test_nothing_is_refused_after_the_lockdown()
         with build((0, 20, 3, 21)), self.assertRaises(unittest.SkipTest):
             self.case(LOG).test_nothing_is_refused_after_the_lockdown()
+
+
+def utility_locked(pid, service="data_decoder.mojom.DataDecoderService", threads=1):
+    return line(pid, f"utility pid={pid} service={service} capability_mode=1 "
+                     f"closed_directories=0 limited=7 threads={threads} "
+                     f"thread_names=CrUtilityMain hardening={TRACEABLE}")
+
+
+def utility_invited(pid, ms=140):
+    return line(100, f"utility pid={pid} invited {ms} ms after its launch, in capability mode "
+                     "by the kernel's account")
+
+
+class Utilities(unittest.TestCase):
+    def test_a_confined_utility_is_read_apart_from_the_renderers(self):
+        log = LOG + [utility_locked(401), utility_invited(401, 140),
+                     utility_locked(402, "unzip.mojom.Unzipper"),
+                     line(403, "utility pid=403 could not enter capability mode: fd 9: a "
+                               "writable file"),
+                     line(100, "utility pid=404 is not in capability mode by the kernel's "
+                               "account; ended before it was sent anything, 10003 ms after "
+                               "its launch")]
+        locked, failed, ended = capsicum.confined_utilities(log)
+        self.assertEqual(locked, {
+            401: {"service": "data_decoder.mojom.DataDecoderService", "threads": 1,
+                  "invited_ms": 140},
+            402: {"service": "unzip.mojom.Unzipper", "threads": 1, "invited_ms": None}})
+        self.assertEqual(failed, {403: "fd 9: a writable file"})
+        self.assertEqual(ended, {404})
+        # the renderers' readers see the renderer only
+        self.assertEqual(len(capsicum.renderer_lockdown_lines(log)), 1)
+        self.assertEqual(capsicum.locked_pids(log), [201])
+        self.assertEqual(capsicum.invitations(log), {})
+        self.assertEqual(capsicum.hardening_at_lockdown(
+            capsicum.renderer_lockdown_lines(log)), {})
+
+    def test_a_utilitys_refused_calls_are_read_with_the_renderers(self):
+        text = REFUSED.replace("renderer pid=201", "utility pid=401")
+        self.assertEqual(capsicum.refused_calls([text])[0]["pid"], 401)
+        reporting = line(401, "utility pid=401 reports refused calls (BerylliumCapsicumTrap), "
+                              "60 modules listed")
+        self.assertTrue(capsicum.TRAP_REPORTING_RE.search(reporting))
+
+    def test_the_patch_writes_these_lines(self):
+        said = patched_text(patch_text("beryllium-utility-lockdown.patch"))
+        for piece in ('"utility"', '"renderer"', " service=", "BerylliumCapsicumUtilities",
+                      '"beryllium-lockdown"', '"beryllium-confine-services"',
+                      "data_decoder.mojom.DataDecoderService", "unzip.mojom.Unzipper",
+                      "patch.mojom.FilePatcher"):
+            self.assertTrue(piece in said or piece.strip('"') in said,
+                            f"the patch does not write {piece}")
+        self.assertIn("BASE_FEATURE(kBerylliumCapsicumUtilities, FEATURE_DISABLED_BY_DEFAULT)",
+                      said)
+        other = patched_text(patch_text("beryllium-unconfined-processes.patch"))
+        self.assertIn("BASE_FEATURE(kBerylliumChildNoNewPrivileges, "
+                      "base::FEATURE_ENABLED_BY_DEFAULT)", other)
+        for name in ("beryllium-utility-lockdown.patch", "beryllium-unconfined-processes.patch"):
+            code = patch_text(name).split("\n--- a/", 1)[1]
+            added = patched_text(code, added_only=True)
+            # the one failure line a utility's lockdown shares with a renderer's
+            self.assertEqual(added.count("could not"), added.count("could not enter capability "
+                                                                   "mode"), name)
+
+    def test_the_class_asks_for_the_feature_the_trap_and_a_traceable_process(self):
+        merged = merge_feature_switches(LOCKDOWN + list(sandbox.ConfinedUtilities.BROWSER_ARGS))
+        self.assertEqual([a for a in merged if a.startswith("--enable-features=")],
+                         ["--enable-features=BerylliumCapsicumRenderer,"
+                          "BerylliumRendererTraceable,BerylliumCapsicumUtilities,"
+                          "BerylliumCapsicumTrap"])
+
+
+class ConfinedUtilitiesTest(unittest.TestCase):
+    METHOD = "test_confined_utilities_are_confined"
+
+    def case(self, log, args=LOCKDOWN):
+        t = gate_case(sandbox.ConfinedUtilities, self.METHOD, args, log=log, processes=PROCS)
+        t.SETTLE_SECONDS = 0
+        return t
+
+    def test_no_browser_is_started_on_an_older_build(self):
+        with build((0, 20, 3, 21)), \
+                mock.patch.object(sandbox.Gate, "setUpClass") as start, \
+                self.assertRaises(unittest.SkipTest):
+            sandbox.ConfinedUtilities.setUpClass()
+        start.assert_not_called()
+
+    def test_nothing_to_check_when_no_listed_service_started(self):
+        with self.assertRaises(unittest.SkipTest):
+            self.case(LOG).test_confined_utilities_are_confined()
+
+    def test_passes_when_each_is_confined_by_the_kernel_and_was_invited_after(self):
+        t = self.case(LOG + [utility_locked(401), utility_invited(401)])
+        with modes_are({401: True}):
+            t.test_confined_utilities_are_confined()
+        self.assertIn("utility 401 (data_decoder.mojom.DataDecoderService): locked down with 1 "
+                      "threads; capability mode by procstat: yes; invited 140 ms",
+                      t.note.call_args[0][0])
+
+    def test_a_utility_that_has_ended_since_is_not_a_failure(self):
+        t = self.case(LOG + [utility_locked(401), utility_invited(401)])
+        with modes_are({}):
+            t.test_confined_utilities_are_confined()
+
+    def test_fails_when_the_kernel_does_not_have_it_in_capability_mode(self):
+        t = self.case(LOG + [utility_locked(401), utility_invited(401)])
+        with modes_are({401: False}), self.assertRaises(AssertionError) as e:
+            t.test_confined_utilities_are_confined()
+        self.assertIn("says it locked down and procstat says capability mode no",
+                      str(e.exception))
+
+    def test_fails_when_no_line_says_it_was_invited_after_its_lockdown(self):
+        t = self.case(LOG + [utility_locked(401)])
+        with modes_are({401: True}), self.assertRaises(AssertionError) as e:
+            t.test_confined_utilities_are_confined()
+        self.assertIn("no line says the browser invited it after that", str(e.exception))
+
+    def test_what_a_utility_was_refused_is_listed_and_does_not_fail_the_record(self):
+        refused = REFUSED.replace("renderer pid=201", "utility pid=401")
+        t = self.case(LOG + [utility_locked(401), utility_invited(401), refused])
+        with modes_are({401: True}):
+            t.test_confined_utilities_are_confined()
+        self.assertIn("what the confined utilities were refused:", t.note.call_args[0][0])
+        self.assertIn("cpuset_getaffinity (ECAPMODE)", t.note.call_args[0][0])
+
+
+class ChildPrivilegesTest(unittest.TestCase):
+    METHOD = "test_children_cannot_gain_privileges"
+
+    def case(self, states):
+        t = gate_case(sandbox.ChildPrivileges, self.METHOD, [], processes=PROCS)
+        self.states = mock.patch.object(sandbox, "no_new_privileges",
+                                        side_effect=lambda pid: states.get(pid, ""))
+        return t
+
+    def run_case(self, t):
+        with self.states, mock.patch.object(sandbox.time, "sleep"):
+            t.test_children_cannot_gain_privileges()
+
+    def test_proccontrols_answer_is_read(self):
+        self.assertEqual(sandbox.no_new_privileges(1, run=lambda cmd: "enabled\n"), "enabled")
+        self.assertEqual(sandbox.no_new_privileges(1, run=lambda cmd: "disabled\n"), "disabled")
+        self.assertEqual(sandbox.no_new_privileges(1, run=lambda cmd: "usage: ..."), "")
+
+        def missing(cmd):
+            raise OSError("no proccontrol")
+        self.assertEqual(sandbox.no_new_privileges(1, run=missing), "")
+
+    def test_passes_when_every_child_has_given_them_up(self):
+        self.run_case(self.case({100: "disabled", 201: "enabled", 300: "enabled",
+                                 301: "enabled"}))
+
+    def test_fails_when_a_child_has_not(self):
+        with build((0, 20, 3, 22)), self.assertRaises(AssertionError) as e:
+            self.run_case(self.case({100: "disabled", 201: "enabled", 300: "disabled",
+                                     301: "enabled"}))
+        self.assertIn("GPU pid 300", str(e.exception))
+
+    def test_an_older_build_is_skipped(self):
+        with build((0, 20, 3, 21)), self.assertRaises(unittest.SkipTest):
+            self.run_case(self.case({100: "disabled", 201: "disabled", 300: "disabled"}))
+
+    def test_skipped_where_proccontrol_says_nothing(self):
+        with self.assertRaises(unittest.SkipTest):
+            self.run_case(self.case({}))
 
 
 if __name__ == "__main__":

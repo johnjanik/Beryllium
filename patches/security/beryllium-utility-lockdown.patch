@@ -1,0 +1,371 @@
+Beryllium: named utility services can be locked down as renderers are, and every process marks where its sandbox would begin
+
+Purpose: plan/18 section 4.2, tier 1 (feature matrix S-PRC-01, S-PRC-08;
+  decided 12 November 2026: a policy for the utilities that only compute,
+  next after the renderer). Some utility services take bytes over Mojo and
+  give bytes back. They can use the renderer's lockdown unchanged; the work
+  is knowing which they are, by service name, since sandbox type is too
+  coarse (the storage service has the same type and holds the profile's
+  databases open for writing).
+  The browser decides, the utility is told, and the kernel is asked:
+  - base/posix/capsicum_rights.{h,cc}: the feature
+    BerylliumCapsicumUtilities, off by default;
+    BrowserConfinesUtility(service), true with the feature on for three
+    candidates (data_decoder.mojom.DataDecoderService,
+    unzip.mojom.Unzipper, patch.mojom.FilePatcher) and for any service
+    named in the browser's test switch --beryllium-confine-services=a,b,
+    which is how a service is tried before it joins the list.
+  - content/browser/child_process_launcher_helper.{h,cc}: for such a
+    utility the launcher appends --beryllium-lockdown to its command line,
+    registers it as a confined peer (so what it is sent is cut, as for a
+    renderer) and holds its invitation until the kernel says capability
+    mode (beryllium-invite-after-lockdown.patch; for a utility that order
+    cannot be switched off, since it has no other check). A utility that
+    does not lock down is ended without having been sent anything. The
+    browser records it as attested when it invites it.
+  - sandbox/policy/freebsd/sandbox_freebsd.cc: a utility that finds
+    --beryllium-lockdown on its command line locks down in
+    InitializeSandbox(), which utility_main calls before any thread is
+    made: the same warm-up, descriptor sweep, hardening calls and
+    cap_enter() as a renderer, and the same end if any of it fails. Its
+    log lines say "utility pid=N service=NAME" where a renderer's say
+    "renderer pid=N", and the trap report carries the same word.
+    Every other process (the browser, the GPU process, the services that
+    are not confined) now writes the survey's marker at the same point, so
+    the Capsicum survey can say for each kind of process what capability
+    mode would refuse it after its start. That list is what decides
+    whether a service can go on the list above; until 0.20.3.21 only
+    renderers wrote the marker.
+  - chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc: a confined
+    utility's line on beryllium://sandbox says lockdown requested: yes and
+    whether it has been attested.
+  The three candidates are chosen by what they are for, not measured: no
+  survey has seen a short-lived utility after its start. With the feature
+  on, one of them may end at its lockdown (a descriptor outside the
+  policy) or be refused a call it needs; the lockdown's log and the trap
+  report say which. That is what the feature being off by default means.
+Stage: 4 (Beryllium series). Depends on
+  beryllium-invite-after-lockdown.patch, beryllium-kernel-check.patch,
+  beryllium-capability-trap-report.patch and
+  beryllium-sandbox-status-page.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). base/posix/capsicum_rights.cc
+  and the lockdown's code with InitializeSandbox() type-check against
+  FreeBSD 16's headers with stand-ins for Chromium's declarations.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py, class
+  ConfinedUtilities: a browser with the lockdown, the feature and the trap
+  report; every utility that says it locked down must be in capability
+  mode by the kernel and invited only after that, and what each was
+  refused is listed. test_capability_mode_per_process requires every
+  process to be confined or not as its kind is expected to be.
+security-review: required (sandbox setup, process launch, IPC boundary)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -26,6 +26,7 @@
+ #include <cstring>
+ #include <set>
+ 
++#include "base/command_line.h"
+ #include "base/logging.h"
+ #include "base/no_destructor.h"
+ #include "base/strings/string_number_conversions.h"
+@@ -41,6 +42,46 @@
+ 
+ BASE_FEATURE(kBerylliumInviteAfterLockdown, FEATURE_ENABLED_BY_DEFAULT);
+ 
++BASE_FEATURE(kBerylliumCapsicumUtilities, FEATURE_DISABLED_BY_DEFAULT);
++
++const char kBerylliumLockdownSwitch[] = "beryllium-lockdown";
++const char kBerylliumConfineServicesSwitch[] = "beryllium-confine-services";
++
++bool BrowserConfinesUtility(std::string_view sub_type) {
++  if (sub_type.empty() || !FeatureList::IsEnabled(kBerylliumCapsicumUtilities)) {
++    return false;
++  }
++  // Services that are given their input and hand back their output over
++  // Mojo, and that Chromium runs under its tightest policies elsewhere.
++  // Candidates: none of them has been surveyed after its start on FreeBSD,
++  // which is what the feature being off by default says.
++  static constexpr std::string_view kComputeOnly[] = {
++      "data_decoder.mojom.DataDecoderService",
++      "unzip.mojom.Unzipper",
++      "patch.mojom.FilePatcher",
++  };
++  for (std::string_view name : kComputeOnly) {
++    if (sub_type == name) {
++      return true;
++    }
++  }
++  const std::string more =
++      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          kBerylliumConfineServicesSwitch);
++  size_t begin = 0;
++  while (begin <= more.size()) {
++    size_t end = more.find(',', begin);
++    if (end == std::string::npos) {
++      end = more.size();
++    }
++    if (end > begin && sub_type == std::string_view(more).substr(begin, end - begin)) {
++      return true;
++    }
++    begin = end + 1;
++  }
++  return false;
++}
++
+ namespace {
+ 
+ // The confined peers (ExpectConfinedPeer), read on every send with handles.
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -14,6 +14,7 @@
+ 
+ #include <optional>
+ #include <string>
++#include <string_view>
+ 
+ #include "base/base_export.h"
+ #include "base/feature_list.h"
+@@ -44,6 +45,28 @@
+ // out at launch and the check was made when the channel connected.
+ BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumInviteAfterLockdown);
+ 
++// Beryllium (plan/18 section 4.2, tier 1; feature matrix S-PRC-01): utility
++// services that take bytes over Mojo and give bytes back can be confined as
++// a renderer is. Which services those are is decided in the browser, which
++// then tells the utility to lock down, registers it as a confined peer (so
++// what it is sent is cut) and sends it nothing until the kernel says it is
++// in capability mode. Off by default: the list below has not been measured
++// on a machine. --enable-features=BerylliumCapsicumUtilities switches it on.
++BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumCapsicumUtilities);
++
++// Given by the browser to a utility process it has decided to confine; the
++// utility then locks down in InitializeSandbox(). Read from a child's own
++// command line only, which the browser wrote.
++BASE_EXPORT extern const char kBerylliumLockdownSwitch[];
++
++// A test switch of the browser: further services to confine, by the names
++// --utility-sub-type carries, separated by commas. It is how a service is
++// tried before it is put on the list. Read only when the feature is on.
++BASE_EXPORT extern const char kBerylliumConfineServicesSwitch[];
++
++// In the browser: whether the utility service |sub_type| is to be confined.
++BASE_EXPORT bool BrowserConfinesUtility(std::string_view sub_type);
++
+ // The kinds of descriptor a confined process may hold, each with the rights
+ // it needs and nothing more.
+ enum class DescriptorKind {
+--- a/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
++++ b/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
+@@ -150,7 +150,15 @@
+     if (answer == base::freebsd::KernelAnswer::kYes) {
+       ++others_confined;
+     }
+-    add_row(kind, pid, answer, "no", "not applicable");
++    // A utility service the browser has told to lock down (plan/18 section
++    // 4.2, tier 1) is a confined peer like a renderer. The browser records
++    // it as attested when it sends its invitation, which it does only once
++    // the kernel says capability mode; until then it is starting.
++    const bool requested = base::freebsd::IsConfinedPeer(pid);
++    add_row(kind, pid, answer, requested ? "yes" : "no",
++            !requested ? "not applicable"
++                       : base::freebsd::WasAttested(pid) ? "yes"
++                                                         : "not yet (starting)");
+   }
+ 
+   const base::CommandLine& command_line =
+--- a/content/browser/child_process_launcher_helper.cc
++++ b/content/browser/child_process_launcher_helper.cc
+@@ -340,6 +340,19 @@
+     }
+   }
+ 
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium (plan/18 section 4.2, tier 1): the browser decides which
++  // utility services are confined, and says so to the utility. Whether the
++  // utility did as it was told is the kernel's to say, before the
++  // invitation is sent (BerylliumInviteWhenConfined()).
++  if (GetProcessType() == switches::kUtilityProcess &&
++      base::freebsd::BrowserConfinesUtility(
++          command_line()->GetSwitchValueASCII(switches::kUtilitySubType))) {
++    command_line()->AppendSwitch(base::freebsd::kBerylliumLockdownSwitch);
++    beryllium_confined_utility_ = true;
++  }
++#endif
++
+   // Update the command line and launch options to pass the histogram and
+   // field trial shared memory region handles.
+   PassHistogramSharedMemoryHandle(
+@@ -433,9 +446,10 @@
+     // Registered before the invitation is sent, so the first message that
+     // carries a handle is covered; forgotten when this helper goes, since
+     // the kernel may reuse the pid.
+-    if (delegate_->GetSandboxType() == sandbox::mojom::Sandbox::kRenderer &&
+-        base::FeatureList::IsEnabled(
+-            base::freebsd::kBerylliumCapsicumRenderer)) {
++    if (beryllium_confined_utility_ ||
++        (delegate_->GetSandboxType() == sandbox::mojom::Sandbox::kRenderer &&
++         base::FeatureList::IsEnabled(
++             base::freebsd::kBerylliumCapsicumRenderer))) {
+       beryllium_confined_peer_ = process.process.Pid();
+       base::freebsd::ExpectConfinedPeer(*beryllium_confined_peer_);
+     }
+@@ -455,9 +469,13 @@
+     // down is sent nothing until the kernel says it has. It needs nothing
+     // from the browser to get there: RendererMain locks down before it
+     // accepts the invitation.
++    // A confined utility has no other check (a renderer has the one at
++    // connect), so for it the switch that restores the old order does not
++    // apply.
+     if (beryllium_confined_peer_ &&
+-        base::FeatureList::IsEnabled(
+-            base::freebsd::kBerylliumInviteAfterLockdown)) {
++        (beryllium_confined_utility_ ||
++         base::FeatureList::IsEnabled(
++             base::freebsd::kBerylliumInviteAfterLockdown))) {
+       BerylliumInviteWhenConfined(std::move(invitation),
+                                   base::TimeTicks::Now());
+     } else
+@@ -517,8 +535,13 @@
+           ? base::freebsd::KernelAnswer::kUnknown
+           : base::freebsd::KernelSaysCapabilityMode(pid);
+   const base::TimeDelta waited = base::TimeTicks::Now() - launched;
++  const char* const what = beryllium_confined_utility_ ? "utility" : "renderer";
+   if (answer == base::freebsd::KernelAnswer::kYes) {
+-    LOG(WARNING) << "beryllium-sandbox: renderer pid=" << pid << " invited "
++    if (beryllium_confined_utility_) {
++      // A renderer is recorded as attested by the check at its connect.
++      base::freebsd::RecordAttestation(pid, answer);
++    }
++    LOG(WARNING) << "beryllium-sandbox: " << what << " pid=" << pid << " invited "
+                  << waited.InMilliseconds()
+                  << " ms after its launch, in capability mode by the "
+                     "kernel's account";
+@@ -549,7 +572,7 @@
+   // Not invited. The invitation is destroyed here, which the browser's end
+   // of the connection sees as a renderer that went away.
+   base::freebsd::RecordAttestation(pid, answer);
+-  LOG(ERROR) << "beryllium-sandbox: renderer pid=" << pid
++  LOG(ERROR) << "beryllium-sandbox: " << what << " pid=" << pid
+              << (answer == base::freebsd::KernelAnswer::kNo
+                      ? " is not in capability mode by the kernel's account"
+                      : " has no answer from the kernel about its capability "
+--- a/content/browser/child_process_launcher_helper.h
++++ b/content/browser/child_process_launcher_helper.h
+@@ -361,6 +361,9 @@
+ #if BUILDFLAG(IS_FREEBSD)
+   // Beryllium: the pid registered as a confined peer, to forget on exit.
+   std::optional<base::ProcessId> beryllium_confined_peer_;
++  // Beryllium: this launch is of a utility service the browser has decided
++  // to confine, and has told so on its command line.
++  bool beryllium_confined_utility_ = false;
+ #endif
+ 
+   // The PlatformChannel that will be used to transmit an invitation to the
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -128,6 +128,11 @@
+ // before. utrace is a no-op unless the process is traced.
+ constexpr char kLockdownMarker[] = "BERYLLIUM-LOCKDOWN";
+ 
++// What kind of process this is, for the lockdown's log lines: "renderer",
++// or "utility" for a utility service the browser has told to lock down
++// (plan/18 section 4.2, tier 1). Set once, before the lockdown.
++const char* g_lockdown_label = "renderer";
++
+ // What a renderer must read before capability mode refuses it, found by the
+ // Capsicum survey (4 November 2026): the memory and shared-memory sysctls
+ // and uname() are cached in base/system on FreeBSD once read; the executable
+@@ -302,8 +307,9 @@
+   }
+   char line[1400];
+   size_t used = 0;
+-  used = TrapAppend(line, sizeof(line), used,
+-                    "beryllium-sandbox: renderer pid=");
++  used = TrapAppend(line, sizeof(line), used, "beryllium-sandbox: ");
++  used = TrapAppend(line, sizeof(line), used, g_lockdown_label);
++  used = TrapAppend(line, sizeof(line), used, " pid=");
+   used = TrapAppendNumber(line, sizeof(line), used,
+                           static_cast<uintptr_t>(getpid()), 10);
+   used = TrapAppend(line, sizeof(line), used,
+@@ -617,10 +623,11 @@
+ // Enters capability mode; returns false, with errno set, if it did not.
+ // |confinement| receives what was done to the descriptors, or what stopped
+ // the lockdown.
+-bool LockDownRenderer(Confinement* confinement) {
++// |requested| is whether this process is to lock down at all: a renderer
++// when the lockdown feature is on, a utility when the browser said so.
++bool LockDownRenderer(bool requested, Confinement* confinement) {
+   WarmUpForCapabilityMode();
+-  if (!base::FeatureList::IsEnabled(
+-          base::freebsd::kBerylliumCapsicumRenderer)) {
++  if (!requested) {
+     utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
+     return true;
+   }
+@@ -640,7 +647,8 @@
+       PLOG(WARNING) << "beryllium-sandbox: the trap report is off "
+                        "(PROC_TRAPCAP_CTL)";
+     } else {
+-      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
++      LOG(WARNING) << "beryllium-sandbox: " << g_lockdown_label
++                   << " pid=" << getpid()
+                    << " reports refused calls (BerylliumCapsicumTrap), "
+                    << g_trap_module_count << " modules listed";
+     }
+@@ -797,18 +805,34 @@
+   if (hook)
+     CHECK(std::move(hook).Run(options));
+ 
+-  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer) {
+-    const bool requested = base::FeatureList::IsEnabled(
+-        base::freebsd::kBerylliumCapsicumRenderer);
++  // Beryllium (plan/18 section 4.2, tier 1): a utility service locks down
++  // as a renderer does when the browser has told it to, on the command line
++  // the browser wrote for it. The browser does not take its word for it:
++  // it sends the utility nothing until the kernel says capability mode.
++  const bool confined_utility =
++      process_type == switches::kUtilityProcess &&
++      command_line->HasSwitch(base::freebsd::kBerylliumLockdownSwitch);
++  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer || confined_utility) {
++    const bool requested =
++        confined_utility || base::FeatureList::IsEnabled(
++                                base::freebsd::kBerylliumCapsicumRenderer);
++    if (confined_utility) {
++      g_lockdown_label = "utility";
++    }
+     // Fail closed when the lockdown was asked for: a renderer that should be
+     // confined and is not must not handle web content.
+     Confinement confinement;
+-    PCHECK(LockDownRenderer(&confinement))
+-        << "beryllium-sandbox: renderer pid=" << getpid()
++    PCHECK(LockDownRenderer(requested, &confinement))
++        << "beryllium-sandbox: " << g_lockdown_label << " pid=" << getpid()
+         << " could not enter capability mode"
+         << (confinement.violation.empty() ? "" : ": " + confinement.violation);
+     if (requested) {
+-      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
++      LOG(WARNING) << "beryllium-sandbox: " << g_lockdown_label
++                   << " pid=" << getpid()
++                   << (confined_utility
++                           ? " service=" + command_line->GetSwitchValueASCII(
++                                               "utility-sub-type")
++                           : std::string())
+                    << " capability_mode=1 closed_directories="
+                    << confinement.closed_directories
+                    << " limited=" << confinement.limited
+@@ -820,6 +844,12 @@
+                    << (confinement.hardening.empty() ? "-"
+                                                      : confinement.hardening);
+     }
++  } else {
++    // Every other process writes the marker too, where its sandbox would
++    // begin: the Capsicum survey then says, for each kind of process, what
++    // capability mode would refuse it after its start (plan/18 section 4.2,
++    // tier 1 step 1), which is what decides whether it can be confined.
++    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
+   }
+ 
+   return true;

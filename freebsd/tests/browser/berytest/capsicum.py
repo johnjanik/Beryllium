@@ -467,6 +467,52 @@ def locked_pids(log_lines):
     return [int(m.group(1)) for m in map(LOCKED_PID_RE.search, log_lines) if m]
 
 
+# From 0.20.3.22 (patches/security/beryllium-utility-lockdown.patch): a
+# utility service the browser told to lock down writes the same lines as a
+# renderer, with "utility pid=N service=NAME" where a renderer's say
+# "renderer pid=N".
+UTILITY_LOCKED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) service=(\S+) "
+                               r"capability_mode=1 .*\bthreads=(-?\d+)")
+UTILITY_INVITED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) invited (\d+) ms after "
+                                r"its launch")
+UTILITY_ENDED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) .*; ended before it was "
+                              r"sent anything")
+UTILITY_FAILED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) could not enter "
+                               r"capability mode(.*)$")
+
+
+def renderer_lockdown_lines(log_lines):
+    """The lockdown reports of renderers; a confined utility's are not
+    among them."""
+    return [l for l in log_lines if "capability_mode=1" in l and LOCKED_PID_RE.search(l)]
+
+
+def confined_utilities(log_lines):
+    """{pid: {service, threads, invited_ms}} for the utility services that
+    reported their own lockdown, with the time to their invitation where
+    the browser wrote one; and ({pid: reason} that failed to lock down,
+    {pids} the browser ended uninvited)."""
+    locked, failed, ended = {}, {}, set()
+    for line in log_lines:
+        m = UTILITY_LOCKED_RE.search(line)
+        if m:
+            locked[int(m.group(1))] = {"service": m.group(2), "threads": int(m.group(3)),
+                                       "invited_ms": None}
+            continue
+        m = UTILITY_FAILED_RE.search(line)
+        if m:
+            failed[int(m.group(1))] = m.group(2).lstrip(": ").strip() or "no reason given"
+            continue
+        m = UTILITY_ENDED_RE.search(line)
+        if m:
+            ended.add(int(m.group(1)))
+    for line in log_lines:
+        m = UTILITY_INVITED_RE.search(line)
+        if m and int(m.group(1)) in locked:
+            locked[int(m.group(1))]["invited_ms"] = int(m.group(2))
+    return locked, failed, ended
+
+
 # From 0.20.3.22 (patches/security/beryllium-invite-after-lockdown.patch):
 # the browser sends a renderer its Mojo invitation only once the kernel says
 # the renderer is in capability mode, and says how long that took; one that
@@ -559,9 +605,10 @@ def hardening_problems(hardening, traceable):
 # call capability mode refuses it, with where the call was made and the
 # return addresses above it. The line is written with write(2) from a signal
 # handler, so it has no log prefix.
-TRAP_REPORTING_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) reports refused calls")
-REFUSED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) refused in capability mode: "
-                        r"syscall=(\d+) errno=(\d+) thread=(\d+) frames:(.*)$")
+TRAP_REPORTING_RE = re.compile(r"beryllium-sandbox: (?:renderer|utility) pid=(\d+) reports "
+                               r"refused calls")
+REFUSED_RE = re.compile(r"beryllium-sandbox: (?:renderer|utility) pid=(\d+) refused in "
+                        r"capability mode: syscall=(\d+) errno=(\d+) thread=(\d+) frames:(.*)$")
 SYSCALL_DEFINE_RE = re.compile(r"^#define\s+SYS_(\w+)\s+(\d+)\s*$")
 # Enough to name the one call every survey has seen, on a machine without
 # the header.
@@ -631,7 +678,7 @@ def describe_refused(calls, binary, names=None, run=None):
             shown.append(name if name and name != "??" else f"{module or '?'}+0x{offset:x}")
         lines.append(f"{names.get(syscall, f'syscall {syscall}')} "
                      f"({ERRNO_NAMES.get(error, f'errno {error}')}), {g['count']} times in "
-                     f"{len(g['pids'])} renderers: " + (" < ".join(shown) or "no frames"))
+                     f"{len(g['pids'])} processes: " + (" < ".join(shown) or "no frames"))
     return lines
 
 
@@ -666,6 +713,26 @@ PAGE_SETTINGS = {
 }
 # What the two kernel check lines say on a kernel the lockdown can rely on.
 KERNEL_CHECK_FINE = {"kernel_capability_mode": "available", "kernel_signals_refused": "yes"}
+# From 0.20.3.22 (beryllium-unconfined-processes.patch): one line for each
+# kind of process that is not confined, with the reason (S-PRC-08).
+PAGE_STATEMENT_RE = re.compile(r"^not confined: (.+?) \| (.+)$")
+
+
+def statement_kind(row_kind):
+    """The kind a process line's statement is filed under: the page names
+    a process "GPU (GPU)" or "Utility (network.mojom.NetworkService)", and
+    states its reasons for "GPU" and "network service"."""
+    if row_kind in ("browser", "renderer"):
+        return row_kind
+    if row_kind.startswith("GPU"):
+        return "GPU"
+    for part, kind in (("NetworkService", "network service"),
+                       ("StorageService", "storage service"),
+                       ("AudioService", "audio service"),
+                       ("VideoCapture", "video capture")):
+        if part in row_kind:
+            return kind
+    return "other utilities"
 
 
 def parse_sandbox_page(text):
@@ -678,9 +745,13 @@ def parse_sandbox_page(text):
     FreeBSD)."""
     if not text or PAGE_TITLE not in text:
         return None
-    rows, summary, starting_count, settings = [], None, None, {}
+    rows, summary, starting_count, settings, statements = [], None, None, {}, {}
     for line in text.splitlines():
         line = line.strip()
+        m = PAGE_STATEMENT_RE.match(line)
+        if m:
+            statements[m.group(1)] = m.group(2)
+            continue
         m = PAGE_ROW_RE.match(line)
         if m:
             rows.append({"kind": m.group(1), "pid": int(m.group(2)), "mode": m.group(3),
@@ -696,7 +767,7 @@ def parse_sandbox_page(text):
             if line.startswith(prefix):
                 settings[key] = line[len(prefix):]
     return {"rows": rows, "summary": summary, "starting_count": starting_count,
-            "settings": settings}
+            "settings": settings, "statements": statements}
 
 
 def unattested_renderers(status):
@@ -767,9 +838,9 @@ def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
         if marked:
             problems.append(f"{len(marked)} lines are marked starting and the summary "
                             "does not count starting renderers")
-    elif said_starting != len(marked):
+    elif said_starting != sum(r["kind"] == "renderer" for r in marked):
         problems.append(f"the summary says {said_starting} renderers starting and "
-                        f"{len(marked)} lines are marked so")
+                        f"{sum(r['kind'] == 'renderer' for r in marked)} lines are marked so")
     # A page that counts starting renderers is from 0.20.3.22, which also
     # reports its check of the kernel. With the lockdown on, a kernel that
     # fails the check fails the gate: the lockdown then confines less than
@@ -781,10 +852,26 @@ def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
                 problems.append(f"the page has no line \"{PAGE_SETTINGS[key].strip()}\"")
             elif lockdown and said_kernel != fine:
                 problems.append(f"{PAGE_SETTINGS[key]}{said_kernel}")
+        # Every process is confined or it is not, as the browser means it
+        # to be, both ways round: one the browser asked to lock down that
+        # the kernel does not have in capability mode is caught above and
+        # below; one the kernel has in capability mode that the browser did
+        # not ask is a record nobody updated.
+        for r in rows:
+            if r["requested"] == "no" and kernel_modes.get(r["pid"]) is True:
+                problems.append(f"{r['kind']} pid {r['pid']}: in capability mode by procstat, "
+                                "and the browser does not list it as asked to lock down")
+        # And every process that is not confined has its reason on the page.
+        stated = status.get("statements") or {}
+        for kind in sorted({statement_kind(r["kind"]) for r in rows if r["mode"] != "yes"}):
+            if kind not in stated:
+                problems.append(f"the page has unconfined processes of the kind \"{kind}\" "
+                                "and no \"not confined:\" line for it")
     for r in marked:
-        if r["kind"] != "renderer" or r["requested"] != "yes":
+        # A renderer, or a utility service the browser has told to lock down.
+        if r["requested"] != "yes":
             problems.append(f"{r['kind']} pid {r['pid']}: marked starting, which is for a "
-                            f"renderer asked to lock down (lockdown requested {r['requested']})")
+                            f"process asked to lock down (lockdown requested {r['requested']})")
     if not any(r["kind"] == "browser" for r in rows):
         problems.append("the page has no line for the browser process")
     said = status["settings"].get("lockdown")

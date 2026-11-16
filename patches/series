@@ -26,6 +26,8 @@ security/beryllium-capability-trap-report.patch
 security/beryllium-no-device-video-frames-under-lockdown.patch
 security/beryllium-kernel-check.patch
 security/beryllium-invite-after-lockdown.patch
+security/beryllium-utility-lockdown.patch
+security/beryllium-unconfined-processes.patch
 privacy/beryllium-services-off-by-default.patch
 privacy/beryllium-noise-hash-whole-token.patch
 privacy/beryllium-noise-snapshot-channel-order.patch

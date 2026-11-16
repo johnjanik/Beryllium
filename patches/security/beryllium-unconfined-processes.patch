@@ -1,0 +1,122 @@
+Beryllium: the status page names each kind of process that is not confined and why, and every child gives up new privileges
+
+Purpose: plan/18 sections 4.3 and 4.7 (feature matrix S-PRC-08, S-HRD-01;
+  decided 12 November 2026). A process is either confined, with tests, or
+  it is named with the reason it is not, in three places: the README,
+  beryllium-sandbox(7) and beryllium://sandbox. This is the third.
+  - chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc: after the
+    list of processes, one line for each kind that is not confined, in a
+    fixed shape, "not confined: KIND | reason": the browser, a renderer
+    while the lockdown is off, the GPU process, the network service, the
+    storage service, the audio service, video capture and the other
+    utilities. The test suite requires a line
+    for every process the page lists that the kernel does not have in
+    capability mode.
+  - sandbox/policy/freebsd/sandbox_freebsd.cc: every child process that is
+    not locked down sets PROC_NO_NEW_PRIVS_CTL where its sandbox would
+    begin, so that an exec of a set-user-ID file from it gains nothing
+    (a locked-down process sets it in its lockdown). No child of the
+    browser executes anything; the browser process, which starts helper
+    programs, is left alone. Feature BerylliumChildNoNewPrivileges, on by
+    default; a failure is logged and the process goes on.
+  Of the plan's mitigations for the GPU process this is the one that
+  cannot disturb a graphics driver. The others (no forking, no core files,
+  no tracing, a clean environment, no connection to the X server in a
+  Wayland session) each need a run on the NVIDIA driver first and are not
+  in this patch.
+Stage: 4 (Beryllium series). Depends on beryllium-utility-lockdown.patch
+  (the place in both files).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). The lockdown's code with
+  InitializeSandbox() type-checks against FreeBSD 16's headers; the page's
+  function was run on Linux with stand-ins and wrote the lines.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_sandbox_page_matches_the_kernel requires a statement for every
+  unconfined process on a page from 0.20.3.22;
+  test_children_cannot_gain_privileges asks proccontrol(1) about every
+  child process.
+security-review: required (sandbox reporting, process hardening)
+
+--- a/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
++++ b/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
+@@ -227,6 +227,42 @@
+           "takes over a renderer has the access you have. With it on, the\n"
+           "renderers are confined and the browser, GPU, network and storage\n"
+           "processes are not. man beryllium-sandbox says what that means.\n"
++          "\n"
++          // Beryllium (plan/18 sections 4.3 and 4.7; feature matrix S-PRC-08):
++          // every kind of process is either confined, with tests, or named
++          // here with the reason. One line a kind, in a fixed shape; the
++          // test suite requires a line for every process above that the
++          // kernel does not have in capability mode.
++          "Processes that are not confined, and why (decided 12 November "
++          "2026):\n"
++          "not confined: browser | it holds the profile, the network and "
++          "the windows of every tab; other browsers leave this process "
++          "unconfined too, except OpenBSD's port, whose limits still allow "
++          "files, processes and the network\n"
++          "not confined: renderer | only while the renderer lockdown is off, "
++          "which it is unless switched on; with it on, a renderer the kernel "
++          "does not have in capability mode is ended\n"
++          "not confined: GPU | the graphics driver opens devices and files "
++          "by path whenever it likes, and NVIDIA's is closed code that "
++          "cannot be changed to ask first\n"
++          "not confined: network service | it makes every connection and "
++          "keeps the cache by path; confining it needs a broker for both, "
++          "which is described in the plan and not scheduled\n"
++          "not confined: storage service | it opens the profile's databases "
++          "by path; Chromium has a mode in which the browser opens them for "
++          "it, which has not been tried here yet\n"
++          "not confined: audio service | it reaches the sound server by "
++          "path; a policy is to follow the utilities\n"
++          "not confined: video capture | it opens cameras by path; Chromium "
++          "leaves it unconfined on every desktop system\n"
++          "not confined: other utilities | a utility is confined once a "
++          "survey shows that it needs nothing by path after its start; "
++          "--enable-features=BerylliumCapsicumUtilities confines the first "
++          "three candidates, as an experiment\n"
++          "Confined or not, a child process gives up the means to gain "
++          "privileges where its sandbox would begin "
++          "(BerylliumChildNoNewPrivileges, on unless switched off); "
++          "proccontrol -m nonewprivs -q -p PID shows it.\n"
+           "</pre></body></html>\n";
+   return page;
+ }
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -119,6 +119,16 @@
+ BASE_FEATURE(kBerylliumRendererHardening, base::FEATURE_ENABLED_BY_DEFAULT);
+ BASE_FEATURE(kBerylliumRendererTraceable, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++// Beryllium (plan/18 section 4.2, tier 5; feature matrix S-HRD-01): every
++// child process, confined or not and whether or not the renderer lockdown
++// is on, sets PROC_NO_NEW_PRIVS_CTL where its sandbox would begin: an exec
++// of a set-user-ID file from it gains nothing. No child of the browser
++// executes anything; the browser process, which starts helper programs,
++// is left alone. It is the one mitigation of the plan's list for the
++// unconfined processes that cannot disturb a graphics driver. On by
++// default; a switch because it changes every child in a default run.
++BASE_FEATURE(kBerylliumChildNoNewPrivileges, base::FEATURE_ENABLED_BY_DEFAULT);
++
+ // Written with utrace(2) at the lockdown point, whether or not the renderer
+ // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
+ // splits each process's trace there, separating what happens before the
+@@ -845,6 +855,17 @@
+                                                      : confinement.hardening);
+     }
+   } else {
++#if defined(PROC_NO_NEW_PRIVS_CTL)
++    if (!process_type.empty() &&
++        base::FeatureList::IsEnabled(kBerylliumChildNoNewPrivileges)) {
++      int no_new_privs = PROC_NO_NEW_PRIVS_ENABLE;
++      if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_CTL, &no_new_privs) != 0) {
++        PLOG(WARNING) << "beryllium-sandbox: " << process_type << " pid="
++                      << getpid() << " keeps the means to gain privileges "
++                                     "(PROC_NO_NEW_PRIVS_CTL)";
++      }
++    }
++#endif
+     // Every other process writes the marker too, where its sandbox would
+     // begin: the Capsicum survey then says, for each kind of process, what
+     // capability mode would refuse it after its start (plan/18 section 4.2,
