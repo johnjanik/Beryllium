@@ -1010,6 +1010,23 @@ FreeBSD test bed, so an increment must be worth a build.
    renderers said so and the 5 read held 20 to 36 descriptors, none
    outside the policy. So 0.20.3.21 has passed the whole suite without
    the lockdown once and with it once.
+   **0.20.3.21 built a second time for release, 16 November 2026: both
+   runs pass.** The build of 15 November was a test build with the
+   compiler cache, which the release tool refuses, so the owner built
+   the same version again without it (freebsd/ports/README.md says why
+   that needs no new revision). That it is the cache-free package is the
+   owner's word in these reports; the release tool reads it from the
+   package's manifest.
+   Without the lockdown (08:30; 36 pass, 6 skipped) and with it (08:33;
+   39 pass, 3 skipped) nothing fails. With the lockdown the gate read 315
+   lines, each accounted for: 7 lockdown reports with one thread each, 13
+   socket pairs with their stack lines, 275 cuts (274 by the browser, 1
+   by the GPU process) and 7 attestations, none ended. The page test
+   caught two renderers starting and found each confined and attested in
+   a later reading. With `--no-sandbox` the browser ended all 13
+   renderers. With the receiver's half off the 5 renderers read held 20
+   to 36 descriptors, none outside the policy. Canvas noise on 1040 and
+   997 pixels, and on 998 and 1052.
    What the page should say differently, for the next build: a renderer
    that is not ready yet is "starting", and the summary counts it apart.
    As built, a person who opens the page with the lockdown on sees one
