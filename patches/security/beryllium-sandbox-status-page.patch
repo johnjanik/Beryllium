@@ -45,8 +45,10 @@ Stage: 4 (Beryllium series). Depends on
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
   FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
   built in 0.20.3.21 (released 16 November 2026), where every line agreed
-  with procstat -s. The wording for a starting renderer is for 0.20.3.22
-  and not yet compiled; it was type-checked against stand-in declarations.
+  with procstat -s. The wording for a starting renderer was first built in
+  the test build of 0.20.3.22 (16 November 2026): the page marked two
+  renderers as starting, counted them apart, and each was confined and
+  attested in a later reading.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_sandbox_page_matches_the_kernel reads the page and compares the
   capability mode on every line with procstat -s for that pid, with the

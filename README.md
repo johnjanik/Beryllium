@@ -336,9 +336,13 @@ In the order they are planned.
 stands, the design, the work, the tests, and how it is to be attacked.
 [plan/14](plan/14-RENDERER-SANDBOX.md) has the results of each build.
 
-Nine patches are written for the next build, 0.20.3.22 (16 November
-2026). None has been compiled, so each item below says what the release
-does and, apart from it, what is written.
+Nine patches were written for 0.20.3.22 and built on 16 November 2026
+as a test build, which is not released. All nine compiled. With the
+lockdown on, the whole suite passes on it. Without the lockdown one new
+test fails: a renderer could still gain privileges, an error in one
+patch that is corrected for the next build, 0.20.3.23. Each item below
+says what the release does and, apart from it, what that test build
+showed.
 
 1. **What other child processes send a renderer.** In 0.20.3.21 the GPU
    process, the network service and the storage service cut every
@@ -347,7 +351,7 @@ does and, apart from it, what is written.
    passes: every descriptor of every renderer read stayed inside the
    policy. In the runs so far the GPU process made one or two such cuts
    and the two services none; whether those services sent a renderer any
-   descriptor is not known from the runs. *Written for 0.20.3.22:* a
+   descriptor is not known from the runs. *In the test build:* a
    confined renderer keeps video frames out of GPU memory buffers on
    every driver, since such a buffer is a device descriptor. Left after
    that: a list, kept in the repository and checked by a test, of which
@@ -362,11 +366,13 @@ does and, apart from it, what is written.
    Two things are left in the release: the page shows a renderer that is
    still starting as not confined ([Known issues](#known-issues)), and a
    renderer that skipped its lockdown could read what the browser had
-   sent it in the moment before it was ended. *Written for 0.20.3.22:*
+   sent it in the moment before it was ended. *In the test build:*
    the page calls such a renderer "starting"; and the browser sends a
    renderer nothing, not even the invitation to connect, until the
-   kernel says the renderer is in capability mode. With both built and
-   passing, this item is done.
+   kernel says the renderer is in capability mode. Both passed: 8
+   renderers were invited 38 to 57 ms after their launch, and where no
+   renderer could lock down, 11 were ended before they were sent
+   anything. This item is done when a release carries them.
 3. **On by default, fail closed.** The lockdown becomes the default when
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
@@ -382,11 +388,11 @@ does and, apart from it, what is written.
    One call is still refused after the lockdown, `cpuset_getaffinity`,
    once in each of 20 renderers in the survey of 0.20.3.19; it does no
    harm, and it has to go before a refused call can be treated as an
-   alarm. *Written for 0.20.3.22:*
+   alarm. *In the test build:*
    - that call is answered before the lockdown. It comes from
      `sysconf(_SC_NPROCESSORS_ONLN)`, which on FreeBSD asks for the root
-     CPU set first; which code asks is inferred, and the next point is
-     how the build will say;
+     CPU set first. The survey of 21 renderers shows nothing refused
+     after the lockdown any more;
    - `BerylliumCapsicumTrap` no longer ends a renderer at its first
      refused call: the renderer writes a line for each, with the code
      that made the call, and goes on. The suite fails on any such line;
@@ -412,8 +418,8 @@ does and, apart from it, what is written.
    Widevine process before it is supported; an explicit statement that
    they are not confined for the browser, the network service, video
    capture and the GPU process with NVIDIA's driver; a statement now and
-   a policy later for audio. Nothing of it is in the release. *Written
-   for 0.20.3.22:*
+   a policy later for audio. Nothing of it is in the release. *In the
+   test build:*
    - the statements, on `beryllium://sandbox` and in
      `beryllium-sandbox(7)`, one for each kind of process that is not
      confined, and a test that requires one for every unconfined process
@@ -424,10 +430,14 @@ does and, apart from it, what is written.
      (`--enable-features=BerylliumCapsicumUtilities`), three utility
      services are locked down as renderers are: the data decoder, the
      unzipper and the file patcher. They are chosen by what they are for.
-     None has been measured after its start, and one may not stand it;
+     None has been measured after its start, and none started in the
+     suite's run;
    - every process marks where its sandbox would begin, so the survey
      can say for each utility service what capability mode would refuse
-     it. That is what decides which services can be confined.
+     it. That is what decides which services can be confined. Its first
+     answers: the print compositor asks for one file after its start,
+     and the storage service for nothing by path, because the browser
+     already hands it its files. Both can be tried under the lockdown.
 
    Not written: the storage service in the mode where the browser opens
    its files; the other mitigations for the GPU process (no forking, no

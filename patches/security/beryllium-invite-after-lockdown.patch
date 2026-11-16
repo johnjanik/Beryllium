@@ -45,8 +45,12 @@ Stage: 4 (Beryllium series). Depends on beryllium-sender-side-rights.patch
   beryllium-kernel-attested-renderer.patch and, for the place in
   base/posix/capsicum_rights, beryllium-kernel-check.patch.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22). base/posix/capsicum_rights.cc as
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026): 8 renderers
+  were invited 38 to 57 ms after their launch (median 45), nothing was cut
+  for a renderer before its invitation, and under --no-sandbox 11
+  renderers were ended before they were sent anything. So nothing in a
+  renderer's start waits for the browser before its lockdown. base/posix/capsicum_rights.cc as
   patched type-checks whole against FreeBSD 16's headers; the launcher's
   new code type-checks against stand-ins for Chromium's declarations.
   Not verified on a machine: that nothing in a renderer's start before its

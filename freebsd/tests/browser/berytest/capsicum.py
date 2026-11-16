@@ -1419,7 +1419,12 @@ def summarise(kdump, types, readable=None):
         said = p.get("kind", "")
         ptype = types.get(pid) or (said.split()[0] if said else "unknown")
         if said.startswith("utility "):
-            ptype = said
+            # By its service, which is also how the browser's list names a
+            # utility it was asked about: the survey of the first build with
+            # the marker (0.20.3.22) had "utility NAME" here and so gave
+            # each service two sections, one with the trace and one with the
+            # descriptors.
+            ptype = said.split()[1]
         if ptype == "browser" or said == "browser":
             continue
         t = out.setdefault(ptype, {"pids": [], "marked": 0,

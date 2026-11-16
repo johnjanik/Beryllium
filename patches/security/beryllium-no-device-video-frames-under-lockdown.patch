@@ -24,8 +24,10 @@ Stage: 4 (Beryllium series). Depends on
   beryllium-bsd-nvidia-video-frames.patch (the place in the file) and
   beryllium-descriptor-rights.patch (base/posix/capsicum_rights.h).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026); on the owner's
+  NVIDIA machine the path was off already, so the run shows only that the
+  clips still play.
 Test: freebsd/tests/browser/run media --lockdown (the clips play in a
   confined renderer) shows the path works; that it is taken on a Mesa
   driver needs a Mesa machine, where the descriptor policy test would name

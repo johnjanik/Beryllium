@@ -735,8 +735,15 @@ class ConfinedUtilities(Gate):
         if not self.strict():
             self.skipTest("the lockdown was not requested (run --lockdown)")
         fixtures = self.ctx.fixtures()
-        for name in ("busy.html", "text.html"):
-            self.browser.new_page(fixtures.url(name))
+        self.browser.new_page(fixtures.url("busy.html"))
+        # Printing a page starts the print compositor, which the survey of
+        # 0.20.3.22 found asking for one file after its start; it locks down
+        # here when it is named with --beryllium-confine-services.
+        try:
+            self.browser.new_page(fixtures.url("text.html")).send("Page.printToPDF", {},
+                                                                 timeout=60)
+        except (TargetCrashed, CDPError) as e:
+            self.note(f"printing to PDF: {type(e).__name__}: {e}")
         # A page that names a search description makes the browser fetch it
         # and parse its XML in the data decoder service, where that is not
         # switched off.
