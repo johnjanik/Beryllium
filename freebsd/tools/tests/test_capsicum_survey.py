@@ -165,6 +165,57 @@ class Marker(unittest.TestCase):
         self.assertFalse(capsicum.is_marker("4  de ad be ef"))
         self.assertFalse(capsicum.is_marker("RTLD: dlopen"))
 
+    def test_the_marker_says_what_the_process_is(self):
+        """From 0.20.3.22 every process writes the marker, followed by its
+        type and, for a utility, its service."""
+        def hexed(text):
+            raw = text.encode()
+            return f"{len(raw)}  " + " ".join(f"{b:02x}" for b in raw)
+        for text, kind in (("BERYLLIUM-LOCKDOWN", ""),
+                           ("BERYLLIUM-LOCKDOWN renderer", "renderer"),
+                           ("BERYLLIUM-LOCKDOWN gpu-process", "gpu-process"),
+                           ("BERYLLIUM-LOCKDOWN browser", "browser"),
+                           ("BERYLLIUM-LOCKDOWN utility unzip.mojom.Unzipper",
+                            "utility unzip.mojom.Unzipper")):
+            self.assertEqual(capsicum.marker_kind(capsicum.marker_text(hexed(text))), kind)
+            self.assertEqual(capsicum.marker_kind(capsicum.marker_text(f'"{text}"')), kind)
+        self.assertIsNone(capsicum.marker_text("4  de ad be ef"))
+
+    def test_a_process_nobody_sampled_is_sorted_by_what_it_said(self):
+        def marker(text):
+            raw = text.encode()
+            return f"USER  {len(raw)}  " + " ".join(f"{b:02x}" for b in raw)
+        kdump = "\n".join([
+            f" 7000 beryllium {marker('BERYLLIUM-LOCKDOWN utility unzip.mojom.Unzipper')}",
+            ' 7000 beryllium NAMI  "/tmp/x"',
+            " 7000 beryllium CAP   system call not allowed: open",
+            f" 7001 beryllium {marker('BERYLLIUM-LOCKDOWN utility network.mojom.NetworkService')}",
+            " 7001 beryllium CAP   system call not allowed: connect",
+            f" 7002 beryllium {marker('BERYLLIUM-LOCKDOWN gpu-process')}",
+            f" 7003 beryllium {marker('BERYLLIUM-LOCKDOWN browser')}",
+            " 7003 beryllium CAP   system call not allowed: open",
+            f" 7004 beryllium {marker('BERYLLIUM-LOCKDOWN')}",
+            " 7005 beryllium CAP   system call not allowed: open",
+        ])
+        procs = capsicum.parse_kdump(kdump.splitlines())
+        self.assertEqual(procs[7000]["kind"], "utility unzip.mojom.Unzipper")
+        # the browser listed 7001 as a utility and 7004 as a renderer; the
+        # others came and went, or are the browser itself
+        summary = capsicum.summarise(procs, {7001: "utility", 7004: "renderer"})
+        self.assertEqual(sorted(summary), ["gpu-process", "renderer", "unknown",
+                                           "utility network.mojom.NetworkService",
+                                           "utility unzip.mojom.Unzipper"])
+        self.assertEqual(summary["utility unzip.mojom.Unzipper"]["cap_after"],
+                         {"system call not allowed: open": 1})
+        text = capsicum.report(summary, {}, None)
+        self.assertIn("== utility unzip.mojom.Unzipper (1 processes)", text)
+        unzip = text[text.index("== utility unzip.mojom.Unzipper"):]
+        self.assertIn("After the point where its sandbox would begin", unzip.split("==")[1]
+                      if "==" in unzip[3:] else unzip)
+        renderer = text[text.index("== renderer"):]
+        self.assertIn("After the lockdown point: nothing capability mode would refuse",
+                      renderer)
+
 
 class Parse(unittest.TestCase):
     def test_kdump(self):

@@ -60,19 +60,37 @@ def sysctl_name(name):
     return re.sub(r"^(sysctl\.\w+)(\.\d+)+$", r"\1.<oid>", name)
 
 
-def is_marker(data):
-    if MARKER.decode() in data:
-        return True
+def marker_text(data):
+    """The marker as the process wrote it, or None when this record is not
+    one. kdump prints a utrace record as text or as "length hex hex ..."."""
+    text = MARKER.decode()
+    if text in data:
+        return data[data.index(text):].strip().strip('"')
     fields = data.split()
     try:
         raw = bytes(int(x, 16) for x in fields[1:])
     except ValueError:
-        return False
-    return MARKER in raw
+        return None
+    if MARKER not in raw:
+        return None
+    return raw[raw.index(MARKER):].decode(errors="replace").strip()
+
+
+def is_marker(data):
+    return marker_text(data) is not None
+
+
+def marker_kind(text):
+    """What a process said it is beside its marker (from 0.20.3.22):
+    "renderer", "browser", "gpu-process", or for a utility "utility NAME"
+    with the service it runs. "" for the bare marker of an older build,
+    which only renderers wrote."""
+    words = (text or "").split()[1:]
+    return " ".join(words[:2])
 
 
 def _new_proc(comm):
-    return {"comm": comm, "marker": False, "lookups": 0,
+    return {"comm": comm, "marker": False, "kind": "", "lookups": 0,
             "cap": collections.Counter(), "cap_after": collections.Counter(),
             "cap_paths": collections.defaultdict(list),
             "cap_paths_before": collections.defaultdict(list),
@@ -93,8 +111,10 @@ def parse_kdump(lines):
         pid, comm, kind, data = int(m.group(1)), m.group(2), m.group(3), m.group(4)
         p = procs.setdefault(pid, _new_proc(comm))
         if kind == "USER":
-            if is_marker(data):
+            text = marker_text(data)
+            if text is not None:
                 p["marker"] = True
+                p["kind"] = marker_kind(text)
         elif kind == "NAMI":
             last_path[pid] = _unquote(data)
             p["lookups"] += 1
@@ -1393,8 +1413,14 @@ def summarise(kdump, types, readable=None):
     browser process is left out: it is never confined."""
     out = {}
     for pid, p in kdump.items():
-        ptype = types.get(pid, "unknown")
-        if ptype == "browser":
+        # What the process said of itself beside its marker (0.20.3.22) is
+        # more exact than the browser's list: it names a utility's service,
+        # and it is there for a process that came and went between samples.
+        said = p.get("kind", "")
+        ptype = types.get(pid) or (said.split()[0] if said else "unknown")
+        if said.startswith("utility "):
+            ptype = said
+        if ptype == "browser" or said == "browser":
             continue
         t = out.setdefault(ptype, {"pids": [], "marked": 0,
                                    "cap": collections.Counter(),
@@ -1468,8 +1494,10 @@ def report(summary, samples, readable_from=None):
         count = len(t["pids"]) or sum(1 for s in samples.values() if s.get("type") == ptype)
         lines += [f"== {ptype} ({count} processes)", ""]
         if ptype == "unknown":
-            lines += ["Processes the browser never listed: they started and ended between "
-                      "two samples (a renderer that wrote the marker was a renderer).", ""]
+            lines += ["Processes the browser never listed and that did not say what they "
+                      "are: they started and ended between two samples. (From 0.20.3.22 a "
+                      "process says what it is beside its marker; on an older build one "
+                      "that wrote the marker was a renderer.)", ""]
         note = (f"readable in capability mode per {readable_from}" if readable_from
                 else "no oracle result for this kernel to say which are readable")
         blocked = set(t["sysctl_blocked"]) if t.get("sysctl_blocked") is not None else None
@@ -1480,7 +1508,10 @@ def report(summary, samples, readable_from=None):
                 lines.append("After the lockdown point: nothing capability mode would refuse.")
                 lines.append("")
             _failures(lines, t["cap_after"], t["cap_paths_after"],
-                      "AFTER the lockdown point (must work in capability mode):")
+                      "AFTER the lockdown point (must work in capability mode):"
+                      if ptype == "renderer" else
+                      "After the point where its sandbox would begin (what capability "
+                      "mode would refuse this kind of process if it were confined):")
             _sysctls(lines, t["sysctl_after"], blocked, note,
                      "Sysctls read AFTER the lockdown point")
             before = t["cap"] - t["cap_after"]

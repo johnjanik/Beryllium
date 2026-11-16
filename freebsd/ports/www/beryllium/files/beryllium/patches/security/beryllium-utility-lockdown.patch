@@ -266,10 +266,31 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    // The PlatformChannel that will be used to transmit an invitation to the
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -128,6 +128,11 @@
+@@ -128,6 +128,32 @@
  // before. utrace is a no-op unless the process is traced.
  constexpr char kLockdownMarker[] = "BERYLLIUM-LOCKDOWN";
  
++// Writes the marker, followed by what this process is: its type as on its
++// command line ("browser" for the browser process) and, for a utility, the
++// service it runs. The survey sorts processes by that, including those that
++// start and end too quickly for it to ask the browser about them, which is
++// most utilities. Before 0.20.3.22 the marker stood alone and only
++// renderers wrote it.
++void WriteLockdownMarker() {
++  const base::CommandLine& command_line =
++      *base::CommandLine::ForCurrentProcess();
++  std::string marker = kLockdownMarker;
++  const std::string type =
++      command_line.GetSwitchValueASCII(switches::kProcessType);
++  marker += " " + (type.empty() ? std::string("browser") : type);
++  const std::string service =
++      command_line.GetSwitchValueASCII("utility-sub-type");
++  if (!service.empty()) {
++    marker += " " + service;
++  }
++  utrace(marker.data(), marker.size());
++}
++
 +// What kind of process this is, for the lockdown's log lines: "renderer",
 +// or "utility" for a utility service the browser has told to lock down
 +// (plan/18 section 4.2, tier 1). Set once, before the lockdown.
@@ -278,7 +299,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
  // What a renderer must read before capability mode refuses it, found by the
  // Capsicum survey (4 November 2026): the memory and shared-memory sysctls
  // and uname() are cached in base/system on FreeBSD once read; the executable
-@@ -302,8 +307,9 @@
+@@ -302,8 +328,9 @@
    }
    char line[1400];
    size_t used = 0;
@@ -290,7 +311,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    used = TrapAppendNumber(line, sizeof(line), used,
                            static_cast<uintptr_t>(getpid()), 10);
    used = TrapAppend(line, sizeof(line), used,
-@@ -617,10 +623,11 @@
+@@ -617,11 +644,12 @@
  // Enters capability mode; returns false, with errno set, if it did not.
  // |confinement| receives what was done to the descriptors, or what stopped
  // the lockdown.
@@ -301,11 +322,13 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    WarmUpForCapabilityMode();
 -  if (!base::FeatureList::IsEnabled(
 -          base::freebsd::kBerylliumCapsicumRenderer)) {
+-    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
 +  if (!requested) {
-     utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
++    WriteLockdownMarker();
      return true;
    }
-@@ -640,7 +647,8 @@
+   // Read before the sweep, assigned after it: ConfineDescriptors() returns
+@@ -640,7 +668,8 @@
        PLOG(WARNING) << "beryllium-sandbox: the trap report is off "
                         "(PROC_TRAPCAP_CTL)";
      } else {
@@ -315,7 +338,16 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " reports refused calls (BerylliumCapsicumTrap), "
                     << g_trap_module_count << " modules listed";
      }
-@@ -797,18 +805,34 @@
+@@ -661,7 +690,7 @@
+   if (!HardenRenderer(&confinement->hardening, &confinement->violation)) {
+     return false;
+   }
+-  utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
++  WriteLockdownMarker();
+   if (cap_enter() != 0) {
+     return false;
+   }
+@@ -797,18 +826,34 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
@@ -356,7 +388,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " capability_mode=1 closed_directories="
                     << confinement.closed_directories
                     << " limited=" << confinement.limited
-@@ -820,6 +844,12 @@
+@@ -820,6 +865,12 @@
                     << (confinement.hardening.empty() ? "-"
                                                       : confinement.hardening);
      }
@@ -365,7 +397,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
 +    // begin: the Capsicum survey then says, for each kind of process, what
 +    // capability mode would refuse it after its start (plan/18 section 4.2,
 +    // tier 1 step 1), which is what decides whether it can be confined.
-+    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
++    WriteLockdownMarker();
    }
  
    return true;
