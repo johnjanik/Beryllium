@@ -165,7 +165,11 @@ class CapsicumSurvey(unittest.TestCase):
         workloads.append(("print to PDF", ctx.fixtures().url("text.html")))
 
         trace = os.path.join(scratch, "browser.ktr")
+        # ktrace follows the browser's children. From 0.20.3.22 a renderer
+        # that is traced when it reaches its lockdown ends, unless it was
+        # asked to stay traceable; an older build ignores the name.
         browser = Browser(ctx, "capsicum", headless=headless,
+                          args=[capsicum.TRACEABLE_SWITCH],
                           wrapper=["ktrace", "-i", "-t", "pnyu", "-f", trace]).start()
         browser.record_version()
         types = {browser.proc.pid: "browser"}

@@ -1,0 +1,173 @@
+Beryllium: a renderer gives up privileges, forking, core files and tracing at its lockdown
+
+Purpose: plan/18 section 3.2, P3 (plan/06 section 3.1; feature matrix
+  S-HRD-01, S-HRD-03). Capability mode takes away a renderer's access to
+  names: paths, addresses, other processes. It leaves the renderer able to
+  fork, to gain privileges by executing a set-user-ID file it holds a
+  descriptor for, and to be attached to by any process of the same user.
+  None of that is something a renderer does, and each is a step in known
+  ways out of a sandbox.
+  - sandbox/policy/freebsd/sandbox_freebsd.cc: HardenRenderer(), called
+    after the descriptor sweep and the limits on the standard streams and
+    before cap_enter(), when the lockdown is on:
+      - PROC_NO_NEW_PRIVS_CTL: an exec no longer changes credentials;
+      - RLIMIT_CORE 0;
+      - RLIMIT_NPROC 0: fork fails (the kernel counts against this limit in
+        fork1() only; threads come from thr_new(), which does not look at
+        it);
+      - PROC_TRACE_CTL disabled: no ptrace, no ktrace, no debugging sysctls
+        (kern.proc.filedesc, which is what procstat -f reads) and no core
+        from this process, for another process of the same user.
+    A call that fails ends the lockdown, and so the renderer, with the
+    reason in the log: fail closed, as for a descriptor outside the policy.
+    The lockdown's log line gains hardening=<what was set>.
+  Two features, read only when the lockdown is on:
+    BerylliumRendererHardening, on by default: the first three calls. A
+      switch so that a run can tell them from the lockdown itself if one
+      of them breaks something on a machine nobody has tried.
+    BerylliumRendererTraceable, off by default: leaves tracing allowed.
+      The test suite's descriptor checks (procstat -f and -C), the Capsicum
+      survey (ktrace) and the debugger-driven tests all need to trace a
+      renderer, so those runs switch this on, and their reports say that
+      the renderer they looked at differed from the default by this call.
+  The kernel refuses PROC_TRACE_CTL on a process that is being traced
+    already (EBUSY). That is a debugger or ktrace started on the renderer
+    before its lockdown; the renderer ends and the message names the switch.
+  Not verified on a machine: that RLIMIT_NPROC 0 leaves thread creation
+    alone on FreeBSD 14, 15 and 16 (read from kern_fork.c and kern_thr.c;
+    the standalone job of plan/18 section 0.2 is to confirm it). If it does
+    not, every renderer ends at its first thread and
+    --disable-features=BerylliumRendererHardening shows it at once.
+Stage: 4 (Beryllium series). Depends on beryllium-capsicum-renderer.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). The lockdown's own code, taken
+  from the patched file, type-checks against FreeBSD 16's headers with
+  stand-ins for Chromium's declarations.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
+  reads hardening= from each lockdown line and, under the gate on a build
+  that writes it, requires no-new-privileges, no-core and no-fork in every
+  renderer; class Untraceable starts a browser with the lockdown and
+  without BerylliumRendererTraceable and requires that procstat cannot
+  read a renderer's descriptors while it still reads its capability mode.
+security-review: required (sandbox setup, process confinement)
+
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -93,6 +93,26 @@
+ // instead of failing quietly.
+ BASE_FEATURE(kBerylliumCapsicumTrap, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++// Beryllium (plan/18 section 3.2, P3; plan/06 section 3.1; feature matrix
++// S-HRD-01, S-HRD-03): what a renderer gives up at its lockdown besides
++// ambient authority. Capability mode leaves a process able to fork, to gain
++// privileges by executing a set-user-ID file it holds a descriptor for
++// (fexecve), and to be traced by any process of the same user; none of that
++// is something a renderer does.
++//   kBerylliumRendererHardening, on by default: no new privileges, no core
++//     files, no new processes. A switch so that a run can tell these calls
++//     from the lockdown itself if one of them breaks something.
++//   kBerylliumRendererTraceable, off by default: leaves tracing allowed.
++//     Without it a locked-down renderer cannot be attached to by a debugger,
++//     ktraced, or have its descriptors read through kern.proc.filedesc
++//     (procstat -f) by another process of the same user, which is the point,
++//     and which is also everything the test suite's descriptor checks, the
++//     Capsicum survey and the debugger-driven tests use. Those runs switch
++//     this on and say so.
++// Each applies only when the lockdown itself is on.
++BASE_FEATURE(kBerylliumRendererHardening, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kBerylliumRendererTraceable, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // Written with utrace(2) at the lockdown point, whether or not the renderer
+ // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
+ // splits each process's trace there, separating what happens before the
+@@ -158,9 +178,67 @@
+   int limited = 0;
+   int threads = -1;          // threads in the process at the lockdown point
+   std::string thread_names;  // their names (ki_tdname), comma-separated
++  std::string hardening;     // what HardenRenderer() did, comma-separated
+   std::string violation;     // empty when the policy held
+ };
+ 
++// The calls of kBerylliumRendererHardening and kBerylliumRendererTraceable,
++// made after the descriptor sweep and before cap_enter(). Returns false,
++// with errno set and |violation| saying which, if one of them failed: the
++// lockdown then fails and the renderer ends, as for a descriptor outside
++// the policy. |done| receives what was set, for the lockdown's log line.
++//   - PROC_NO_NEW_PRIVS_CTL: an exec of a set-user-ID or set-group-ID file
++//     no longer changes credentials.
++//   - RLIMIT_CORE 0: no core file (capability mode already refuses to
++//     create one; this is the limit that says so).
++//   - RLIMIT_NPROC 0: fork fails. The kernel counts processes against this
++//     limit in fork1() only; threads are made by thr_new(), which does not
++//     look at it.
++//   - PROC_TRACE_CTL: no ptrace, no ktrace, no debugging sysctls and no core
++//     from this process. The kernel refuses to set it on a process that is
++//     being traced already (EBUSY), which is a debugger or ktrace started on
++//     the renderer before its lockdown: the renderer ends, and the message
++//     names the switch a test run needs.
++bool HardenRenderer(std::string* done, std::string* violation) {
++  if (base::FeatureList::IsEnabled(kBerylliumRendererHardening)) {
++#if defined(PROC_NO_NEW_PRIVS_CTL)
++    int no_new_privs = PROC_NO_NEW_PRIVS_ENABLE;
++    if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_CTL, &no_new_privs) != 0) {
++      *violation = "PROC_NO_NEW_PRIVS_CTL was refused";
++      return false;
++    }
++    *done += "no-new-privileges,";
++#endif
++    const struct rlimit none = {0, 0};
++    if (setrlimit(RLIMIT_CORE, &none) != 0) {
++      *violation = "RLIMIT_CORE was not lowered";
++      return false;
++    }
++    *done += "no-core,";
++    if (setrlimit(RLIMIT_NPROC, &none) != 0) {
++      *violation = "RLIMIT_NPROC was not lowered";
++      return false;
++    }
++    *done += "no-fork,";
++  }
++  if (base::FeatureList::IsEnabled(kBerylliumRendererTraceable)) {
++    *done += "traceable";
++    return true;
++  }
++  int trace = PROC_TRACE_CTL_DISABLE;
++  if (procctl(P_PID, getpid(), PROC_TRACE_CTL, &trace) != 0) {
++    *violation =
++        errno == EBUSY
++            ? "tracing was not disabled, because this process is being "
++              "traced already (a debugger, or ktrace); a run that traces "
++              "renderers needs --enable-features=BerylliumRendererTraceable"
++            : "PROC_TRACE_CTL was refused";
++    return false;
++  }
++  *done += "untraceable";
++  return true;
++}
++
+ // The number of threads in this process, from the kernel, or -1 with the
+ // reason in the log. kern.proc.pid with KERN_PROC_INC_THREAD answers one
+ // kinfo_proc per thread, each starting with its own size (ki_structsize),
+@@ -334,6 +412,9 @@
+     confinement->violation = "the standard streams could not be limited";
+     return false;
+   }
++  if (!HardenRenderer(&confinement->hardening, &confinement->violation)) {
++    return false;
++  }
+   utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
+   if (cap_enter() != 0) {
+     return false;
+@@ -480,7 +561,10 @@
+                    << " threads=" << confinement.threads << " thread_names="
+                    << (confinement.thread_names.empty()
+                            ? "-"
+-                           : confinement.thread_names);
++                           : confinement.thread_names)
++                   << " hardening="
++                   << (confinement.hardening.empty() ? "-"
++                                                     : confinement.hardening);
+     }
+   }
+ 

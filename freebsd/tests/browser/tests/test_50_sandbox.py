@@ -3,10 +3,12 @@
 says. Lists every Beryllium process and whether it is in Capsicum
 capability mode (procstat -s shows C in FLAGS)."""
 
+import collections
 import os
 import shutil
 import signal
 import time
+import unittest
 
 from berytest import capsicum
 from berytest.base import BrowserTest
@@ -16,6 +18,9 @@ from berytest.cdp import CDPError, TargetCrashed
 # The first build with the kernel check at connect, the status page, the
 # senders' cut on links between children and the receive-limits switch.
 BUILD_21 = (0, 20, 3, 21)
+# The first build whose lockdown also gives up privileges, forking, core
+# files and tracing, and whose trap switch reports instead of ending.
+BUILD_22 = (0, 20, 3, 22)
 
 
 capability_mode = capsicum.capability_mode
@@ -39,8 +44,13 @@ class Gate(BrowserTest):
     they survey and skip. No tests of its own."""
 
     NEEDS_FREEBSD = True
-    # The senders' cuts are VLOG(1) lines of capsicum_rights.cc.
-    BROWSER_ARGS = ("--vmodule=capsicum_rights=1",)
+    # The senders' cuts are VLOG(1) lines of capsicum_rights.cc. From
+    # 0.20.3.22 a locked-down renderer disables tracing of itself, and with
+    # it procstat -f and -C, which these classes read every renderer with:
+    # they ask for a traceable renderer, and their reports say so. What the
+    # default does is the Untraceable class's to show.
+    BROWSER_ARGS = ("--vmodule=capsicum_rights=1", capsicum.TRACEABLE_SWITCH)
+    TRACEABLE = True
     # How long a renderer the browser has just listed may take to reach its
     # lockdown point before it counts as unconfined.
     GRACE_SECONDS = 5.0
@@ -76,6 +86,14 @@ class Gate(BrowserTest):
         if version and version < BUILD_21:
             self.skipTest(f"{what}: this is build {'.'.join(map(str, version))}, and it "
                           "comes with 0.20.3.21")
+        self.unavailable(what)
+
+    def before_build_22(self, what):
+        """The same for what comes with 0.20.3.22."""
+        version = capsicum.installed_version()
+        if version and version < BUILD_22:
+            self.skipTest(f"{what}: this is build {'.'.join(map(str, version))}, and it "
+                          "comes with 0.20.3.22")
         self.unavailable(what)
 
     def read_sandbox_page(self, page):
@@ -313,6 +331,11 @@ class SandboxHonesty(Gate):
         senders = capsicum.cuts_by_sender(lines, {p["id"]: p["type"] for p in procs})
         attested, ended = capsicum.attestations(lines)
         limits_off = [l for l in lines if "receive-side limits are off" in l]
+        # From 0.20.3.22: what each renderer gave up at its lockdown besides
+        # ambient authority (no new privileges, no core, no fork), and
+        # whether it left itself traceable, which this class asks for.
+        hardening = capsicum.hardening_at_lockdown(locked)
+        hardening_problems = capsicum.hardening_problems(hardening, self.TRACEABLE)
         # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
         # error), and the stack trace behind the first socket pair at each
         # site and thread (one per renderer process; the first of each kind).
@@ -340,7 +363,12 @@ class SandboxHonesty(Gate):
                   + (f"; refused outright: {len(refused)}" if refused else "")
                   + f"\ncuts by the process that made them: {senders or 'none'}"
                   + f"\nrenderers the kernel attested when they connected: {len(attested)}"
-                  + (f"; ended by that check: {ended}" if ended else "") + "\n"
+                  + (f"; ended by that check: {ended}" if ended else "")
+                  + ("\nwhat each lockdown set besides capability mode: "
+                     + "; ".join(f"{n} x [{h}]" for h, n in sorted(collections.Counter(
+                         ",".join(v) or "-" for v in hardening.values()).items()))
+                     + " (this class asks for traceable renderers, so that procstat can "
+                       "read their descriptors)" if hardening else "") + "\n"
                   + "\n".join((received + failed + refused + made[:10])[:60])
                   + (("\nthread count errors:\n" + "\n".join(thread_errors[:6])) if thread_errors else "")
                   + (("\nwhere the socket pairs are made:\n" + "\n".join(traces)) if traces else ""))
@@ -384,6 +412,14 @@ class SandboxHonesty(Gate):
                                               "were not attested by the browser's check")
             self.assertEqual(limits_off, [], "a renderer ran with its receive-side limits "
                                              "off in the ordinary gate")
+            # From 0.20.3.22 every lockdown line says what else was set.
+            if locked and not hardening:
+                version = capsicum.installed_version()
+                if version and version >= BUILD_22:
+                    self.fail("no lockdown line says what the renderer gave up besides "
+                              "ambient authority (hardening=), on a build that should")
+            self.assertEqual(hardening_problems, [],
+                             "a renderer's lockdown did not set what it should have")
 
     def test_renderer_shared_memory_is_anonymous_and_limited(self):
         """Renderers hold shared memory only as memfd objects, none of which
@@ -423,7 +459,10 @@ class ThreadsAtLockdown(BrowserTest):
     A record, not a gate: the count is checked in test_lockdown_log."""
 
     NEEDS_FREEBSD = True
-    BROWSER_ARGS = ("--renderer-startup-dialog",)
+    # The debugger is attached before the lockdown; from 0.20.3.22 the
+    # lockdown refuses to go on in a traced renderer unless it was asked to
+    # stay traceable.
+    BROWSER_ARGS = ("--renderer-startup-dialog", capsicum.TRACEABLE_SWITCH)
 
     def paused_renderers(self, wait=20):
         deadline = time.monotonic() + wait
@@ -495,6 +534,107 @@ class SenderAlone(Gate):
         self.note(f"renderers that said their receive-side limits are off: {len(off)}"
                   f"\ncuts by the process that made them: {senders or 'none'}")
         self.descriptors_follow_the_policy()
+
+
+class Untraceable(Gate):
+    """The default from 0.20.3.22: at its lockdown a renderer disables
+    tracing of itself (PROC_TRACE_CTL, S-HRD-01), so that another process
+    of the same user cannot attach a debugger to it, ktrace it or read its
+    descriptor table. The other sandbox classes ask for traceable renderers
+    in order to read those tables; this one does not, and requires that it
+    cannot read them. What the kernel says of the process's capability
+    mode stays readable, and is checked."""
+
+    BROWSER_ARGS = ("--vmodule=capsicum_rights=1",)
+    TRACEABLE = False
+
+    def test_a_locked_down_renderer_cannot_be_read(self):
+        if not self.strict():
+            self.skipTest("the lockdown was not requested (run --lockdown)")
+        self.browser.new_page(self.ctx.fixtures().url("busy.html"))
+        procs = self.browser.conn.send("SystemInfo.getProcessInfo")["processInfo"]
+        renderers = [p["id"] for p in procs if p["type"] == "renderer"]
+        modes = self.renderer_modes(procs)
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
+        hardening = capsicum.hardening_at_lockdown(lines)
+        if not hardening:
+            self.before_build_22("no lockdown line says what the renderer gave up (hardening=)")
+        browser_pid = next((p["id"] for p in procs if p["type"] == "browser"), None)
+        own = len(capsicum.rights(browser_pid)) if browser_pid else 0
+        readable = {pid: len(capsicum.rights(pid)) for pid in renderers
+                    if modes.get(pid) is True}
+        self.note(f"the browser's own descriptors read by procstat: {own}"
+                  + "\n" + "\n".join(
+                      f"renderer {pid}: capability mode "
+                      f"{ {True: 'yes', False: 'no', None: 'unreadable'}.get(modes.get(pid), 'gone') }"
+                      f"; lockdown set {','.join(hardening.get(pid, [])) or 'nothing recorded'}"
+                      f"; descriptors procstat could read: {readable.get(pid, 'not asked')}"
+                      for pid in renderers))
+        self.assertEqual(self.unconfined(modes), {},
+                         "renderers not in capability mode although the lockdown was requested")
+        if not own:
+            # Nothing is readable on this machine, so an unreadable renderer
+            # would show nothing about the renderer.
+            self.unavailable("procstat cannot read the browser's own descriptors "
+                             "(security.bsd.unprivileged_proc_debug=0?), so this run cannot "
+                             "tell a renderer that refuses to be read from one nobody may read")
+        problems = capsicum.hardening_problems(
+            {pid: h for pid, h in hardening.items() if pid in renderers}, traceable=False)
+        problems += [f"renderer pid {pid}: procstat read {n} of its descriptors, although "
+                     "its lockdown disabled tracing" for pid, n in sorted(readable.items()) if n]
+        self.assertTrue(readable, "no confined renderer to try")
+        self.assertEqual(problems, [], "a locked-down renderer can still be read by another "
+                                       "process of the same user")
+
+
+class TrapReport(Gate):
+    """Nothing is refused after the lockdown (plan/18 section 3.2, P2). With
+    BerylliumCapsicumTrap the kernel traps every call capability mode
+    refuses a renderer, and from 0.20.3.22 the renderer writes a line for
+    each, with the code that made the call, and goes on. Every survey up to
+    0.20.3.21 showed one such call, cpuset_getaffinity, which 0.20.3.22
+    answers before the lockdown. Under the gate any line fails, and names
+    what reached for what. Before 0.20.3.22 the switch ended a renderer at
+    its first refused call, so the class is skipped there."""
+
+    BROWSER_ARGS = Gate.BROWSER_ARGS + ("--enable-features=BerylliumCapsicumTrap",)
+    # Long enough for a page's workers and timers to have run.
+    SETTLE_SECONDS = 4.0
+
+    @classmethod
+    def setUpClass(cls):
+        version = capsicum.installed_version()
+        if version and version < BUILD_22:
+            raise unittest.SkipTest("the trap switch ends a renderer at its first refused "
+                                    "call before 0.20.3.22, which reports instead")
+        super().setUpClass()
+
+    def test_nothing_is_refused_after_the_lockdown(self):
+        if not self.strict():
+            self.skipTest("the lockdown was not requested (run --lockdown)")
+        fixtures = self.ctx.fixtures()
+        for name in ("busy.html", "text.html"):
+            self.browser.new_page(fixtures.url(name))
+        clips, _ = self.ctx.media()
+        for clip in ("h264_aac.mp4", "vp9_opus.webm"):
+            if clip in clips:
+                self.browser.new_page(self.ctx.add_fixture(
+                    f"trap-video-{clip}.html",
+                    f'<!doctype html><title>video</title><video src="{clip}" '
+                    'autoplay muted loop width="320"></video>'))
+        time.sleep(self.SETTLE_SECONDS)
+        lines = self.browser.log_lines("beryllium-sandbox", limit=None)
+        reporting = [int(m.group(1)) for m in map(capsicum.TRAP_REPORTING_RE.search, lines) if m]
+        calls = capsicum.refused_calls(lines)
+        described = capsicum.describe_refused(calls, DIRECT_BINARY)
+        self.note(f"renderers that report refused calls: {len(reporting)}; refused calls "
+                  f"reported: {len(calls)}"
+                  + ("\n" + "\n".join(described) if described else ""))
+        if not reporting:
+            self.before_build_22("no renderer said that it reports refused calls "
+                                 "(BerylliumCapsicumTrap)")
+        self.assertEqual(described, [], "calls capability mode refused a renderer after its "
+                                        "lockdown, with the code that made each")
 
 
 class UnconfinedRenderer(BrowserTest):

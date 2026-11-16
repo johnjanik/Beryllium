@@ -1,0 +1,355 @@
+Beryllium: the trap switch reports each refused call with its stack, and the last refused call is answered before the lockdown
+
+Purpose: plan/18 section 3.2, P2 (feature matrix S-REN-02). Every survey
+  since 0.20.3.3 shows one call refused after a renderer's lockdown, about
+  once a renderer: cpuset_getaffinity. It does no harm. It has to go
+  because nothing else is refused, and a renderer that is refused nothing
+  can be run with the kernel's capability trap as a tripwire.
+  - Where the call comes from, read from the sources: FreeBSD's
+    sysconf(_SC_NPROCESSORS_ONLN) asks for the root CPU set first
+    (cpuset_getaffinity with CPU_LEVEL_ROOT; capability mode allows only a
+    process's or thread's own set) and then answers from the ELF auxiliary
+    vector. The bundled libc++ implements
+    std::thread::hardware_concurrency() with that sysconf. abseil's
+    NumCPUs() calls it once per process, the first time one of its locks
+    is contended, and keeps the answer. V8 has the same sysconf in a
+    function Chromium does not call, and Chromium's own processor count
+    reads hw.ncpu, which capability mode allows.
+  - sandbox/policy/freebsd/sandbox_freebsd.cc, WarmUpForCapabilityMode():
+    absl::base_internal::NumCPUs() is called before the lockdown, so the
+    answer is kept by then. That abseil is the caller is an inference from
+    the count (at most one a renderer); the next point is how to know.
+  - BerylliumCapsicumTrap (PROC_TRAPCAP_CTL) made the kernel raise SIGTRAP
+    on a refused call, nothing handled it, and the renderer ended at its
+    first one. Now a handler writes one line for each refused call and
+    returns, so the call fails as it would without the switch:
+      beryllium-sandbox: renderer pid=N refused in capability mode:
+        syscall=S errno=E thread=T frames: module+0xoffset ...
+    The first frame is where the call was made, the rest are the return
+    addresses from the frame pointers, in the form the socket pair lines
+    use, which the test suite names with llvm-symbolizer. A run with the
+    switch lists everything a confined renderer still reaches for, each
+    with the code that reached.
+  The handler runs in the thread that made the call, possibly inside a
+    library holding a lock, so it takes none: no logging, no allocation,
+    no dladdr(). The modules are listed once before the lockdown (a module
+    loaded later shows as a bare address), numbers are formatted by hand,
+    and the line goes to stderr with write(2). At most 200 lines a process.
+    A SIGTRAP that is not the kernel's capability trap (a failed CHECK ends
+    in one) is passed to the handler that was installed before, or ends
+    the process as before.
+Stage: 4 (Beryllium series). Depends on beryllium-capsicum-renderer.patch
+  and, for the place in the file, beryllium-renderer-hardening.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). The lockdown's own code, taken
+  from the patched file, type-checks against FreeBSD 16's headers with
+  stand-ins for Chromium's declarations. The handler and the module list,
+  taken from the patched file and run on Linux with a breakpoint standing
+  in for the kernel's trap, wrote the line with the trapping function and
+  its callers named correctly, and the program went on.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py, class TrapReport: a
+  browser with the lockdown and BerylliumCapsicumTrap; under the gate on a
+  build that reports, no renderer may write a "refused in capability mode"
+  line, and each line found is shown with its frames named. The Capsicum
+  survey's after-lockdown list says the same from the kernel's side.
+security-review: required (sandbox setup, signal handling in a confined
+  process)
+
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -9,6 +9,9 @@
+ #include <dlfcn.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <link.h>
++#include <pthread_np.h>
++#include <signal.h>
+ #include <stdint.h>
+ #include <sys/param.h>
+ #include <sys/capsicum.h>
+@@ -23,8 +26,10 @@
+ // utrace(2) needs sys/param.h, sys/time.h and sys/uio.h first.
+ #include <sys/ktrace.h>
+ #include <time.h>
++#include <ucontext.h>
+ #include <unistd.h>
+ 
++#include <atomic>
+ #include <cstddef>
+ #include <cstring>
+ #include <limits>
+@@ -73,6 +78,7 @@
+ #include "crypto/nss_util.h"
+ #endif
+ 
++#include "third_party/abseil-cpp/absl/base/internal/sysinfo.h"
+ #include "third_party/boringssl/src/include/openssl/crypto.h"
+ 
+ #include "ui/gfx/font_util.h"
+@@ -137,6 +143,18 @@
+   std::ignore = base::SysInfo::OperatingSystemArchitecture();
+   std::ignore = base::SysInfo::KernelVersionNumber::Current();
+   std::ignore = base::SysInfo::NumberOfProcessors();
++  // The one call every survey since 0.20.3.3 shows refused after the
++  // lockdown, about once a renderer: cpuset_getaffinity. FreeBSD's
++  // sysconf(_SC_NPROCESSORS_ONLN) asks for the root CPU set first
++  // (CPU_LEVEL_ROOT, which capability mode refuses: only the process's or
++  // thread's own set may be read) and then takes the count from the ELF
++  // auxiliary vector, so the answer is right and the call is refused. The
++  // bundled libc++ implements std::thread::hardware_concurrency() with that
++  // sysconf, and abseil reads it once per process, the first time one of
++  // its locks is contended, and keeps the answer. Read here, it is kept
++  // before the lockdown. Whether abseil is the only caller left is what the
++  // trap report below is for.
++  std::ignore = absl::base_internal::NumCPUs();
+   base::FilePath unused;
+   base::PathService::Get(base::FILE_EXE, &unused);
+   base::PathService::Get(base::DIR_EXE, &unused);
+@@ -150,6 +168,226 @@
+   localtime_r(&now, &local);
+ }
+ 
++// Beryllium (plan/18 section 3.2, P2): with kBerylliumCapsicumTrap the
++// kernel raises SIGTRAP (si_code TRAP_CAP) in a thread whose system call
++// capability mode has just refused. Until 0.20.3.21 nothing handled it, and
++// the renderer ended at its first refused call. From 0.20.3.22 the handler
++// below writes one line for the call, with the system call's number, the
++// error and the return addresses up the stack, and returns: the call then
++// fails as it would without the switch, and the renderer goes on. A run
++// with the switch therefore lists everything a confined renderer still
++// reaches for, each with the code that reached, and the test suite fails
++// on any line (freebsd/tests/browser, class TrapReport).
++//
++// The handler runs in whatever thread made the call, possibly inside a
++// library that holds a lock, so it uses no lock of its own: no logging, no
++// allocation, no dladdr(). The modules are listed once, before the
++// lockdown; a module loaded later shows as a bare address. The line goes to
++// stderr with write(2), where the rest of the lockdown's log goes.
++struct TrapModule {
++  uintptr_t base = 0;  // where the module is mapped; offsets are from here
++  uintptr_t end = 0;
++  char name[40] = {};
++};
++constexpr int kMaxTrapModules = 320;
++TrapModule g_trap_modules[kMaxTrapModules];
++int g_trap_module_count = 0;
++std::atomic<int> g_trap_reports{0};
++// A renderer that is refused the same call in a loop must not fill the log.
++constexpr int kMaxTrapReports = 200;
++struct sigaction g_previous_trap_action;
++
++int NoteTrapModule(struct dl_phdr_info* info, size_t, void* main_base) {
++  if (g_trap_module_count >= kMaxTrapModules) {
++    return 1;
++  }
++  uintptr_t begin = std::numeric_limits<uintptr_t>::max();
++  uintptr_t end = 0;
++  for (int i = 0; i < info->dlpi_phnum; ++i) {
++    const auto& ph = info->dlpi_phdr[i];
++    if (ph.p_type != PT_LOAD) {
++      continue;
++    }
++    const uintptr_t from = info->dlpi_addr + ph.p_vaddr;
++    begin = std::min(begin, from);
++    end = std::max(end, from + ph.p_memsz);
++  }
++  if (end == 0) {
++    return 0;
++  }
++  // The start of the page the first segment is mapped at is what dladdr()
++  // calls the module's base, and the socket pair lines give offsets from
++  // that; these lines do the same, so the suite names both the same way.
++  begin &= ~(static_cast<uintptr_t>(getpagesize()) - 1);
++  TrapModule& module = g_trap_modules[g_trap_module_count++];
++  module.base = begin;
++  module.end = end;
++  const char* name = info->dlpi_name;
++  if (reinterpret_cast<void*>(begin) == main_base || name == nullptr ||
++      name[0] == '\0') {
++    Dl_info self;
++    name = dladdr(reinterpret_cast<void*>(&NoteTrapModule), &self) != 0 &&
++                   self.dli_fname != nullptr
++               ? self.dli_fname
++               : "main";
++  }
++  const char* slash = strrchr(name, '/');
++  strlcpy(module.name, slash ? slash + 1 : name, sizeof(module.name));
++  return 0;
++}
++
++// Appends to |line| at |used|, never past |size|; both helpers are plain
++// loops so that the handler calls nothing that could take a lock.
++size_t TrapAppend(char* line, size_t size, size_t used, const char* text) {
++  while (*text != '\0' && used + 1 < size) {
++    line[used++] = *text++;
++  }
++  return used;
++}
++
++size_t TrapAppendNumber(char* line, size_t size, size_t used, uintptr_t value,
++                        int base) {
++  char digits[24];
++  int count = 0;
++  do {
++    const int digit = static_cast<int>(value % static_cast<uintptr_t>(base));
++    digits[count++] = static_cast<char>(digit < 10 ? '0' + digit
++                                                   : 'a' + digit - 10);
++    value /= static_cast<uintptr_t>(base);
++  } while (value != 0 && count < static_cast<int>(sizeof(digits)));
++  while (count > 0 && used + 1 < size) {
++    line[used++] = digits[--count];
++  }
++  return used;
++}
++
++size_t TrapAppendAddress(char* line, size_t size, size_t used,
++                         uintptr_t address) {
++  for (int i = 0; i < g_trap_module_count; ++i) {
++    const TrapModule& module = g_trap_modules[i];
++    if (address >= module.base && address < module.end) {
++      used = TrapAppend(line, size, used, module.name);
++      used = TrapAppend(line, size, used, "+0x");
++      return TrapAppendNumber(line, size, used, address - module.base, 16);
++    }
++  }
++  used = TrapAppend(line, size, used, "0x");
++  return TrapAppendNumber(line, size, used, address, 16);
++}
++
++void ReportRefusedCall(int signal_number, siginfo_t* info, void* context) {
++  if (info == nullptr || info->si_code != TRAP_CAP) {
++    // Any other trap (a failed CHECK ends in one) is not ours: hand it to
++    // whatever was installed before, or let it end the process.
++    if ((g_previous_trap_action.sa_flags & SA_SIGINFO) != 0 &&
++        g_previous_trap_action.sa_sigaction != nullptr) {
++      g_previous_trap_action.sa_sigaction(signal_number, info, context);
++      return;
++    }
++    if (g_previous_trap_action.sa_handler != SIG_DFL &&
++        g_previous_trap_action.sa_handler != SIG_IGN &&
++        g_previous_trap_action.sa_handler != nullptr) {
++      g_previous_trap_action.sa_handler(signal_number);
++      return;
++    }
++    signal(signal_number, SIG_DFL);
++    raise(signal_number);
++    return;
++  }
++  const int saved_errno = errno;
++  const int report = g_trap_reports.fetch_add(1, std::memory_order_relaxed);
++  if (report >= kMaxTrapReports) {
++    errno = saved_errno;
++    return;
++  }
++  char line[1400];
++  size_t used = 0;
++  used = TrapAppend(line, sizeof(line), used,
++                    "beryllium-sandbox: renderer pid=");
++  used = TrapAppendNumber(line, sizeof(line), used,
++                          static_cast<uintptr_t>(getpid()), 10);
++  used = TrapAppend(line, sizeof(line), used,
++                    " refused in capability mode: syscall=");
++  used = TrapAppendNumber(line, sizeof(line), used,
++                          static_cast<uintptr_t>(info->si_syscall), 10);
++  used = TrapAppend(line, sizeof(line), used, " errno=");
++  used = TrapAppendNumber(line, sizeof(line), used,
++                          static_cast<uintptr_t>(info->si_errno), 10);
++  used = TrapAppend(line, sizeof(line), used, " thread=");
++  used = TrapAppendNumber(line, sizeof(line), used,
++                          static_cast<uintptr_t>(pthread_getthreadid_np()), 10);
++  used = TrapAppend(line, sizeof(line), used, " frames:");
++  // Where the call was made, then the return addresses from the frame
++  // pointers this build keeps, as ReturnAddresses() in
++  // base/posix/capsicum_rights.cc reads them for the socket pair lines.
++  uintptr_t frame = 0;
++  uintptr_t stack = 0;
++  const auto* uc = static_cast<const ucontext_t*>(context);
++  if (uc != nullptr) {
++#if defined(__x86_64__)
++    used = TrapAppend(line, sizeof(line), used, " ");
++    used = TrapAppendAddress(line, sizeof(line), used,
++                             static_cast<uintptr_t>(uc->uc_mcontext.mc_rip));
++    frame = static_cast<uintptr_t>(uc->uc_mcontext.mc_rbp);
++    stack = static_cast<uintptr_t>(uc->uc_mcontext.mc_rsp);
++#elif defined(__aarch64__)
++    used = TrapAppend(line, sizeof(line), used, " ");
++    used = TrapAppendAddress(
++        line, sizeof(line), used,
++        static_cast<uintptr_t>(uc->uc_mcontext.mc_gpregs.gp_elr));
++    frame = static_cast<uintptr_t>(uc->uc_mcontext.mc_gpregs.gp_x[29]);
++    stack = static_cast<uintptr_t>(uc->uc_mcontext.mc_gpregs.gp_sp);
++#endif
++  }
++  // A frame pointer is followed only upwards from the interrupted stack
++  // pointer and within 8 MB of it, so a register that is not a frame
++  // pointer (libc's system call stubs keep none) ends the walk instead of
++  // being read through.
++  const uintptr_t limit = stack + (8u << 20);
++  for (int i = 0; i < 24; ++i) {
++    if (frame == 0 || frame % sizeof(uintptr_t) != 0 || frame < stack ||
++        frame >= limit) {
++      break;
++    }
++    const uintptr_t* words = reinterpret_cast<const uintptr_t*>(frame);
++    const uintptr_t next = words[0];
++    const uintptr_t ret = words[1];
++    if (ret == 0) {
++      break;
++    }
++    used = TrapAppend(line, sizeof(line), used, " ");
++    used = TrapAppendAddress(line, sizeof(line), used, ret);
++    if (next <= frame) {
++      break;
++    }
++    frame = next;
++  }
++  if (report + 1 == kMaxTrapReports) {
++    used = TrapAppend(line, sizeof(line), used,
++                      " (no further refused calls are reported)");
++  }
++  used = TrapAppend(line, sizeof(line), used, "\n");
++  std::ignore = HANDLE_EINTR(write(STDERR_FILENO, line, used));
++  errno = saved_errno;
++}
++
++// Lists the modules and installs the handler; before cap_enter(). False,
++// with errno set, if sigaction() failed.
++bool ReportRefusedCalls() {
++  Dl_info self;
++  void* main_base =
++      dladdr(reinterpret_cast<void*>(&NoteTrapModule), &self) != 0
++          ? self.dli_fbase
++          : nullptr;
++  g_trap_module_count = 0;
++  dl_iterate_phdr(&NoteTrapModule, main_base);
++  struct sigaction action = {};
++  action.sa_sigaction = &ReportRefusedCall;
++  action.sa_flags = SA_SIGINFO | SA_RESTART;
++  sigemptyset(&action.sa_mask);
++  return sigaction(SIGTRAP, &action, &g_previous_trap_action) == 0;
++}
++
+ // What a renderer may hold at the lockdown point, and with which rights:
+ // the policy in base/posix/capsicum_rights.h (plan/06 section 3.2; feature
+ // matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, limited by
+@@ -394,9 +632,17 @@
+   const int threads = ThreadCount(&thread_names);
+   base::freebsd::ExpectConfinement();
+   if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
++    // The handler first: a trap nobody handles ends the renderer.
+     int trap = PROC_TRAPCAP_CTL_ENABLE;
+-    if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
+-      PLOG(WARNING) << "beryllium-sandbox: PROC_TRAPCAP_CTL";
++    if (!ReportRefusedCalls()) {
++      PLOG(WARNING) << "beryllium-sandbox: the trap report is off (sigaction)";
++    } else if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &trap) != 0) {
++      PLOG(WARNING) << "beryllium-sandbox: the trap report is off "
++                       "(PROC_TRAPCAP_CTL)";
++    } else {
++      LOG(WARNING) << "beryllium-sandbox: renderer pid=" << getpid()
++                   << " reports refused calls (BerylliumCapsicumTrap), "
++                   << g_trap_module_count << " modules listed";
+     }
+   }
+   *confinement = ConfineDescriptors();

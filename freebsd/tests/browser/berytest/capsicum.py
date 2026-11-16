@@ -467,6 +467,125 @@ def locked_pids(log_lines):
     return [int(m.group(1)) for m in map(LOCKED_PID_RE.search, log_lines) if m]
 
 
+# From 0.20.3.22 (patches/security/beryllium-renderer-hardening.patch): what
+# a renderer gave up at its lockdown besides ambient authority, at the end of
+# its lockdown line, hardening=a,b,c; "-" when it set nothing.
+HARDENING_RE = re.compile(r"renderer pid=(\d+)\b.*capability_mode=1 .*\bhardening=(\S+)")
+HARDENING_CALLS = ("no-new-privileges", "no-core", "no-fork")
+# The feature that leaves a locked-down renderer traceable: procstat -f and
+# -C, ktrace and a debugger all need it from 0.20.3.22. A test class whose
+# tests read a renderer's descriptors adds it; older builds ignore the name.
+TRACEABLE_SWITCH = "--enable-features=BerylliumRendererTraceable"
+
+
+def hardening_at_lockdown(log_lines):
+    """{pid: [what its lockdown set]} from the lockdown lines of a build
+    that writes hardening=; {} for an older build."""
+    out = {}
+    for line in log_lines:
+        m = HARDENING_RE.search(line)
+        if m:
+            out[int(m.group(1))] = [] if m.group(2) == "-" else m.group(2).split(",")
+    return out
+
+
+def hardening_problems(hardening, traceable):
+    """Renderers whose lockdown line lacks one of the hardening calls, or
+    whose tracing is not as this run asked: traceable is True for a run
+    with BerylliumRendererTraceable, False for one without."""
+    problems = []
+    for pid, done in sorted(hardening.items()):
+        lacking = [c for c in HARDENING_CALLS if c not in done]
+        if lacking:
+            problems.append(f"renderer pid {pid}: its lockdown did not set {', '.join(lacking)}")
+        expected = "traceable" if traceable else "untraceable"
+        if expected not in done:
+            problems.append(f"renderer pid {pid}: its lockdown says "
+                            f"{', '.join(done) or 'nothing'}, and this run expects {expected}")
+    return problems
+
+
+# From 0.20.3.22 (patches/security/beryllium-capability-trap-report.patch):
+# with BerylliumCapsicumTrap a confined renderer writes one line for each
+# call capability mode refuses it, with where the call was made and the
+# return addresses above it. The line is written with write(2) from a signal
+# handler, so it has no log prefix.
+TRAP_REPORTING_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) reports refused calls")
+REFUSED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) refused in capability mode: "
+                        r"syscall=(\d+) errno=(\d+) thread=(\d+) frames:(.*)$")
+SYSCALL_DEFINE_RE = re.compile(r"^#define\s+SYS_(\w+)\s+(\d+)\s*$")
+# Enough to name the one call every survey has seen, on a machine without
+# the header.
+KNOWN_SYSCALLS = {487: "cpuset_getaffinity"}
+ERRNO_NAMES = {93: "ENOTCAPABLE", 94: "ECAPMODE"}
+
+
+def refused_calls(log_lines):
+    """[{pid, syscall, errno, thread, frames: [(module or None, offset)]}]
+    from the trap report's lines, in order."""
+    out = []
+    for line in log_lines:
+        m = REFUSED_RE.search(line)
+        if not m:
+            continue
+        frames = []
+        for token in m.group(5).split():
+            fm = FRAME_RE.match(token)
+            if fm:
+                frames.append((fm.group(1), int(fm.group(2), 16)))
+            elif re.fullmatch(r"0x[0-9a-fA-F]+", token):
+                frames.append((None, int(token, 16)))
+            else:
+                break  # the note that reporting has stopped
+        out.append({"pid": int(m.group(1)), "syscall": int(m.group(2)),
+                    "errno": int(m.group(3)), "thread": int(m.group(4)), "frames": frames})
+    return out
+
+
+def syscall_names(header="/usr/include/sys/syscall.h", text=None):
+    """{number: name} from FreeBSD's sys/syscall.h, with the calls this
+    suite has seen refused when there is no such file."""
+    names = dict(KNOWN_SYSCALLS)
+    if text is None:
+        try:
+            with open(header, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            return names
+    for line in text.splitlines():
+        m = SYSCALL_DEFINE_RE.match(line)
+        if m and m.group(1) != "MAXSYSCALL":
+            names[int(m.group(2))] = m.group(1)
+    return names
+
+
+def describe_refused(calls, binary, names=None, run=None):
+    """One line for each different refused call (the same call from the
+    same code counts once, with how often and in how many renderers): the
+    system call by name, and its frames, those in the browser binary named
+    with llvm-symbolizer as the socket pair frames are."""
+    names = syscall_names() if names is None else names
+    groups = {}
+    for c in calls:
+        key = (c["syscall"], c["errno"], tuple(c["frames"]))
+        g = groups.setdefault(key, {"count": 0, "pids": set()})
+        g["count"] += 1
+        g["pids"].add(c["pid"])
+    own = os.path.basename(binary)
+    offsets = sorted({o for (_, _, frames) in groups for m, o in frames if m == own})
+    named = dict(zip(offsets, symbolize(offsets, binary, run)))
+    lines = []
+    for (syscall, error, frames), g in groups.items():
+        shown = []
+        for module, offset in frames:
+            name = named.get(offset) if module == own else None
+            shown.append(name if name and name != "??" else f"{module or '?'}+0x{offset:x}")
+        lines.append(f"{names.get(syscall, f'syscall {syscall}')} "
+                     f"({ERRNO_NAMES.get(error, f'errno {error}')}), {g['count']} times in "
+                     f"{len(g['pids'])} renderers: " + (" < ".join(shown) or "no frames"))
+    return lines
+
+
 # beryllium://sandbox as 0.20.3.21 writes it
 # (patches/security/beryllium-sandbox-status-page.patch): plain lines.
 # From 0.20.3.22 a renderer the browser asked to lock down and has not
