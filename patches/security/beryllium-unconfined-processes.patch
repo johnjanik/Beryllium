@@ -102,7 +102,7 @@ security-review: required (sandbox reporting, process hardening)
  // Written with utrace(2) at the lockdown point, whether or not the renderer
  // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
  // splits each process's trace there, separating what happens before the
-@@ -866,6 +876,17 @@
+@@ -869,6 +879,17 @@
                                                       : confinement.hardening);
      }
    } else {

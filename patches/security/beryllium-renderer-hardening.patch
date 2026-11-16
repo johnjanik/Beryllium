@@ -12,9 +12,10 @@ Purpose: plan/18 section 3.2, P3 (plan/06 section 3.1; feature matrix
     before cap_enter(), when the lockdown is on:
       - PROC_NO_NEW_PRIVS_CTL: an exec no longer changes credentials;
       - RLIMIT_CORE 0;
-      - RLIMIT_NPROC 0: fork fails (the kernel counts against this limit in
-        fork1() only; threads come from thr_new(), which does not look at
-        it);
+      - RLIMIT_NPROC 1: fork fails, since the user has more than one
+        process already; the value the standalone oracle tries
+        (proc.fork_nproc1). The kernel counts against this limit in fork1()
+        only; threads come from thr_new(), which does not look at it;
       - PROC_TRACE_CTL disabled: no ptrace, no ktrace, no debugging sysctls
         (kern.proc.filedesc, which is what procstat -f reads) and no core
         from this process, for another process of the same user.
@@ -33,9 +34,9 @@ Purpose: plan/18 section 3.2, P3 (plan/06 section 3.1; feature matrix
   The kernel refuses PROC_TRACE_CTL on a process that is being traced
     already (EBUSY). That is a debugger or ktrace started on the renderer
     before its lockdown; the renderer ends and the message names the switch.
-  Not verified on a machine: that RLIMIT_NPROC 0 leaves thread creation
-    alone on FreeBSD 14, 15 and 16 (read from kern_fork.c and kern_thr.c;
-    the standalone job of plan/18 section 0.2 is to confirm it). If it does
+  Not verified on a machine: that RLIMIT_NPROC 1 leaves thread creation
+    alone in a process with many threads (read from kern_fork.c and
+    kern_thr.c; the oracle's probe forks and makes no thread). If it does
     not, every renderer ends at its first thread and
     --disable-features=BerylliumRendererHardening shows it at once.
 Stage: 4 (Beryllium series). Depends on beryllium-capsicum-renderer.patch.
@@ -81,7 +82,7 @@ security-review: required (sandbox setup, process confinement)
  // Written with utrace(2) at the lockdown point, whether or not the renderer
  // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
  // splits each process's trace there, separating what happens before the
-@@ -158,9 +178,67 @@
+@@ -158,9 +178,70 @@
    int limited = 0;
    int threads = -1;          // threads in the process at the lockdown point
    std::string thread_names;  // their names (ki_tdname), comma-separated
@@ -98,9 +99,11 @@ security-review: required (sandbox setup, process confinement)
 +//     no longer changes credentials.
 +//   - RLIMIT_CORE 0: no core file (capability mode already refuses to
 +//     create one; this is the limit that says so).
-+//   - RLIMIT_NPROC 0: fork fails. The kernel counts processes against this
-+//     limit in fork1() only; threads are made by thr_new(), which does not
-+//     look at it.
++//   - RLIMIT_NPROC 1: fork fails, because the user has more than one
++//     process already (this one and the browser at least). It is the value
++//     the standalone oracle tries (proc.fork_nproc1). The kernel counts
++//     processes against this limit in fork1() only; threads are made by
++//     thr_new(), which does not look at it.
 +//   - PROC_TRACE_CTL: no ptrace, no ktrace, no debugging sysctls and no core
 +//     from this process. The kernel refuses to set it on a process that is
 +//     being traced already (EBUSY), which is a debugger or ktrace started on
@@ -122,7 +125,8 @@ security-review: required (sandbox setup, process confinement)
 +      return false;
 +    }
 +    *done += "no-core,";
-+    if (setrlimit(RLIMIT_NPROC, &none) != 0) {
++    const struct rlimit one_process = {1, 1};
++    if (setrlimit(RLIMIT_NPROC, &one_process) != 0) {
 +      *violation = "RLIMIT_NPROC was not lowered";
 +      return false;
 +    }
@@ -149,7 +153,7 @@ security-review: required (sandbox setup, process confinement)
  // The number of threads in this process, from the kernel, or -1 with the
  // reason in the log. kern.proc.pid with KERN_PROC_INC_THREAD answers one
  // kinfo_proc per thread, each starting with its own size (ki_structsize),
-@@ -334,6 +412,9 @@
+@@ -334,6 +415,9 @@
      confinement->violation = "the standard streams could not be limited";
      return false;
    }
@@ -159,7 +163,7 @@ security-review: required (sandbox setup, process confinement)
    utrace(kLockdownMarker, sizeof(kLockdownMarker) - 1);
    if (cap_enter() != 0) {
      return false;
-@@ -480,7 +561,10 @@
+@@ -480,7 +564,10 @@
                     << " threads=" << confinement.threads << " thread_names="
                     << (confinement.thread_names.empty()
                             ? "-"

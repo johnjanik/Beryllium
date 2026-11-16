@@ -208,7 +208,7 @@ security-review: required (sandbox reporting; a fork in the browser process)
            "renderers are confined and the browser, GPU, network and storage\n"
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -766,6 +766,14 @@
+@@ -769,6 +769,14 @@
    const std::string process_type =
        command_line->GetSwitchValueASCII(switches::kProcessType);
  

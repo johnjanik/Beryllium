@@ -311,7 +311,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    used = TrapAppendNumber(line, sizeof(line), used,
                            static_cast<uintptr_t>(getpid()), 10);
    used = TrapAppend(line, sizeof(line), used,
-@@ -617,11 +644,12 @@
+@@ -620,11 +647,12 @@
  // Enters capability mode; returns false, with errno set, if it did not.
  // |confinement| receives what was done to the descriptors, or what stopped
  // the lockdown.
@@ -328,7 +328,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
      return true;
    }
    // Read before the sweep, assigned after it: ConfineDescriptors() returns
-@@ -640,7 +668,8 @@
+@@ -643,7 +671,8 @@
        PLOG(WARNING) << "beryllium-sandbox: the trap report is off "
                         "(PROC_TRAPCAP_CTL)";
      } else {
@@ -338,7 +338,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " reports refused calls (BerylliumCapsicumTrap), "
                     << g_trap_module_count << " modules listed";
      }
-@@ -661,7 +690,7 @@
+@@ -664,7 +693,7 @@
    if (!HardenRenderer(&confinement->hardening, &confinement->violation)) {
      return false;
    }
@@ -347,7 +347,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    if (cap_enter() != 0) {
      return false;
    }
-@@ -797,18 +826,34 @@
+@@ -800,18 +829,34 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
@@ -388,7 +388,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " capability_mode=1 closed_directories="
                     << confinement.closed_directories
                     << " limited=" << confinement.limited
-@@ -820,6 +865,12 @@
+@@ -823,6 +868,12 @@
                     << (confinement.hardening.empty() ? "-"
                                                       : confinement.hardening);
      }

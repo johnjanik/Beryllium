@@ -333,7 +333,7 @@ security-review: required (sandbox setup, signal handling in a confined
  // What a renderer may hold at the lockdown point, and with which rights:
  // the policy in base/posix/capsicum_rights.h (plan/06 section 3.2; feature
  // matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, limited by
-@@ -394,9 +632,17 @@
+@@ -397,9 +635,17 @@
    const int threads = ThreadCount(&thread_names);
    base::freebsd::ExpectConfinement();
    if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {
