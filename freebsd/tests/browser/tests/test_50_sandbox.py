@@ -336,6 +336,11 @@ class SandboxHonesty(Gate):
         # whether it left itself traceable, which this class asks for.
         hardening = capsicum.hardening_at_lockdown(locked)
         hardening_problems = capsicum.hardening_problems(hardening, self.TRACEABLE)
+        # From 0.20.3.22: the browser invites a renderer only once the
+        # kernel says it has locked down, and nothing can have been sent to
+        # it before that.
+        invited = capsicum.invitations(lines)
+        sent_early = capsicum.cuts_before_invitation(lines)
         # Why the thread count failed, if it did (0.20.3.14 logs the sysctl
         # error), and the stack trace behind the first socket pair at each
         # site and thread (one per renderer process; the first of each kind).
@@ -364,6 +369,10 @@ class SandboxHonesty(Gate):
                   + f"\ncuts by the process that made them: {senders or 'none'}"
                   + f"\nrenderers the kernel attested when they connected: {len(attested)}"
                   + (f"; ended by that check: {ended}" if ended else "")
+                  + (f"\nrenderers invited once in capability mode: {len(invited)}; "
+                     f"milliseconds from launch to that: {capsicum.spread(invited.values())}"
+                     + (f"; descriptors cut for a renderer before its invitation: {sent_early}"
+                        if sent_early else "") if invited else "")
                   + ("\nwhat each lockdown set besides capability mode: "
                      + "; ".join(f"{n} x [{h}]" for h, n in sorted(collections.Counter(
                          ",".join(v) or "-" for v in hardening.values()).items()))
@@ -412,6 +421,22 @@ class SandboxHonesty(Gate):
                                               "were not attested by the browser's check")
             self.assertEqual(limits_off, [], "a renderer ran with its receive-side limits "
                                              "off in the ordinary gate")
+            # From 0.20.3.22 a renderer is invited only after its lockdown.
+            # A build that writes the invitation lines must have invited
+            # every renderer it attested, and sent none of them a descriptor
+            # before.
+            if invited:
+                self.assertEqual(sorted(set(attested) - set(invited)), [],
+                                 "renderers the browser attested and had not invited after "
+                                 "their lockdown")
+                self.assertEqual(sent_early, {}, "descriptors the browser cut for a renderer "
+                                                 "before it invited that renderer")
+            elif attested:
+                version = capsicum.installed_version()
+                if version and version >= BUILD_22:
+                    self.fail("the browser attested renderers and wrote no line about "
+                              "inviting them after their lockdown, on a build that should "
+                              "(is BerylliumInviteAfterLockdown off?)")
             # From 0.20.3.22 every lockdown line says what else was set.
             if locked and not hardening:
                 version = capsicum.installed_version()
@@ -659,8 +684,10 @@ class UnconfinedRenderer(BrowserTest):
             problem = f"{type(e).__name__}: {e}"
         lines = self.browser.log_lines("beryllium-sandbox", limit=None)
         attested, ended = capsicum.attestations(lines)
+        uninvited = capsicum.ended_uninvited(lines)
         self.note(f"renderers ended by the browser's check: {ended or 'none'}; attested: "
-                  f"{attested or 'none'}; the page: "
+                  f"{attested or 'none'}; ended before they were sent anything: "
+                  f"{sorted(uninvited) or 'none'}; the page: "
                   + (f"answered a script with {answered!r}" if problem == "" else problem))
         if not attested and not ended:
             version = capsicum.installed_version()
@@ -673,4 +700,12 @@ class UnconfinedRenderer(BrowserTest):
                                        "RendererMain skips the lockdown")
         self.assertNotEqual(problem, "", "a page in a renderer that never locked down "
                                          f"answered a script ({answered!r})")
+        # From 0.20.3.22 such a renderer is ended before the browser has sent
+        # it anything; 0.20.3.21 ended it when its channel connected, after
+        # the invitation and whatever was queued behind it.
+        version = capsicum.installed_version()
+        if uninvited or (version and version >= BUILD_22):
+            self.assertEqual(sorted(set(ended) - uninvited), [],
+                             "renderers the browser ended only after it had sent them "
+                             "its invitation")
 

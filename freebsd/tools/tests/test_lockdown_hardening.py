@@ -164,7 +164,55 @@ class Refused(unittest.TestCase):
         self.assertEqual(capsicum.describe_refused([], "/x/beryllium"), [])
 
 
+def invited(pid, ms=180):
+    return line(100, f"renderer pid={pid} invited {ms} ms after its launch, in capability "
+                     "mode by the kernel's account")
+
+
+def uninvited(pid, ms=0):
+    return line(100, f"renderer pid={pid} is not in capability mode by the kernel's account; "
+                     f"ended before it was sent anything, {ms} ms after its launch")
+
+
+def cut(pid):
+    return line(100, f"cut shared memory (fd 40) bound for confined renderer pid {pid}")
+
+
+class Invitations(unittest.TestCase):
+    def test_the_time_from_launch_to_lockdown_is_read(self):
+        log = [invited(201, 180), invited(202, 95), uninvited(203, 10000)]
+        self.assertEqual(capsicum.invitations(log), {201: 180, 202: 95})
+        self.assertEqual(capsicum.ended_uninvited(log), {203})
+        self.assertEqual(capsicum.spread([180, 95, 240]), "95 to 240, median 180")
+        self.assertEqual(capsicum.spread([]), "")
+
+    def test_a_renderer_ended_uninvited_is_still_an_ended_renderer(self):
+        attested, ended = capsicum.attestations([uninvited(203)])
+        self.assertEqual((attested, sorted(ended)), ([], [203]))
+
+    def test_a_cut_before_the_invitation_is_counted_and_one_after_is_not(self):
+        log = [cut(201), invited(201), cut(201), cut(201), invited(202), cut(202)]
+        self.assertEqual(capsicum.cuts_before_invitation(log), {201: 1})
+        self.assertEqual(capsicum.cuts_before_invitation([invited(201), cut(201)]), {})
+        # a build that invites at launch writes no such line, and nothing is counted
+        self.assertEqual(capsicum.cuts_before_invitation([cut(201), cut(202)]), {})
+
+
 class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
+    def test_the_invitation_lines(self):
+        patch = patch_text("beryllium-invite-after-lockdown.patch")
+        said = patched_text(patch)
+        for piece in ("beryllium-sandbox: renderer pid=", " invited ",
+                      " ms after its launch, in capability mode by the kernel's account",
+                      " is not in capability mode by the kernel's account",
+                      " has no answer from the kernel about its capability mode",
+                      "; ended before it was sent anything, "):
+            self.assertTrue(piece in said, f"the patch does not write {piece!r}")
+        self.assertIn("BASE_FEATURE(kBerylliumInviteAfterLockdown, FEATURE_ENABLED_BY_DEFAULT)",
+                      said)
+        code = patch.split("\n--- a/", 1)[1]
+        self.assertNotIn("could not", patched_text(code, added_only=True))
+
     def test_the_hardening_field(self):
         patch = patch_text("beryllium-renderer-hardening.patch")
         said = patched_text(patch)
@@ -244,9 +292,31 @@ class GateReadsTheHardening(unittest.TestCase):
         with build((0, 20, 3, 21)):
             self.run_log_test(LOG)
 
+    def test_passes_when_every_attested_renderer_was_invited_first(self):
+        t = self.run_log_test([invited(201, 180)] + with_hardening(LOG, TRACEABLE))
+        self.assertIn("renderers invited once in capability mode: 1; milliseconds from "
+                      "launch to that: 180 to 180, median 180", t.note.call_args[0][0])
+
+    def test_fails_when_an_attested_renderer_was_never_invited_that_way(self):
+        log = [invited(555)] + with_hardening(LOG, TRACEABLE)
+        with self.assertRaises(AssertionError) as e:
+            self.run_log_test(log)
+        self.assertIn("had not invited after their lockdown", str(e.exception))
+
+    def test_fails_when_something_was_cut_for_a_renderer_before_its_invitation(self):
+        log = with_hardening(LOG, TRACEABLE) + [invited(201)]
+        with self.assertRaises(AssertionError) as e:
+            self.run_log_test(log)
+        self.assertIn("before it invited that renderer", str(e.exception))
+
+    def test_a_build_that_should_invite_after_the_lockdown_fails_without_the_lines(self):
+        with build((0, 20, 3, 22)), self.assertRaises(AssertionError) as e:
+            self.run_log_test(with_hardening(LOG, TRACEABLE))
+        self.assertIn("BerylliumInviteAfterLockdown", str(e.exception))
+
     def test_a_build_that_should_write_it_fails_without_it(self):
         with build((0, 20, 3, 22)), self.assertRaises(AssertionError) as e:
-            self.run_log_test(LOG)
+            self.run_log_test([invited(201)] + LOG)
         self.assertIn("hardening=", str(e.exception))
 
 
@@ -299,6 +369,36 @@ class UntraceableTest(unittest.TestCase):
             self.run_case(self.case(hardening=None))
         with build((0, 20, 3, 22)), self.assertRaises(AssertionError):
             self.run_case(self.case(hardening=None))
+
+
+class UnconfinedRendererIsSentNothing(unittest.TestCase):
+    METHOD = "test_an_unconfined_renderer_is_ended"
+
+    def case(self, log):
+        t = gate_case(sandbox.UnconfinedRenderer, self.METHOD, LOCKDOWN, log=log)
+        t.browser.new_page.side_effect = sandbox.CDPError("the target is gone")
+        return t
+
+    def test_passes_when_each_was_ended_before_it_was_sent_anything(self):
+        with mock.patch.object(sandbox.time, "sleep"), build((0, 20, 3, 22)):
+            t = self.case([uninvited(201), uninvited(202)])
+            t.test_an_unconfined_renderer_is_ended()
+        self.assertIn("ended before they were sent anything: [201, 202]",
+                      t.note.call_args[0][0])
+
+    def test_fails_on_this_build_when_one_was_ended_only_at_connect(self):
+        at_connect = line(100, "renderer pid=202 is not in capability mode by the kernel's "
+                               "account; ended")
+        with mock.patch.object(sandbox.time, "sleep"), build((0, 20, 3, 22)), \
+                self.assertRaises(AssertionError) as e:
+            self.case([uninvited(201), at_connect]).test_an_unconfined_renderer_is_ended()
+        self.assertIn("only after it had sent them its invitation", str(e.exception))
+
+    def test_the_build_before_ended_them_at_connect_and_still_passes(self):
+        at_connect = line(100, "renderer pid=202 is not in capability mode by the kernel's "
+                               "account; ended")
+        with mock.patch.object(sandbox.time, "sleep"), build((0, 20, 3, 21)):
+            self.case([at_connect]).test_an_unconfined_renderer_is_ended()
 
 
 class TrapReportTest(unittest.TestCase):

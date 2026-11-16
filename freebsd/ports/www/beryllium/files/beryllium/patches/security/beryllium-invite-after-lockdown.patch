@@ -1,0 +1,304 @@
+Beryllium: a renderer is sent nothing until the kernel says it has locked down
+
+Purpose: plan/18 section 2, stage B (feature matrix S-STA-01). From
+  0.20.3.21 the browser asks the kernel about a renderer when its channel
+  connects, and ends one that is not in capability mode. That leaves a
+  moment: the invitation went out at launch, so whatever the browser had
+  queued for the renderer, and the first navigation can be part of it, was
+  there for an unconfined renderer to read before it was ended.
+  - content/browser/child_process_launcher_helper.{h,cc}: for a renderer
+    launched with the lockdown on, the launcher keeps the Mojo invitation
+    back and asks the kernel every 3 ms whether the process is in
+    capability mode (KernelSaysCapabilityMode, on the pid fork gave). When
+    the answer is yes, the invitation is sent, as it was sent before. A
+    renderer needs nothing from the browser to get that far: RendererMain
+    locks down before it accepts the invitation. The asking is a delayed
+    task on the launcher thread, which stays free for other launches.
+    The renderer is ended, never having been sent anything, when it has
+    exited, when the kernel gives no answer, when ten seconds have passed,
+    or at once when the browser runs with --no-sandbox (under which a
+    renderer skips its lockdown). The invitation is destroyed unsent, which
+    the browser's side sees as a renderer that went away. A renderer paused
+    for a debugger (--renderer-startup-dialog, --wait-for-debugger) is
+    waited for without a limit.
+    The code that sends the invitation moves, unchanged, into
+    SendInvitationOnLauncherThread(), so that both paths use it; the
+    launcher's copy of the process handle is made before the send instead
+    of after.
+  - base/posix/capsicum_rights.{h,cc}: the feature
+    BerylliumInviteAfterLockdown, on by default, so that a run can compare
+    with the order of 0.20.3.21; ProcessIsGone(pid), true for a process
+    that has exited whether or not it has been collected (the kernel still
+    answers about the credentials of one that has not).
+  Two lines in the log, which is also where the time a renderer takes from
+  launch to lockdown is now recorded (plan/18 section 2.3, step 6):
+    beryllium-sandbox: renderer pid=N invited M ms after its launch, in
+      capability mode by the kernel's account
+    beryllium-sandbox: renderer pid=N is not in capability mode by the
+      kernel's account; ended before it was sent anything, M ms after its
+      launch
+  The check at connect (beryllium-kernel-attested-renderer.patch) stays as
+  it is: with this patch it should never fail, and it does not depend on
+  this patch being right.
+Stage: 4 (Beryllium series). Depends on beryllium-sender-side-rights.patch
+  (the launcher's registration of the confined peer),
+  beryllium-kernel-attested-renderer.patch and, for the place in
+  base/posix/capsicum_rights, beryllium-kernel-check.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). base/posix/capsicum_rights.cc as
+  patched type-checks whole against FreeBSD 16's headers; the launcher's
+  new code type-checks against stand-ins for Chromium's declarations.
+  Not verified on a machine: that nothing in a renderer's start before its
+  lockdown waits for the browser. If something does, no page loads with
+  the lockdown on, and --disable-features=BerylliumInviteAfterLockdown
+  shows it at once.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
+  requires, under the gate on a build that writes these lines, that every
+  renderer the browser attested was invited first, and that the browser
+  cut no descriptor for a renderer before that renderer's invitation; it
+  records the times from launch to lockdown.
+  test_an_unconfined_renderer_is_ended requires that each renderer ended
+  under --no-sandbox was ended before it was sent anything.
+security-review: required (IPC boundary, process launch)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -39,6 +39,8 @@
+ 
+ BASE_FEATURE(kBerylliumReceiveSideLimits, FEATURE_ENABLED_BY_DEFAULT);
+ 
++BASE_FEATURE(kBerylliumInviteAfterLockdown, FEATURE_ENABLED_BY_DEFAULT);
++
+ namespace {
+ 
+ // The confined peers (ExpectConfinedPeer), read on every send with handles.
+@@ -404,6 +406,21 @@
+                                                    : KernelAnswer::kNo;
+ }
+ 
++bool ProcessIsGone(pid_t pid) {
++  // SZOMB in sys/proc.h, a header for the kernel's own structures: the
++  // process has exited and its parent has not collected it.
++  constexpr char kAwaitingCollection = 5;
++  int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
++  struct kinfo_proc kp;
++  size_t len = sizeof(kp);
++  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp) ||
++      static_cast<size_t>(kp.ki_structsize) != sizeof(kp) ||
++      kp.ki_pid != pid) {
++    return true;
++  }
++  return kp.ki_stat == kAwaitingCollection;
++}
++
+ void RecordAttestation(pid_t pid, KernelAnswer answer) {
+   AutoLock lock(Peers().lock);
+   if (answer == KernelAnswer::kYes) {
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -37,6 +37,13 @@
+ // never switched off for ordinary use.
+ BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumReceiveSideLimits);
+ 
++// Beryllium (plan/18 section 2, stage B): with the lockdown on, the browser
++// sends a renderer nothing, not even the Mojo invitation, until the kernel
++// says the renderer is in capability mode. On by default; a switch so that
++// a run can compare with the order of 0.20.3.21, where the invitation went
++// out at launch and the check was made when the channel connected.
++BASE_EXPORT BASE_DECLARE_FEATURE(kBerylliumInviteAfterLockdown);
++
+ // The kinds of descriptor a confined process may hold, each with the rights
+ // it needs and nothing more.
+ enum class DescriptorKind {
+@@ -98,6 +105,12 @@
+ enum class KernelAnswer { kYes, kNo, kUnknown };
+ BASE_EXPORT KernelAnswer KernelSaysCapabilityMode(pid_t pid);
+ 
++// True when |pid| has exited, whether or not its parent has collected it
++// yet, or when the kernel will not say. KernelSaysCapabilityMode() still
++// answers for a process that has exited and waits to be collected, from the
++// credentials it had.
++BASE_EXPORT bool ProcessIsGone(pid_t pid);
++
+ // The browser's record of the check it makes when a confined peer's channel
+ // connects (content/browser/renderer_host, plan/18 section 2): kYes is an
+ // attested renderer; anything else is a renderer the browser ended. The
+--- a/content/browser/child_process_launcher_helper.cc
++++ b/content/browser/child_process_launcher_helper.cc
+@@ -38,8 +38,11 @@
+ #include "services/tracing/public/cpp/trace_startup.h"
+ 
+ #if BUILDFLAG(IS_FREEBSD)
++#include <signal.h>
++
+ #include "base/feature_list.h"
+ #include "base/posix/capsicum_rights.h"
++#include "base/time/time.h"
+ #include "sandbox/policy/mojom/sandbox.mojom.h"
+ #endif
+ 
+@@ -437,30 +440,32 @@
+       base::freebsd::ExpectConfinedPeer(*beryllium_confined_peer_);
+     }
+ #endif
+-#if !BUILDFLAG(IS_FUCHSIA)
+-    if (mojo_named_channel_) {
+-      CHECK(!mojo_channel_, base::NotFatalUntil::M160);
+-      mojo::OutgoingInvitation::Send(
+-          std::move(invitation), base::kNullProcessHandle,
+-          mojo_named_channel_->TakeServerEndpoint(), process_error_callback_);
+-    } else
+-#endif
+-    // Set up Mojo IPC to the new process.
+-    {
+-      CHECK(mojo_channel_, base::NotFatalUntil::M160);
+-      CHECK(mojo_channel_->local_endpoint().is_valid(),
+-            base::NotFatalUntil::M160);
+-      mojo::OutgoingInvitation::Send(
+-          std::move(invitation), process.process.Handle(),
+-          mojo_channel_->TakeLocalEndpoint(), process_error_callback_);
+-    }
+ 
+     // Keep a launcher thread copy of the handle so that later operations on
+     // the child don't have to duplicate it on the client thread. See
+     // `child_process_`. If this fails the copy is left invalid and those
+     // operations are skipped, which at worst means the child keeps its launch
+     // priority; nothing here depends on the copy for correctness.
++    // (Beryllium: made before the invitation is sent, where upstream makes
++    // it after, because a held invitation is sent with this copy.)
+     child_process_ = process.process.Duplicate();
++
++#if BUILDFLAG(IS_FREEBSD)
++    // Beryllium (plan/18 section 2, stage B): a renderer that is to lock
++    // down is sent nothing until the kernel says it has. It needs nothing
++    // from the browser to get there: RendererMain locks down before it
++    // accepts the invitation.
++    if (beryllium_confined_peer_ &&
++        base::FeatureList::IsEnabled(
++            base::freebsd::kBerylliumInviteAfterLockdown)) {
++      BerylliumInviteWhenConfined(std::move(invitation),
++                                  base::TimeTicks::Now());
++    } else
++#endif
++    {
++      SendInvitationOnLauncherThread(std::move(invitation),
++                                     process.process.Handle());
++    }
+   }
+ 
+   client_task_runner_->PostTask(
+@@ -473,6 +478,88 @@
+                      launch_result));
+ }
+ 
++void ChildProcessLauncherHelper::SendInvitationOnLauncherThread(
++    mojo::OutgoingInvitation invitation,
++    base::ProcessHandle handle) {
++#if !BUILDFLAG(IS_FUCHSIA)
++  if (mojo_named_channel_) {
++    CHECK(!mojo_channel_, base::NotFatalUntil::M160);
++    mojo::OutgoingInvitation::Send(
++        std::move(invitation), base::kNullProcessHandle,
++        mojo_named_channel_->TakeServerEndpoint(), process_error_callback_);
++    return;
++  }
++#endif
++  // Set up Mojo IPC to the new process.
++  CHECK(mojo_channel_, base::NotFatalUntil::M160);
++  CHECK(mojo_channel_->local_endpoint().is_valid(),
++        base::NotFatalUntil::M160);
++  mojo::OutgoingInvitation::Send(std::move(invitation), handle,
++                                 mojo_channel_->TakeLocalEndpoint(),
++                                 process_error_callback_);
++}
++
++#if BUILDFLAG(IS_FREEBSD)
++void ChildProcessLauncherHelper::BerylliumInviteWhenConfined(
++    mojo::OutgoingInvitation invitation,
++    base::TimeTicks launched) {
++  CHECK(CurrentlyOnProcessLauncherTaskRunner(), base::NotFatalUntil::M160);
++  // How often the kernel is asked, and for how long. A renderer reaches its
++  // lockdown some hundreds of milliseconds after its launch; ten seconds is
++  // a machine too loaded to be useful, or a renderer that is not going to.
++  constexpr base::TimeDelta kAskAgainAfter = base::Milliseconds(3);
++  constexpr base::TimeDelta kGiveUpAfter = base::Seconds(10);
++
++  const base::ProcessId pid = *beryllium_confined_peer_;
++  // A renderer that has exited is not waited for, whatever it was.
++  const base::freebsd::KernelAnswer answer =
++      base::freebsd::ProcessIsGone(pid)
++          ? base::freebsd::KernelAnswer::kUnknown
++          : base::freebsd::KernelSaysCapabilityMode(pid);
++  const base::TimeDelta waited = base::TimeTicks::Now() - launched;
++  if (answer == base::freebsd::KernelAnswer::kYes) {
++    LOG(WARNING) << "beryllium-sandbox: renderer pid=" << pid << " invited "
++                 << waited.InMilliseconds()
++                 << " ms after its launch, in capability mode by the "
++                    "kernel's account";
++    SendInvitationOnLauncherThread(std::move(invitation),
++                                   child_process_.Handle());
++    return;
++  }
++  // No answer means the process has exited (or is hidden from the browser,
++  // which is no better). With --no-sandbox a renderer skips its lockdown, so
++  // there is nothing to wait for. A renderer paused for a debugger waits as
++  // long as the person debugging it likes.
++  const base::CommandLine& browser = *base::CommandLine::ForCurrentProcess();
++  const bool paused_for_a_debugger =
++      browser.HasSwitch(switches::kRendererStartupDialog) ||
++      command_line()->HasSwitch(switches::kWaitForDebugger);
++  const bool keep_asking =
++      answer == base::freebsd::KernelAnswer::kNo &&
++      !browser.HasSwitch("no-sandbox") &&
++      (paused_for_a_debugger || waited < kGiveUpAfter);
++  if (keep_asking) {
++    GetProcessLauncherTaskRunner()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce(&ChildProcessLauncherHelper::BerylliumInviteWhenConfined,
++                       this, std::move(invitation), launched),
++        kAskAgainAfter);
++    return;
++  }
++  // Not invited. The invitation is destroyed here, which the browser's end
++  // of the connection sees as a renderer that went away.
++  base::freebsd::RecordAttestation(pid, answer);
++  LOG(ERROR) << "beryllium-sandbox: renderer pid=" << pid
++             << (answer == base::freebsd::KernelAnswer::kNo
++                     ? " is not in capability mode by the kernel's account"
++                     : " has no answer from the kernel about its capability "
++                       "mode")
++             << "; ended before it was sent anything, "
++             << waited.InMilliseconds() << " ms after its launch";
++  kill(pid, SIGKILL);
++}
++#endif  // BUILDFLAG(IS_FREEBSD)
++
+ void ChildProcessLauncherHelper::PostLaunchOnClientThread(
+     ChildProcessLauncherHelper::Process process,
+ #if BUILDFLAG(IS_WIN)
+--- a/content/browser/child_process_launcher_helper.h
++++ b/content/browser/child_process_launcher_helper.h
+@@ -217,6 +217,22 @@
+ #endif
+                                   int launch_result);
+ 
++  // Sends the Mojo invitation to the launched process, whose handle is
++  // |handle|. Beryllium: taken out of PostLaunchOnLauncherThread() so that
++  // it can also be called later (BerylliumInviteWhenConfined()).
++  void SendInvitationOnLauncherThread(mojo::OutgoingInvitation invitation,
++                                      base::ProcessHandle handle);
++
++#if BUILDFLAG(IS_FREEBSD)
++  // Beryllium (plan/18 section 2, stage B): asks the kernel whether the
++  // confined peer is in capability mode yet. If so, sends |invitation|. If
++  // not, asks again a moment later, and gives up when the process is gone
++  // or |launched| is too long ago: the renderer is then ended without ever
++  // having been sent anything.
++  void BerylliumInviteWhenConfined(mojo::OutgoingInvitation invitation,
++                                   base::TimeTicks launched);
++#endif
++
+   // Posted by PostLaunchOnLauncherThread onto the client thread.
+   void PostLaunchOnClientThread(ChildProcessLauncherHelper::Process process,
+ #if BUILDFLAG(IS_WIN)

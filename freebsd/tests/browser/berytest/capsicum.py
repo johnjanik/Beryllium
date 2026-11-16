@@ -467,6 +467,55 @@ def locked_pids(log_lines):
     return [int(m.group(1)) for m in map(LOCKED_PID_RE.search, log_lines) if m]
 
 
+# From 0.20.3.22 (patches/security/beryllium-invite-after-lockdown.patch):
+# the browser sends a renderer its Mojo invitation only once the kernel says
+# the renderer is in capability mode, and says how long that took; one that
+# never gets there is ended "before it was sent anything".
+INVITED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) invited (\d+) ms after its launch")
+UNINVITED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) .*; ended before it was "
+                          r"sent anything")
+CUT_FOR_RE = re.compile(r"beryllium-sandbox: cut .* bound for confined renderer pid (\d+)")
+
+
+def invitations(log_lines):
+    """{pid: milliseconds from its launch to its invitation} for the
+    renderers the browser invited once they had locked down; {} for a build
+    that invites at launch."""
+    return {int(m.group(1)): int(m.group(2)) for m in map(INVITED_RE.search, log_lines) if m}
+
+
+def ended_uninvited(log_lines):
+    """The pids of the renderers the browser ended before sending them
+    anything."""
+    return {int(m.group(1)) for m in map(UNINVITED_RE.search, log_lines) if m}
+
+
+def cuts_before_invitation(log_lines):
+    """{pid: count} of the descriptors the browser cut for a renderer on a
+    log line that stands before that renderer's invitation: what was sent
+    to a renderer the kernel had not yet vouched for. Empty on a build that
+    holds the invitation back, since nothing can be sent before it."""
+    early, invited = collections.Counter(), set()
+    invited_ever = set(invitations(log_lines))
+    for line in log_lines:
+        m = INVITED_RE.search(line)
+        if m:
+            invited.add(int(m.group(1)))
+            continue
+        m = CUT_FOR_RE.search(line)
+        if m and int(m.group(1)) in invited_ever and int(m.group(1)) not in invited:
+            early[int(m.group(1))] += 1
+    return dict(early)
+
+
+def spread(values):
+    """"least to most, median m" for a list of numbers; "" for none."""
+    if not values:
+        return ""
+    ordered = sorted(values)
+    return f"{ordered[0]} to {ordered[-1]}, median {ordered[len(ordered) // 2]}"
+
+
 # From 0.20.3.22 (patches/security/beryllium-renderer-hardening.patch): what
 # a renderer gave up at its lockdown besides ambient authority, at the end of
 # its lockdown line, hardening=a,b,c; "-" when it set nothing.
