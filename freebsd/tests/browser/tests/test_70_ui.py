@@ -199,6 +199,28 @@ def examine(rows, top_bar_may_hide=False):
     return problems, desc
 
 
+# How long a layout may take to settle after the setting is switched on.
+# The button is laid out a moment after the preference changes. Two seconds
+# were enough until 16 November 2026, when the first browser of a run on
+# CI's machine (stock Chrome in Xvfb, a cold start) was still caught with a
+# button of no width, three runs in a row, and the nine browsers after it
+# were fine. A button that stays without a size is still found: the last
+# snapshot is the one that is judged.
+SETTLE_SECONDS = 10.0
+
+
+def settled(take, problems_of, seconds=SETTLE_SECONDS, pause=1.0,
+            clock=time.monotonic, sleep=time.sleep):
+    """take() until problems_of(rows) is empty or the time is up; the last
+    rows taken."""
+    rows = take()
+    deadline = clock() + seconds
+    while problems_of(rows) and clock() < deadline:
+        sleep(pause)
+        rows = take()
+    return rows
+
+
 def save(path, rows, focus=None):
     """The views in the toolbar's part of the window (top 200 px)."""
     with open(path, "w") as f:
@@ -225,7 +247,9 @@ class Toolbar(unittest.TestCase):
                 page = browser.new_page(browser.url("settings/appearance"))
                 page.eval(SET_PREF % "true")
                 time.sleep(2)
-                rows = snapshot(devtools)
+                rows = settled(
+                    lambda: snapshot(devtools),
+                    lambda r: examine(r, top_bar_may_hide=name == "zen mode")[0])
             finally:
                 devtools.close()
         finally:
