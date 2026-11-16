@@ -4,7 +4,7 @@
 .\" Source: man/beryllium.1 in the Beryllium repository.
 .\" The port replaces @@VERSION@@ and the /usr/local prefix at install.
 .\" One sentence per line; check with freebsd/tools/check-man.
-.Dd November 15, 2026
+.Dd November 16, 2026
 .Dt BERYLLIUM 1
 .Os Beryllium @@VERSION@@
 .Sh NAME
@@ -94,11 +94,27 @@ See
 .Xr beryllium-sandbox 7 .
 .It Cm BerylliumCapsicumTrap
 Off by default.
-With the lockdown on, the kernel stops a renderer with
-.Dv SIGTRAP
-at the first system call capability mode refuses, instead of letting the
-call fail.
+With the lockdown on, a renderer writes a line to the log for each system
+call capability mode refuses it, with the code that made the call, and
+goes on.
 For finding such calls.
+Before 0.20.3.22 the renderer ended at the first one.
+.It Cm BerylliumCapsicumUtilities
+Off by default.
+An experiment: three utility services
+.Pq the data decoder, the unzipper and the file patcher
+are locked down as renderers are.
+See
+.Xr beryllium-sandbox 7 .
+.It Cm BerylliumChildNoNewPrivileges
+On by default.
+Each child process gives up the means to gain privileges by executing a
+set-user-ID file.
+.It Cm BerylliumInviteAfterLockdown
+On by default.
+With the lockdown on, the browser sends a renderer nothing until the
+kernel says the renderer is in capability mode.
+Disabled, the order is that of 0.20.3.21, for comparison.
 .It Cm BerylliumReceiveSideLimits
 On by default.
 A switch for tests.
@@ -106,12 +122,25 @@ Disabled, a confined renderer does nothing to the descriptors it
 receives, as a renderer that had been taken over would not, so that the
 test suite can check that the senders' cuts suffice.
 It has no use otherwise.
+.It Cm BerylliumRendererHardening
+On by default.
+With the lockdown on, a renderer also gives up new privileges, core files
+and the making of new processes.
+A switch for telling these calls from the lockdown itself.
 .It Cm BerylliumRendererSwapFile
 Off by default.
 Give each renderer of a normal profile an unlinked temporary file in
 which to park compressed data of background tabs, as Chromium does.
 Without it that data stays compressed in memory and no page content
 reaches a disk file system.
+.It Cm BerylliumRendererTraceable
+Off by default.
+With the lockdown on, a renderer disables tracing of itself, so that no
+other process of the same user can attach a debugger to it, record its
+system calls or read its descriptor table with
+.Xr procstat 1 .
+Enabled, the renderer stays traceable, which a debugging session and the
+test suite's descriptor checks need.
 .It Cm BerylliumWaylandWaitForGpu
 On by default.
 On Wayland with the NVIDIA driver, finish drawing each frame before
@@ -165,6 +194,8 @@ Beryllium copies by default when the GL driver is NVIDIA's, whose
 .Fx
 driver ended every video tab with a memory fault on the faster path, and
 uses GPU memory buffers with other drivers.
+A renderer under the lockdown always copies: a GPU memory buffer is a
+device descriptor, which a confined renderer is never given.
 .El
 .Ss Network
 .Bl -tag -width Ds

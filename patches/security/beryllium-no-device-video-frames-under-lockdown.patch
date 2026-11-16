@@ -1,0 +1,64 @@
+Beryllium: a confined renderer keeps video frames out of GPU memory buffers on every driver
+
+Purpose: plan/18 section 1.2 and 1.3 step 4 (feature matrix S-IPC-01,
+  S-REN-05); the owner's decision of 11 November 2026: a renderer under the
+  lockdown never holds a device descriptor. A GPU memory buffer for a video
+  frame is a device descriptor (a buffer object of the graphics driver that
+  the renderer maps). The descriptor policy has no kind for it, so the
+  sender removes every right before sending it and the renderer's own
+  limits do the same on arrival: the frame would not be drawn. On the
+  owner's NVIDIA machine this never arises, because
+  beryllium-bsd-nvidia-video-frames.patch turns the path off there for
+  another reason. Mesa's drivers use it by default.
+  - content/renderer/render_thread_impl.cc: a renderer that is in
+    capability mode does not use GPU memory buffers for video or camera
+    frames, whatever the driver; frames are copied through shared memory
+    and uploaded by the GPU process, as with
+    --disable-gpu-memory-buffer-video-frames.
+    --enable-gpu-memory-buffer-video-frames does not opt a confined
+    renderer back in. A renderer that is not confined is unchanged.
+  The cost is one copy a frame on Mesa under the lockdown, accepted in the
+  decision and not measured: nobody has run the lockdown on a Mesa machine
+  (freebsd/tools/gpu-probe says whether a machine would be one).
+Stage: 4 (Beryllium series). Depends on
+  beryllium-bsd-nvidia-video-frames.patch (the place in the file) and
+  beryllium-descriptor-rights.patch (base/posix/capsicum_rights.h).
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22).
+Test: freebsd/tests/browser/run media --lockdown (the clips play in a
+  confined renderer) shows the path works; that it is taken on a Mesa
+  driver needs a Mesa machine, where the descriptor policy test would name
+  a device descriptor in a renderer if it were not.
+security-review: required (which descriptors a confined process is given)
+
+--- a/content/renderer/render_thread_impl.cc
++++ b/content/renderer/render_thread_impl.cc
+@@ -217,6 +217,10 @@
+ #include "media/mojo/mojom/interface_factory.mojom.h"
+ #endif
+ 
++#if BUILDFLAG(IS_FREEBSD)
++#include "base/posix/capsicum_rights.h"
++#endif
++
+ #if BUILDFLAG(IS_FUCHSIA)
+ #include "media/mojo/clients/mojo_codec_factory_fuchsia.h"
+ #include "media/mojo/mojom/fuchsia_media.mojom.h"
+@@ -1037,6 +1041,16 @@
+       !cmd_line->HasSwitch(switches::kEnableGpuMemoryBufferVideoFrames)) {
+     enable_gpu_memory_buffers = false;
+   }
++  // Beryllium (plan/18 section 1.2; decided 11 November 2026): a confined
++  // renderer never holds a device descriptor. A GPU memory buffer for a
++  // video frame is one, on every driver that hands them out (Mesa's do by
++  // default), and the policy has no kind for it: the sender would remove
++  // every right and the frame would be lost. So a renderer in capability
++  // mode copies its frames the ordinary way on every driver, and the
++  // switch that opts back in does not apply to it.
++  if (base::freebsd::InCapabilityMode()) {
++    enable_gpu_memory_buffers = false;
++  }
+ #endif
+   const bool enable_media_stream_gpu_memory_buffers = enable_gpu_memory_buffers;
+   bool enable_video_gpu_memory_buffers = enable_gpu_memory_buffers;

@@ -1,0 +1,225 @@
+Beryllium: at start the browser tries what the kernel does for a confined process, and says so
+
+Purpose: plan/18 section 3.2, P4 (feature matrix S-KRN-03; plan/11 section
+  4, step 3). The lockdown rests on the kernel in two ways a user cannot
+  see from the browser: that capability mode exists, and that it holds.
+  FreeBSD-SA-26:28.capsicum (9 June 2026) was a hole in the second:
+  sigqueue() lacked the capability-mode restriction, so a confined process
+  could signal an unrelated one. On a kernel without capability mode every
+  renderer ends at its lockdown and the user sees a browser that shows
+  nothing; on a kernel without that fix a locked-down renderer is confined
+  less than Beryllium says. Fail closed is right for the first; silent is
+  not right for either.
+  The check is made by trying, not by comparing version numbers: the fix
+  is in the supported branches at patch levels that a -CURRENT kernel, or
+  one built locally, does not carry in its name
+  (freebsd/ADVISORIES.md records the same about the development host).
+  - base/posix/capsicum_rights.{h,cc}: CheckKernelForConfinement() forks a
+    child that enters capability mode and calls kill(parent, 0) and
+    sigqueue(parent, 0), both of which must fail there, and exits with the
+    answer; signal 0 delivers nothing on any kernel. The child makes system
+    calls only. The result is kept (KernelCheckResult()), and one line is
+    logged for each fact that is not as the lockdown needs it.
+  - sandbox/policy/freebsd/sandbox_freebsd.cc: the browser process makes
+    the check once, in InitializeSandbox(), before it has other threads,
+    and also when --no-sandbox is given (the kernel is the same).
+  - chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc:
+    beryllium://sandbox gains two lines, "kernel check: capability mode:"
+    and "kernel check: a process in capability mode is refused signals to
+    other processes (FreeBSD-SA-26:28.capsicum):".
+  Not in this patch: a message in the browser's window. A user who starts
+  the browser from a desktop menu does not see its log, so the plan asks
+  for one; until then the page and the log say it.
+Stage: 4 (Beryllium series). Depends on
+  beryllium-kernel-attested-renderer.patch (base/posix/capsicum_rights),
+  beryllium-capability-trap-report.patch (the place in
+  sandbox_freebsd.cc) and beryllium-sandbox-status-page.patch.
+Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
+  compiled (written for build 0.20.3.22). base/posix/capsicum_rights.cc as
+  patched type-checks whole against FreeBSD 16's headers with stand-ins for
+  the Chromium headers it includes; the page's function was run on Linux
+  with stand-ins and wrote the two lines.
+Test: freebsd/tests/browser/tests/test_50_sandbox.py
+  test_sandbox_page_matches_the_kernel requires both lines on a page from
+  0.20.3.22 and, with the lockdown on, that they say "available" and "yes";
+  freebsd/tests/capsicum-standalone/cap-oracle.c makes the same sigqueue
+  probe outside the browser.
+security-review: required (sandbox reporting; a fork in the browser process)
+
+--- a/base/posix/capsicum_rights.cc
++++ b/base/posix/capsicum_rights.cc
+@@ -16,6 +16,8 @@
+ #include <sys/types.h>
+ #include <sys/un.h>
+ #include <sys/user.h>
++#include <sys/wait.h>
++#include <signal.h>
+ #include <unistd.h>
+ 
+ #include <atomic>
+@@ -427,6 +429,87 @@
+   return Peers().ended_total;
+ }
+ 
++namespace {
++
++// Written once, by the browser's main thread at start, before any reader.
++std::atomic<int> g_kernel_capability_mode{
++    static_cast<int>(KernelFact::kNotChecked)};
++std::atomic<int> g_kernel_signals_confined{
++    static_cast<int>(KernelFact::kNotChecked)};
++
++// The child's exit codes.
++constexpr int kProbeFine = 0;
++constexpr int kProbeNoCapabilityMode = 71;
++constexpr int kProbeSignalAllowed = 72;
++
++}  // namespace
++
++void CheckKernelForConfinement() {
++  const pid_t parent = getpid();
++  const pid_t child = fork();
++  if (child < 0) {
++    PLOG(WARNING) << "beryllium-sandbox: kernel check not made (fork)";
++    return;
++  }
++  if (child == 0) {
++    // Only system calls from here: the child is a copy of a process that
++    // may hold locks.
++    if (cap_enter() != 0) {
++      _exit(kProbeNoCapabilityMode);
++    }
++    u_int mode = 0;
++    if (cap_getmode(&mode) != 0 || mode == 0) {
++      _exit(kProbeNoCapabilityMode);
++    }
++    union sigval value;
++    value.sival_int = 0;
++    if (kill(parent, 0) == 0 || sigqueue(parent, 0, value) == 0) {
++      _exit(kProbeSignalAllowed);
++    }
++    _exit(kProbeFine);
++  }
++  int status = 0;
++  pid_t waited;
++  do {
++    waited = waitpid(child, &status, 0);
++  } while (waited < 0 && errno == EINTR);
++  if (waited != child || !WIFEXITED(status)) {
++    LOG(WARNING) << "beryllium-sandbox: kernel check not made (the child "
++                    "did not report)";
++    return;
++  }
++  const int code = WEXITSTATUS(status);
++  if (code == kProbeNoCapabilityMode) {
++    g_kernel_capability_mode.store(static_cast<int>(KernelFact::kNo));
++    LOG(ERROR) << "beryllium-sandbox: this kernel has no capability mode "
++                  "(cap_enter failed in a test process). With the renderer "
++                  "lockdown on, every renderer ends at its lockdown and no "
++                  "page loads.";
++    return;
++  }
++  g_kernel_capability_mode.store(static_cast<int>(KernelFact::kYes));
++  if (code == kProbeSignalAllowed) {
++    g_kernel_signals_confined.store(static_cast<int>(KernelFact::kNo));
++    LOG(ERROR) << "beryllium-sandbox: on this kernel a process in capability "
++                  "mode can signal another process (FreeBSD-SA-26:28.capsicum "
++                  "is not fixed in it). A locked-down renderer is confined "
++                  "less than Beryllium says until the kernel is updated.";
++    return;
++  }
++  if (code == kProbeFine) {
++    g_kernel_signals_confined.store(static_cast<int>(KernelFact::kYes));
++  }
++}
++
++KernelCheck KernelCheckResult() {
++  KernelCheck result;
++  result.capability_mode =
++      static_cast<KernelFact>(g_kernel_capability_mode.load());
++  result.signals_confined =
++      static_cast<KernelFact>(g_kernel_signals_confined.load());
++  return result;
++}
++
+ void LimitSentDescriptor(int fd, pid_t peer) {
+   // The browser knows the renderer's pid. Another child sending over a link
+   // the browser marked does not (|peer| is 0); the log line then names no
+--- a/base/posix/capsicum_rights.h
++++ b/base/posix/capsicum_rights.h
+@@ -108,6 +108,32 @@
+ BASE_EXPORT int AttestedTotal();
+ BASE_EXPORT int EndedUnattestedTotal();
+ 
++// Beryllium (plan/18 section 3.2, P4; feature matrix S-KRN-03): what this
++// kernel does for a confined process, found by trying it. A version number
++// does not say: the fix for FreeBSD-SA-26:28.capsicum (sigqueue() lacked the
++// capability-mode restriction, so a confined process could signal another)
++// is in the supported branches at patch levels a -CURRENT or a locally
++// built kernel does not carry in its name.
++enum class KernelFact { kYes, kNo, kNotChecked };
++struct KernelCheck {
++  // cap_enter() works: the kernel has capability mode.
++  KernelFact capability_mode = KernelFact::kNotChecked;
++  // In capability mode, kill() and sigqueue() to another process are both
++  // refused.
++  KernelFact signals_confined = KernelFact::kNotChecked;
++};
++
++// Makes the check: forks a child that enters capability mode, tries
++// kill(parent, 0) and sigqueue(parent, 0), both of which must fail, and
++// exits with the answer. Signal 0 delivers nothing on any kernel. Called
++// once by the browser process when it starts, before it has other threads;
++// logs one line for each fact that is not as the lockdown needs it.
++BASE_EXPORT void CheckKernelForConfinement();
++
++// The result, or "not checked" in a process that did not make the check
++// (only the browser does).
++BASE_EXPORT KernelCheck KernelCheckResult();
++
+ // Cuts a descriptor this process is about to send to confined peer |peer|
+ // to its kind's rights, or removes every right when the policy has no kind
+ // for it (a device, a directory, a terminal...), logging what it was. The
+--- a/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
++++ b/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
+@@ -199,6 +199,22 @@
+   page += "\nkernel: " +
+           base::EscapeForHTML(base::SysInfo::OperatingSystemName() + " " +
+                               base::SysInfo::OperatingSystemVersion());
++  // What the browser found when it started by trying it in a child process
++  // (plan/18 section 3.2, P4).
++  const base::freebsd::KernelCheck kernel = base::freebsd::KernelCheckResult();
++  page += "\nkernel check: capability mode: ";
++  page += kernel.capability_mode == base::freebsd::KernelFact::kYes
++              ? "available"
++              : kernel.capability_mode == base::freebsd::KernelFact::kNo
++                    ? "not available, so no renderer can lock down"
++                    : "not checked";
++  page += "\nkernel check: a process in capability mode is refused signals "
++          "to other processes (FreeBSD-SA-26:28.capsicum): ";
++  page += kernel.signals_confined == base::freebsd::KernelFact::kYes
++              ? "yes"
++              : kernel.signals_confined == base::freebsd::KernelFact::kNo
++                    ? "no, this kernel needs the fix"
++                    : "not checked";
+   page += "\n\nWith the lockdown off, no process is confined, and a page that\n"
+           "takes over a renderer has the access you have. With it on, the\n"
+           "renderers are confined and the browser, GPU, network and storage\n"
+--- a/sandbox/policy/freebsd/sandbox_freebsd.cc
++++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
+@@ -770,6 +770,14 @@
+   const std::string process_type =
+       command_line->GetSwitchValueASCII(switches::kProcessType);
+ 
++  // Beryllium (plan/18 section 3.2, P4): the browser process finds out, once
++  // and before it has other threads, what this kernel does for a confined
++  // process. Not skipped for --no-sandbox: the kernel is the same, and
++  // beryllium://sandbox reports the answer either way.
++  if (process_type.empty()) {
++    base::freebsd::CheckKernelForConfinement();
++  }
++
+   if (command_line->HasSwitch(switches::kNoSandbox))
+     return true;
+ 

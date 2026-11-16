@@ -54,8 +54,15 @@ def patched_text(patch, added_only=False):
 STARTING = "not yet (starting)"
 
 
+FINE = {"kernel_capability_mode": "available", "kernel_signals_refused": "yes"}
+
+
+STATED = ("browser", "renderer", "GPU", "network service", "storage service", "audio service",
+          "video capture", "other utilities")
+
+
 def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on",
-         starting_count=None, build=21):
+         starting_count=None, build=21, kernel_check=FINE, statements=STATED):
     """The page as beryllium-sandbox-status-page.patch writes it: build 21
     as 0.20.3.21 has it, build 22 with the count of starting renderers,
     which the summary's "N of M" then leaves out."""
@@ -84,6 +91,9 @@ def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on",
               f"receive-side limits (BerylliumReceiveSideLimits): {limits}",
               "switches in effect that weaken a sandbox: none",
               "kernel: FreeBSD 16.0-CURRENT"]
+    if build >= 22:
+        lines += [capsicum.PAGE_SETTINGS[key] + said for key, said in kernel_check.items()]
+        lines += [""] + [f"not confined: {kind} | a reason" for kind in statements]
     return "\n".join(lines)
 
 
@@ -202,11 +212,24 @@ renderers ended because the kernel did not attest them, this session: 0
 receive-side limits (BerylliumReceiveSideLimits): on
 switches in effect that weaken a sandbox: none
 kernel: FreeBSD 16.0-CURRENT
+kernel check: capability mode: available
+kernel check: a process in capability mode is refused signals to other processes (FreeBSD-SA-26:28.capsicum): yes
 
 With the lockdown off, no process is confined, and a page that
 takes over a renderer has the access you have. With it on, the
 renderers are confined and the browser, GPU, network and storage
 processes are not. man beryllium-sandbox says what that means.
+
+Processes that are not confined, and why (decided 12 November 2026):
+not confined: browser | it holds the profile, the network and the windows of every tab; other browsers leave this process unconfined too, except OpenBSD's port, whose limits still allow files, processes and the network
+not confined: renderer | only while the renderer lockdown is off, which it is unless switched on; with it on, a renderer the kernel does not have in capability mode is ended
+not confined: GPU | the graphics driver opens devices and files by path whenever it likes, and NVIDIA's is closed code that cannot be changed to ask first
+not confined: network service | it makes every connection and keeps the cache by path; confining it needs a broker for both, which is described in the plan and not scheduled
+not confined: storage service | it opens the profile's databases by path; Chromium has a mode in which the browser opens them for it, which has not been tried here yet
+not confined: audio service | it reaches the sound server by path; a policy is to follow the utilities
+not confined: video capture | it opens cameras by path; Chromium leaves it unconfined on every desktop system
+not confined: other utilities | a utility is confined once a survey shows that it needs nothing by path after its start; --enable-features=BerylliumCapsicumUtilities confines the first three candidates, as an experiment
+Confined or not, a child process gives up the means to gain privileges where its sandbox would begin (BerylliumChildNoNewPrivileges, on unless switched off); proccontrol -m nonewprivs -q -p PID shows it.
 """
 FROM_THE_CODE_KERNEL = {100: False, 201: True, 202: False, 203: True, 204: False, 300: False}
 
@@ -255,11 +278,11 @@ class PageThatMarksStartingRenderers(unittest.TestCase):
         self.assertIn("the summary says 0 renderers starting and 1 lines are marked so",
                       capsicum.sandbox_page_problems(miscounted, kernel(MARKED), True, {202}))
 
-    def test_starting_is_a_word_for_a_renderer_asked_to_lock_down(self):
+    def test_starting_is_a_word_for_a_process_asked_to_lock_down(self):
         rows = [("renderer", 202, "no", "no", STARTING) if r[1] == 202 else r for r in MARKED]
         status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off"))
         problems = capsicum.sandbox_page_problems(status, kernel(rows), False)
-        self.assertTrue(any("pid 202: marked starting, which is for a renderer asked to lock "
+        self.assertTrue(any("pid 202: marked starting, which is for a process asked to lock "
                             "down" in p for p in problems), problems)
 
     def test_a_mark_without_a_count_is_a_problem(self):
@@ -268,6 +291,65 @@ class PageThatMarksStartingRenderers(unittest.TestCase):
         self.assertIsNone(status["starting_count"])
         problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
         self.assertTrue(any("does not count starting renderers" in p for p in problems), problems)
+
+    def test_the_kernel_check_is_on_the_page_and_must_be_fine_under_the_lockdown(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        self.assertEqual({k: status["settings"][k] for k in FINE}, FINE)
+        self.assertEqual(capsicum.KERNEL_CHECK_FINE, FINE)
+        bad = dict(FINE, kernel_signals_refused="no, this kernel needs the fix")
+        status = capsicum.parse_sandbox_page(page(MARKED, build=22, kernel_check=bad))
+        problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
+        self.assertEqual(problems, [capsicum.PAGE_SETTINGS["kernel_signals_refused"]
+                                    + "no, this kernel needs the fix"])
+        # without the lockdown the page only reports it
+        rows = [r for r in OPEN]
+        status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off",
+                                                  kernel_check=bad))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), False), [])
+        # a page from 0.20.3.22 without the lines is wrong either way
+        status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off",
+                                                  kernel_check={}))
+        problems = capsicum.sandbox_page_problems(status, kernel(rows), False)
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(all(p.startswith("the page has no line") for p in problems), problems)
+        # and 0.20.3.21's page, which has no such lines, is not held to them
+        status = capsicum.parse_sandbox_page(page(rows, lockdown="off"))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), False), [])
+
+    def test_every_unconfined_kind_of_process_has_its_reason_on_the_page(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        self.assertEqual(sorted(status["statements"]), sorted(STATED))
+        for row_kind, kind in (("browser", "browser"), ("renderer", "renderer"),
+                               ("GPU (GPU)", "GPU"),
+                               ("Utility (network.mojom.NetworkService)", "network service"),
+                               ("Utility (storage.mojom.StorageService)", "storage service"),
+                               ("Utility (audio.mojom.AudioService)", "audio service"),
+                               ("Utility (video_capture.mojom.VideoCaptureService)",
+                                "video capture"),
+                               ("Utility (unzip.mojom.Unzipper)", "other utilities")):
+            self.assertEqual(capsicum.statement_kind(row_kind), kind)
+        without = [k for k in STATED if k != "GPU"]
+        status = capsicum.parse_sandbox_page(page(MARKED, build=22, statements=without))
+        problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
+        self.assertEqual(problems, ['the page has unconfined processes of the kind "GPU" and '
+                                    'no "not confined:" line for it'])
+
+    def test_a_process_is_confined_or_not_as_the_browser_means_it_to_be(self):
+        # a utility the browser told to lock down, confined and attested
+        rows = MARKED + [("Utility (unzip.mojom.Unzipper)", 400, "yes", "yes", "yes")]
+        status = capsicum.parse_sandbox_page(page(rows, build=22))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), True, {202}), [])
+        # one still starting is marked, and not counted among the renderers
+        rows = MARKED + [("Utility (unzip.mojom.Unzipper)", 400, "no", "yes", STARTING)]
+        status = capsicum.parse_sandbox_page(page(rows, build=22, starting_count=1))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), True, {202}), [])
+        # a process in capability mode that the browser does not list as asked
+        modes = kernel(MARKED)
+        modes[300] = True
+        status = capsicum.parse_sandbox_page(page(MARKED, build=22))
+        problems = capsicum.sandbox_page_problems(status, modes, True, {202})
+        self.assertIn("GPU (GPU) pid 300: in capability mode by procstat, and the browser "
+                      "does not list it as asked to lock down", problems)
 
     def test_a_starting_renderer_that_locked_down_meanwhile_is_not_a_disagreement(self):
         status = capsicum.parse_sandbox_page(page(MARKED, build=22))
@@ -326,11 +408,23 @@ class Log(unittest.TestCase):
 class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
     """The parsers above against the text of the patches themselves."""
 
+    def page_patches(self):
+        """What the page's patches write: the page itself, and from
+        0.20.3.22 the two lines of the kernel check."""
+        return "\n".join(patched_text(patch_text(name)) for name in
+                         ("beryllium-sandbox-status-page.patch",
+                          "beryllium-kernel-check.patch",
+                          "beryllium-utility-lockdown.patch",
+                          "beryllium-unconfined-processes.patch"))
+
     def test_the_status_page(self):
-        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        said = self.page_patches()
         self.assertIn(capsicum.PAGE_TITLE, said)
         for prefix in capsicum.PAGE_SETTINGS.values():
-            self.assertIn(prefix, said, prefix)
+            self.assertTrue(prefix in said, f"no patch writes {prefix!r}")
+        for kind in STATED:
+            self.assertTrue(f"not confined: {kind} | " in said,
+                            f"no patch states why the {kind} is not confined")
         for piece in ("process: ", " | pid: ", " | capability mode by the kernel: ",
                       " | lockdown requested: ", " | attested at connect: ",
                       "summary: renderers in capability mode: ",
@@ -347,10 +441,13 @@ class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
         """FROM_THE_CODE was written by the patched file's own function. Each
         of its lines that is fixed text must still be in the patch, so a
         change to the page's wording cannot leave the fixture behind."""
-        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        said = self.page_patches()
         for text in FROM_THE_CODE.split("\n\n")[1:3] + FROM_THE_CODE.split("\n\n")[-1:]:
             for fixed in text.strip().splitlines():
-                self.assertIn(fixed, said, fixed)
+                self.assertTrue(fixed in said, f"no patch writes {fixed!r}")
+        for key, fine in FINE.items():
+            self.assertIn(capsicum.PAGE_SETTINGS[key] + fine, FROM_THE_CODE)
+            self.assertTrue(f'"{fine}"' in said, f"no patch writes {fine!r}")
 
     def test_the_attestation_lines(self):
         patch = patch_text("beryllium-kernel-attested-renderer.patch")

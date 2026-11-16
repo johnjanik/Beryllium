@@ -172,10 +172,13 @@ and 3 of 1.3 (`beryllium-sender-cut-on-child-links.patch` and
 cuts by sending process and the test with the receiver's limits off
 (`SenderAlone` in `test_50_sandbox.py`). The bit took the byte that was
 padding in `TransportHeader`, so the header keeps its size. Not done:
-step 1 (the standalone harness), step 4 (no GPU memory buffer video
-frames under the lockdown, which is in a later build's row), the link
-inventory as a committed table, and the list of descriptor passing
-outside Mojo transports.
+step 1 (the standalone harness), the link inventory as a committed
+table, and the list of descriptor passing outside Mojo transports.
+
+*Written 16 November 2026 for 0.20.3.22, not compiled:* step 4,
+`beryllium-no-device-video-frames-under-lockdown.patch`. A renderer in
+capability mode copies video and camera frames through shared memory on
+every driver, and the switch that opts back in does not apply to it.
 
 ### 1.2 Design
 
@@ -327,6 +330,18 @@ skips the lockdown, the browser still expects it, and must end every
 renderer. Not done: the standalone test of the kernel flag on 14, 15 and
 16 (step 1), and the launch-to-lockdown times for stage B (step 6).
 
+*Written 16 November 2026 for 0.20.3.22, not compiled:* stage B,
+`beryllium-invite-after-lockdown.patch`, without waiting for step 6's
+numbers, because the patch produces them: the launcher holds the
+invitation, asks the kernel every 3 ms, and logs how long each renderer
+took from launch to capability mode. It does not block the launcher
+thread (the asking is a delayed task). A renderer that has exited, that
+the kernel does not answer for, or that is not confined after ten
+seconds is ended uninvited; under `--no-sandbox` at once; one paused for
+a debugger is waited for. `BerylliumInviteAfterLockdown` (on) restores
+the order of 0.20.3.21 for comparison. And the page's word for a
+starting renderer (`beryllium-sandbox-status-page.patch`, the same day).
+
 ### 2.2 Design
 
 **Stage A, the check and the kill.** A helper
@@ -455,6 +470,30 @@ true before the default changes, and how to prove it.
 - Packages exist for FreeBSD 16 only. Plan/14 section 4 has an open
   item for 14.x and 15.x: time zones may fall back to UTC in capability
   mode there.
+
+*Written 16 November 2026 for 0.20.3.22, not compiled* (the P numbers
+are those of 3.2):
+
+- P2, `beryllium-capability-trap-report.patch`. The refused call is
+  libc's: `sysconf(_SC_NPROCESSORS_ONLN)` asks for the root CPU set first.
+  The warm-up now reads the one cached count that reaches it (abseil's,
+  through the bundled libc++), and `BerylliumCapsicumTrap` reports each
+  refused call with its return addresses in place of ending the
+  renderer, so the suite's `TrapReport` class is the tripwire P2 asks
+  for and names whatever is left.
+- P3, `beryllium-renderer-hardening.patch`: no new privileges, no core,
+  no fork, no tracing, with `BerylliumRendererTraceable` for the runs
+  that trace. The limit on processes is 1, the value the oracle tries
+  (`proc.fork_nproc1`).
+- P4, `beryllium-kernel-check.patch`: made by trying in a child process,
+  not by a table of versions, for the reason `freebsd/ADVISORIES.md`
+  gives about the development host. In the log and on the status page;
+  the message in the window is not written.
+- P6: the status page counts the renderers ended by the browser's check;
+  with stage B it also counts those ended uninvited (the same counter).
+
+Not written: P5's hand checklist, step 1 of 3.3 (the default, which
+waits for P7) and step 2 (the administrator's file).
 
 ### 3.2 What must be true first
 
@@ -660,6 +699,25 @@ capability mode would refuse and what the process holds:
 Every one of them also held the standard streams with every right and
 read a handful of sysctls capability mode refuses, as renderers did
 before their warm-up.
+
+*Written 16 November 2026 for 0.20.3.22, not compiled:*
+
+- `beryllium-utility-lockdown.patch`: tier 1 as an experiment that is off
+  by default. Step 3 of tier 1 below is done differently from its text:
+  the browser decides which services are confined and tells each on its
+  command line, so the list lives in one place and the browser can hold
+  the invitation until the kernel agrees. Step 1's second half is in the
+  same patch: every process writes the marker, with its type and service,
+  so the survey can attribute even a utility that comes and goes between
+  two samples. Step 2, the list, has three candidates that are not
+  measured; `--beryllium-confine-services` tries others without a build.
+- `beryllium-unconfined-processes.patch`: the statement of 4.3 on
+  `beryllium://sandbox` (the manual has it too; the README's table says
+  the same more briefly), and of tier 5 the one mitigation that cannot
+  disturb a graphics driver, no new privileges, for every child.
+
+Not written: the rest of tier 5 (each needs a run on the NVIDIA driver
+first), the drift tables of 4.4, tier 2's storage spike, tier 3.
 
 ### 4.2 The plan, by how hard each is
 
@@ -1450,10 +1508,10 @@ as a defect with its cause. README item 7 goes.
 | 0.20.3.19, built and published 12 November 2026 | no change to the browser's code: the headers of the two noise patches brought up to date, and the port writing whether a compiler cache was used into the build manifest (the first manifest with that key). The sandbox patches this row first listed were not written before the build and moved one build down, as happened with 0.20.3.18. The first signed release | that 0.20.3.18 built again behaves the same: the suite passing with and without the lockdown, the gate with the whole log read (310 lines, eight reports, one thread each), the survey with one refusal after the lockdown point, `cpuset_getaffinity` (14-RENDERER-SANDBOX.md section 3). The signing ran for the first time on the owner's machine, and the release verifies as GitHub serves it (5.1) |
 | 0.20.3.20, built and published 12 November 2026 | no change to the browser: the sources of 0.20.3.19 with the version raised (the two build manifests differ in the version alone). The second signed release, and the first published from a commit whose installer takes nothing unsigned as the latest. The sandbox patches this row listed were not written before the build and moved one build down again | that the signing and the installer's checks work a second time on a real release (5.1). No test report of this build was sent |
 | 0.20.3.21, patches written and a test build made 15 November 2026; built again without the compiler cache and published 16 November 2026, the third signed release | item 2 stage A and the page; item 1's transport bit and the receive-limits switch; WebGPU off by default. Five patches, each for one of these, applied in this order so that the page can be left out alone if it fails to compile: `beryllium-kernel-attested-renderer`, `beryllium-receive-limits-switch`, `beryllium-sender-cut-on-child-links`, `beryllium-sandbox-status-page`, `beryllium-webgpu-off-by-default` | attestation; the sender alone suffices; the gate passing with the whole log read, as it did on 0.20.3.18 and 0.20.3.19. All three shown, on the test build and on the released package (14-RENDERER-SANDBOX.md section 3); the release verifies as GitHub serves it |
-| 0.20.3.22 | the status page says "starting" for a renderer that is not ready yet, and counts it apart (found in the first run on 0.20.3.21; written 16 November 2026, not compiled, and the only change to the browser so far in this row); item 3's P2 fix and P3 hardening calls with the traceable switch; the kernel check (P4); no GPU memory buffer video frames under the lockdown | nothing refused after the lockdown; trap mode as a tripwire |
-| 0.20.3.23 | tier 1 utilities (4.2); the GPU process's mitigations | the first confined processes that are not renderers |
+| 0.20.3.22, nine patches written 16 November 2026, none compiled | the status page says "starting" for a renderer that is not ready yet (found in the first run on 0.20.3.21); item 3's P2 (the refused call answered before the lockdown, and the trap switch reporting), P3 (the hardening calls with the traceable switch) and P4 (the kernel check); no GPU memory buffer video frames under the lockdown; item 2 stage B, which this table had as a separate spike; tier 1 utilities as an experiment that is off by default, and the marker in every process, which this table had in the next row; the statements for the processes that are not confined, and no new privileges for every child. In this order: `beryllium-renderer-hardening`, `beryllium-capability-trap-report`, `beryllium-no-device-video-frames-under-lockdown`, `beryllium-kernel-check`, `beryllium-invite-after-lockdown`, `beryllium-utility-lockdown`, `beryllium-unconfined-processes`, after the changed `beryllium-sandbox-status-page` | nothing refused after the lockdown, with the trap report as the tripwire; no renderer sent anything before the kernel's answer; the first measurements of utility services after their start |
+| the build after | whatever the first runs of 0.20.3.22 show; the utility list set from the survey; the GPU process's other mitigations, each after a run on the NVIDIA driver; the message in the window for a kernel that fails the check | the first confined processes that are not renderers, by default |
 | release candidate | step 1 of 3.3: on by default | P7's numbers |
-| separate spikes | allocator, BackupRefPtr, control-flow integrity (6.3); the storage service in its restricted mode (4.2 tier 2); item 2 stage B | an answer each |
+| separate spikes | allocator, BackupRefPtr, control-flow integrity (6.3); the storage service in its restricted mode (4.2 tier 2) | an answer each |
 
 A build that fails to compile costs a build. Each row keeps its patches
 small and of a kind already compiled once in this tree where possible.
@@ -1477,6 +1535,40 @@ that catches a wrong type or a misspelt name in the new code, and it is
 not a compile. A first build of five patches can stop at any of them. A
 test build with the compiler cache (`install.sh --build --ccache`) makes
 the second attempt cheap; the release is then built clean.
+
+**What a patch cannot finish (16 November 2026).** The owner asked for
+all remaining items to be finished before the next release. What is
+written for 0.20.3.22 is everything in items 1 to 4 that could be
+written without a measurement that only a build gives. What stands
+between that build and a release with the lockdown on by default is not
+code waiting to be written:
+
+- *Runs.* 100 whole-suite lockdown runs in a row on the release
+  candidate, over three boots (P7), which is a night and two reboots
+  once the candidate exists; and the hand checklist of P5.
+- *Measurements a build must give first.* Which utility services stand
+  the lockdown (the survey, now that every process writes the marker);
+  what the GPU process's other mitigations do to the NVIDIA driver;
+  whether anything is still refused a renderer (the trap report).
+- *Machines.* A Mesa machine for item 1's last question; FreeBSD 14 and
+  15 for the standalone tests and for packages.
+- *The owner's own.* The two hardware tokens before 1 January 2027, and
+  the fingerprint somewhere outside GitHub (item 5).
+- *Larger work that is not scheduled.* The network service's broker
+  (4.2 tier 4); the review records for the 217 imported patches on
+  security paths (6.2); the allocator spikes (6.3), each of which
+  changes compiler flags for the whole tree and so builds from nothing,
+  with or without a compiler cache.
+- *Still code, not yet written:* the administrator's file for the
+  switches that undo the sandbox (3.3 step 2); the storage service in
+  its restricted mode; the drift tables; the message in the window; the
+  link inventory; the standalone harness.
+
+A test build with the compiler cache is the right tool for the next
+steps, since each of them is a small change to a tree already compiled.
+The nine patches change seven files. Two of them are headers
+(`base/posix/capsicum_rights.h` and the launcher helper's), so the files
+that include those are compiled again as well.
 
 ### 8.3 The owner's decisions, 11 November 2026
 

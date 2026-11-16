@@ -158,6 +158,31 @@ def _high_fd(fd):
     return new
 
 
+FEATURE_SWITCHES = ("--enable-features=", "--disable-features=")
+
+
+def merge_feature_switches(args):
+    """The browser reads one --enable-features switch and one
+    --disable-features switch, the last of each. The run's switches and a
+    test class's are separate lists, and each may name features (the run its
+    lockdown, a class the features its tests need), so the names of every
+    such switch are joined into one, where the first of them stood. A name
+    given twice is kept once."""
+    names = {prefix: [] for prefix in FEATURE_SWITCHES}
+    out = []
+    for arg in args:
+        prefix = next((p for p in FEATURE_SWITCHES if arg.startswith(p)), None)
+        if prefix is None:
+            out.append(arg)
+            continue
+        if not names[prefix]:
+            out.append(prefix)  # the place of the merged switch
+        for name in arg[len(prefix):].split(","):
+            if name and name not in names[prefix]:
+                names[prefix].append(name)
+    return [arg + ",".join(names[arg]) if arg in names else arg for arg in out]
+
+
 class Browser:
     def __init__(self, ctx, name, args=(), headless=None, user_data_dir=False,
                  prefs=None, env=None, settings_from=None, wrapper=None):
@@ -196,7 +221,7 @@ class Browser:
             cmd.append("--headless")
         if self.user_data_dir:
             cmd.append(f"--user-data-dir={self.user_data_dir}")
-        cmd += self.ctx.options.browser_args + self.args
+        cmd += merge_feature_switches(self.ctx.options.browser_args + self.args)
         cmd.append("about:blank")
         return self.wrapper + cmd
 

@@ -60,19 +60,37 @@ def sysctl_name(name):
     return re.sub(r"^(sysctl\.\w+)(\.\d+)+$", r"\1.<oid>", name)
 
 
-def is_marker(data):
-    if MARKER.decode() in data:
-        return True
+def marker_text(data):
+    """The marker as the process wrote it, or None when this record is not
+    one. kdump prints a utrace record as text or as "length hex hex ..."."""
+    text = MARKER.decode()
+    if text in data:
+        return data[data.index(text):].strip().strip('"')
     fields = data.split()
     try:
         raw = bytes(int(x, 16) for x in fields[1:])
     except ValueError:
-        return False
-    return MARKER in raw
+        return None
+    if MARKER not in raw:
+        return None
+    return raw[raw.index(MARKER):].decode(errors="replace").strip()
+
+
+def is_marker(data):
+    return marker_text(data) is not None
+
+
+def marker_kind(text):
+    """What a process said it is beside its marker (from 0.20.3.22):
+    "renderer", "browser", "gpu-process", or for a utility "utility NAME"
+    with the service it runs. "" for the bare marker of an older build,
+    which only renderers wrote."""
+    words = (text or "").split()[1:]
+    return " ".join(words[:2])
 
 
 def _new_proc(comm):
-    return {"comm": comm, "marker": False, "lookups": 0,
+    return {"comm": comm, "marker": False, "kind": "", "lookups": 0,
             "cap": collections.Counter(), "cap_after": collections.Counter(),
             "cap_paths": collections.defaultdict(list),
             "cap_paths_before": collections.defaultdict(list),
@@ -93,8 +111,10 @@ def parse_kdump(lines):
         pid, comm, kind, data = int(m.group(1)), m.group(2), m.group(3), m.group(4)
         p = procs.setdefault(pid, _new_proc(comm))
         if kind == "USER":
-            if is_marker(data):
+            text = marker_text(data)
+            if text is not None:
                 p["marker"] = True
+                p["kind"] = marker_kind(text)
         elif kind == "NAMI":
             last_path[pid] = _unquote(data)
             p["lookups"] += 1
@@ -467,6 +487,221 @@ def locked_pids(log_lines):
     return [int(m.group(1)) for m in map(LOCKED_PID_RE.search, log_lines) if m]
 
 
+# From 0.20.3.22 (patches/security/beryllium-utility-lockdown.patch): a
+# utility service the browser told to lock down writes the same lines as a
+# renderer, with "utility pid=N service=NAME" where a renderer's say
+# "renderer pid=N".
+UTILITY_LOCKED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) service=(\S+) "
+                               r"capability_mode=1 .*\bthreads=(-?\d+)")
+UTILITY_INVITED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) invited (\d+) ms after "
+                                r"its launch")
+UTILITY_ENDED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) .*; ended before it was "
+                              r"sent anything")
+UTILITY_FAILED_RE = re.compile(r"beryllium-sandbox: utility pid=(\d+) could not enter "
+                               r"capability mode(.*)$")
+
+
+def renderer_lockdown_lines(log_lines):
+    """The lockdown reports of renderers; a confined utility's are not
+    among them."""
+    return [l for l in log_lines if "capability_mode=1" in l and LOCKED_PID_RE.search(l)]
+
+
+def confined_utilities(log_lines):
+    """{pid: {service, threads, invited_ms}} for the utility services that
+    reported their own lockdown, with the time to their invitation where
+    the browser wrote one; and ({pid: reason} that failed to lock down,
+    {pids} the browser ended uninvited)."""
+    locked, failed, ended = {}, {}, set()
+    for line in log_lines:
+        m = UTILITY_LOCKED_RE.search(line)
+        if m:
+            locked[int(m.group(1))] = {"service": m.group(2), "threads": int(m.group(3)),
+                                       "invited_ms": None}
+            continue
+        m = UTILITY_FAILED_RE.search(line)
+        if m:
+            failed[int(m.group(1))] = m.group(2).lstrip(": ").strip() or "no reason given"
+            continue
+        m = UTILITY_ENDED_RE.search(line)
+        if m:
+            ended.add(int(m.group(1)))
+    for line in log_lines:
+        m = UTILITY_INVITED_RE.search(line)
+        if m and int(m.group(1)) in locked:
+            locked[int(m.group(1))]["invited_ms"] = int(m.group(2))
+    return locked, failed, ended
+
+
+# From 0.20.3.22 (patches/security/beryllium-invite-after-lockdown.patch):
+# the browser sends a renderer its Mojo invitation only once the kernel says
+# the renderer is in capability mode, and says how long that took; one that
+# never gets there is ended "before it was sent anything".
+INVITED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) invited (\d+) ms after its launch")
+UNINVITED_RE = re.compile(r"beryllium-sandbox: renderer pid=(\d+) .*; ended before it was "
+                          r"sent anything")
+CUT_FOR_RE = re.compile(r"beryllium-sandbox: cut .* bound for confined renderer pid (\d+)")
+
+
+def invitations(log_lines):
+    """{pid: milliseconds from its launch to its invitation} for the
+    renderers the browser invited once they had locked down; {} for a build
+    that invites at launch."""
+    return {int(m.group(1)): int(m.group(2)) for m in map(INVITED_RE.search, log_lines) if m}
+
+
+def ended_uninvited(log_lines):
+    """The pids of the renderers the browser ended before sending them
+    anything."""
+    return {int(m.group(1)) for m in map(UNINVITED_RE.search, log_lines) if m}
+
+
+def cuts_before_invitation(log_lines):
+    """{pid: count} of the descriptors the browser cut for a renderer on a
+    log line that stands before that renderer's invitation: what was sent
+    to a renderer the kernel had not yet vouched for. Empty on a build that
+    holds the invitation back, since nothing can be sent before it."""
+    early, invited = collections.Counter(), set()
+    invited_ever = set(invitations(log_lines))
+    for line in log_lines:
+        m = INVITED_RE.search(line)
+        if m:
+            invited.add(int(m.group(1)))
+            continue
+        m = CUT_FOR_RE.search(line)
+        if m and int(m.group(1)) in invited_ever and int(m.group(1)) not in invited:
+            early[int(m.group(1))] += 1
+    return dict(early)
+
+
+def spread(values):
+    """"least to most, median m" for a list of numbers; "" for none."""
+    if not values:
+        return ""
+    ordered = sorted(values)
+    return f"{ordered[0]} to {ordered[-1]}, median {ordered[len(ordered) // 2]}"
+
+
+# From 0.20.3.22 (patches/security/beryllium-renderer-hardening.patch): what
+# a renderer gave up at its lockdown besides ambient authority, at the end of
+# its lockdown line, hardening=a,b,c; "-" when it set nothing.
+HARDENING_RE = re.compile(r"renderer pid=(\d+)\b.*capability_mode=1 .*\bhardening=(\S+)")
+HARDENING_CALLS = ("no-new-privileges", "no-core", "no-fork")
+# The feature that leaves a locked-down renderer traceable: procstat -f and
+# -C, ktrace and a debugger all need it from 0.20.3.22. A test class whose
+# tests read a renderer's descriptors adds it; older builds ignore the name.
+TRACEABLE_SWITCH = "--enable-features=BerylliumRendererTraceable"
+
+
+def hardening_at_lockdown(log_lines):
+    """{pid: [what its lockdown set]} from the lockdown lines of a build
+    that writes hardening=; {} for an older build."""
+    out = {}
+    for line in log_lines:
+        m = HARDENING_RE.search(line)
+        if m:
+            out[int(m.group(1))] = [] if m.group(2) == "-" else m.group(2).split(",")
+    return out
+
+
+def hardening_problems(hardening, traceable):
+    """Renderers whose lockdown line lacks one of the hardening calls, or
+    whose tracing is not as this run asked: traceable is True for a run
+    with BerylliumRendererTraceable, False for one without."""
+    problems = []
+    for pid, done in sorted(hardening.items()):
+        lacking = [c for c in HARDENING_CALLS if c not in done]
+        if lacking:
+            problems.append(f"renderer pid {pid}: its lockdown did not set {', '.join(lacking)}")
+        expected = "traceable" if traceable else "untraceable"
+        if expected not in done:
+            problems.append(f"renderer pid {pid}: its lockdown says "
+                            f"{', '.join(done) or 'nothing'}, and this run expects {expected}")
+    return problems
+
+
+# From 0.20.3.22 (patches/security/beryllium-capability-trap-report.patch):
+# with BerylliumCapsicumTrap a confined renderer writes one line for each
+# call capability mode refuses it, with where the call was made and the
+# return addresses above it. The line is written with write(2) from a signal
+# handler, so it has no log prefix.
+TRAP_REPORTING_RE = re.compile(r"beryllium-sandbox: (?:renderer|utility) pid=(\d+) reports "
+                               r"refused calls")
+REFUSED_RE = re.compile(r"beryllium-sandbox: (?:renderer|utility) pid=(\d+) refused in "
+                        r"capability mode: syscall=(\d+) errno=(\d+) thread=(\d+) frames:(.*)$")
+SYSCALL_DEFINE_RE = re.compile(r"^#define\s+SYS_(\w+)\s+(\d+)\s*$")
+# Enough to name the one call every survey has seen, on a machine without
+# the header.
+KNOWN_SYSCALLS = {487: "cpuset_getaffinity"}
+ERRNO_NAMES = {93: "ENOTCAPABLE", 94: "ECAPMODE"}
+
+
+def refused_calls(log_lines):
+    """[{pid, syscall, errno, thread, frames: [(module or None, offset)]}]
+    from the trap report's lines, in order."""
+    out = []
+    for line in log_lines:
+        m = REFUSED_RE.search(line)
+        if not m:
+            continue
+        frames = []
+        for token in m.group(5).split():
+            fm = FRAME_RE.match(token)
+            if fm:
+                frames.append((fm.group(1), int(fm.group(2), 16)))
+            elif re.fullmatch(r"0x[0-9a-fA-F]+", token):
+                frames.append((None, int(token, 16)))
+            else:
+                break  # the note that reporting has stopped
+        out.append({"pid": int(m.group(1)), "syscall": int(m.group(2)),
+                    "errno": int(m.group(3)), "thread": int(m.group(4)), "frames": frames})
+    return out
+
+
+def syscall_names(header="/usr/include/sys/syscall.h", text=None):
+    """{number: name} from FreeBSD's sys/syscall.h, with the calls this
+    suite has seen refused when there is no such file."""
+    names = dict(KNOWN_SYSCALLS)
+    if text is None:
+        try:
+            with open(header, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            return names
+    for line in text.splitlines():
+        m = SYSCALL_DEFINE_RE.match(line)
+        if m and m.group(1) != "MAXSYSCALL":
+            names[int(m.group(2))] = m.group(1)
+    return names
+
+
+def describe_refused(calls, binary, names=None, run=None):
+    """One line for each different refused call (the same call from the
+    same code counts once, with how often and in how many renderers): the
+    system call by name, and its frames, those in the browser binary named
+    with llvm-symbolizer as the socket pair frames are."""
+    names = syscall_names() if names is None else names
+    groups = {}
+    for c in calls:
+        key = (c["syscall"], c["errno"], tuple(c["frames"]))
+        g = groups.setdefault(key, {"count": 0, "pids": set()})
+        g["count"] += 1
+        g["pids"].add(c["pid"])
+    own = os.path.basename(binary)
+    offsets = sorted({o for (_, _, frames) in groups for m, o in frames if m == own})
+    named = dict(zip(offsets, symbolize(offsets, binary, run)))
+    lines = []
+    for (syscall, error, frames), g in groups.items():
+        shown = []
+        for module, offset in frames:
+            name = named.get(offset) if module == own else None
+            shown.append(name if name and name != "??" else f"{module or '?'}+0x{offset:x}")
+        lines.append(f"{names.get(syscall, f'syscall {syscall}')} "
+                     f"({ERRNO_NAMES.get(error, f'errno {error}')}), {g['count']} times in "
+                     f"{len(g['pids'])} processes: " + (" < ".join(shown) or "no frames"))
+    return lines
+
+
 # beryllium://sandbox as 0.20.3.21 writes it
 # (patches/security/beryllium-sandbox-status-page.patch): plain lines.
 # From 0.20.3.22 a renderer the browser asked to lock down and has not
@@ -490,7 +725,34 @@ PAGE_SETTINGS = {
     "receive_limits": "receive-side limits (BerylliumReceiveSideLimits): ",
     "weakening_switches": "switches in effect that weaken a sandbox: ",
     "kernel": "kernel: ",
+    # From 0.20.3.22 (beryllium-kernel-check.patch): what the browser found
+    # when it started, by trying it in a child process.
+    "kernel_capability_mode": "kernel check: capability mode: ",
+    "kernel_signals_refused": ("kernel check: a process in capability mode is refused "
+                               "signals to other processes (FreeBSD-SA-26:28.capsicum): "),
 }
+# What the two kernel check lines say on a kernel the lockdown can rely on.
+KERNEL_CHECK_FINE = {"kernel_capability_mode": "available", "kernel_signals_refused": "yes"}
+# From 0.20.3.22 (beryllium-unconfined-processes.patch): one line for each
+# kind of process that is not confined, with the reason (S-PRC-08).
+PAGE_STATEMENT_RE = re.compile(r"^not confined: (.+?) \| (.+)$")
+
+
+def statement_kind(row_kind):
+    """The kind a process line's statement is filed under: the page names
+    a process "GPU (GPU)" or "Utility (network.mojom.NetworkService)", and
+    states its reasons for "GPU" and "network service"."""
+    if row_kind in ("browser", "renderer"):
+        return row_kind
+    if row_kind.startswith("GPU"):
+        return "GPU"
+    for part, kind in (("NetworkService", "network service"),
+                       ("StorageService", "storage service"),
+                       ("AudioService", "audio service"),
+                       ("VideoCapture", "video capture")):
+        if part in row_kind:
+            return kind
+    return "other utilities"
 
 
 def parse_sandbox_page(text):
@@ -503,9 +765,13 @@ def parse_sandbox_page(text):
     FreeBSD)."""
     if not text or PAGE_TITLE not in text:
         return None
-    rows, summary, starting_count, settings = [], None, None, {}
+    rows, summary, starting_count, settings, statements = [], None, None, {}, {}
     for line in text.splitlines():
         line = line.strip()
+        m = PAGE_STATEMENT_RE.match(line)
+        if m:
+            statements[m.group(1)] = m.group(2)
+            continue
         m = PAGE_ROW_RE.match(line)
         if m:
             rows.append({"kind": m.group(1), "pid": int(m.group(2)), "mode": m.group(3),
@@ -521,7 +787,7 @@ def parse_sandbox_page(text):
             if line.startswith(prefix):
                 settings[key] = line[len(prefix):]
     return {"rows": rows, "summary": summary, "starting_count": starting_count,
-            "settings": settings}
+            "settings": settings, "statements": statements}
 
 
 def unattested_renderers(status):
@@ -592,13 +858,40 @@ def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
         if marked:
             problems.append(f"{len(marked)} lines are marked starting and the summary "
                             "does not count starting renderers")
-    elif said_starting != len(marked):
+    elif said_starting != sum(r["kind"] == "renderer" for r in marked):
         problems.append(f"the summary says {said_starting} renderers starting and "
-                        f"{len(marked)} lines are marked so")
+                        f"{sum(r['kind'] == 'renderer' for r in marked)} lines are marked so")
+    # A page that counts starting renderers is from 0.20.3.22, which also
+    # reports its check of the kernel. With the lockdown on, a kernel that
+    # fails the check fails the gate: the lockdown then confines less than
+    # it says, or nothing locks down at all.
+    if said_starting is not None:
+        for key, fine in KERNEL_CHECK_FINE.items():
+            said_kernel = status["settings"].get(key)
+            if said_kernel is None:
+                problems.append(f"the page has no line \"{PAGE_SETTINGS[key].strip()}\"")
+            elif lockdown and said_kernel != fine:
+                problems.append(f"{PAGE_SETTINGS[key]}{said_kernel}")
+        # Every process is confined or it is not, as the browser means it
+        # to be, both ways round: one the browser asked to lock down that
+        # the kernel does not have in capability mode is caught above and
+        # below; one the kernel has in capability mode that the browser did
+        # not ask is a record nobody updated.
+        for r in rows:
+            if r["requested"] == "no" and kernel_modes.get(r["pid"]) is True:
+                problems.append(f"{r['kind']} pid {r['pid']}: in capability mode by procstat, "
+                                "and the browser does not list it as asked to lock down")
+        # And every process that is not confined has its reason on the page.
+        stated = status.get("statements") or {}
+        for kind in sorted({statement_kind(r["kind"]) for r in rows if r["mode"] != "yes"}):
+            if kind not in stated:
+                problems.append(f"the page has unconfined processes of the kind \"{kind}\" "
+                                "and no \"not confined:\" line for it")
     for r in marked:
-        if r["kind"] != "renderer" or r["requested"] != "yes":
+        # A renderer, or a utility service the browser has told to lock down.
+        if r["requested"] != "yes":
             problems.append(f"{r['kind']} pid {r['pid']}: marked starting, which is for a "
-                            f"renderer asked to lock down (lockdown requested {r['requested']})")
+                            f"process asked to lock down (lockdown requested {r['requested']})")
     if not any(r["kind"] == "browser" for r in rows):
         problems.append("the page has no line for the browser process")
     said = status["settings"].get("lockdown")
@@ -1120,8 +1413,14 @@ def summarise(kdump, types, readable=None):
     browser process is left out: it is never confined."""
     out = {}
     for pid, p in kdump.items():
-        ptype = types.get(pid, "unknown")
-        if ptype == "browser":
+        # What the process said of itself beside its marker (0.20.3.22) is
+        # more exact than the browser's list: it names a utility's service,
+        # and it is there for a process that came and went between samples.
+        said = p.get("kind", "")
+        ptype = types.get(pid) or (said.split()[0] if said else "unknown")
+        if said.startswith("utility "):
+            ptype = said
+        if ptype == "browser" or said == "browser":
             continue
         t = out.setdefault(ptype, {"pids": [], "marked": 0,
                                    "cap": collections.Counter(),
@@ -1195,8 +1494,10 @@ def report(summary, samples, readable_from=None):
         count = len(t["pids"]) or sum(1 for s in samples.values() if s.get("type") == ptype)
         lines += [f"== {ptype} ({count} processes)", ""]
         if ptype == "unknown":
-            lines += ["Processes the browser never listed: they started and ended between "
-                      "two samples (a renderer that wrote the marker was a renderer).", ""]
+            lines += ["Processes the browser never listed and that did not say what they "
+                      "are: they started and ended between two samples. (From 0.20.3.22 a "
+                      "process says what it is beside its marker; on an older build one "
+                      "that wrote the marker was a renderer.)", ""]
         note = (f"readable in capability mode per {readable_from}" if readable_from
                 else "no oracle result for this kernel to say which are readable")
         blocked = set(t["sysctl_blocked"]) if t.get("sysctl_blocked") is not None else None
@@ -1207,7 +1508,10 @@ def report(summary, samples, readable_from=None):
                 lines.append("After the lockdown point: nothing capability mode would refuse.")
                 lines.append("")
             _failures(lines, t["cap_after"], t["cap_paths_after"],
-                      "AFTER the lockdown point (must work in capability mode):")
+                      "AFTER the lockdown point (must work in capability mode):"
+                      if ptype == "renderer" else
+                      "After the point where its sandbox would begin (what capability "
+                      "mode would refuse this kind of process if it were confined):")
             _sysctls(lines, t["sysctl_after"], blocked, note,
                      "Sysctls read AFTER the lockdown point")
             before = t["cap"] - t["cap_after"]
