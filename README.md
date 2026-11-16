@@ -355,8 +355,8 @@ stands, the design, the work, the tests, and how it is to be attacked.
    run and, in the runs where no renderer could lock down, ended all 13.
    `beryllium://sandbox` lists every process with the kernel's answer.
    Two things are left. The page shows a renderer that is still starting
-   as not confined ([Known issues](#known-issues)), which the next build
-   is to word properly. And the browser does not yet hold back what it
+   as not confined ([Known issues](#known-issues)); the correction is
+   written for the next build. And the browser does not yet hold back what it
    sends a renderer until the kernel has answered, so a renderer that
    skipped its lockdown could read what arrives in that moment before
    it is ended.
@@ -510,8 +510,9 @@ set it, and the launcher will not start the browser without it.
   summary counts it as not in capability mode. The line is true of that
   instant and reads like a failure. Reload the page, or run
   `procstat -s` on the process ID: the renderer is confined by then, or
-  it was ended. A build after 0.20.3.21 is to call such a renderer
-  "starting" and count it apart. The suite's first run on the test
+  it was ended. The correction is written for 0.20.3.22, which is not
+  built yet: the page calls such a renderer "not yet (starting)" and
+  counts it apart. The suite's first run on the test
   build of 0.20.3.21 failed on this: its test compared the page with a
   `procstat` reading made a moment later. The test was corrected the
   same evening (15 November 2026) to judge a renderer caught starting

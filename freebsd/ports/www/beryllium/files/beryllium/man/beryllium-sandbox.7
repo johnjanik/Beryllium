@@ -8,7 +8,7 @@
 .\" (plan/13-FEATURE-MATRIX.md); this page claims nothing a test does not
 .\" back.
 .\" One sentence per line; check with freebsd/tools/check-man.
-.Dd November 15, 2026
+.Dd November 16, 2026
 .Dt BERYLLIUM-SANDBOX 7
 .Os Beryllium @@VERSION@@
 .Sh NAME
@@ -113,6 +113,15 @@ lists the browser, every renderer and every other child process with its
 capability mode as the kernel gives it when the page is loaded, whether
 the browser asked it to lock down, and whether the check passed.
 Nothing on it is a process's own report.
+A renderer that was launched a moment ago and has not connected yet has
+not been checked.
+The page lists it as
+.Dq not yet (starting)
+and counts it apart from the renderers in capability mode; its own
+renderer is one whenever the page opens in a new tab.
+Reload the page to see what became of it.
+A renderer listed as asked to lock down and not attested, without that
+word, is one the browser refused and is ending.
 .Pp
 Other processes that hold a direct link to a renderer, namely the GPU
 process, the network service and the storage service, cut every descriptor
@@ -347,6 +356,8 @@ place and shape in 0.20.3.10, limits at creation in 0.20.3.12 and the
 browser's limits before sending in 0.20.3.13.
 The browser's check of each renderer with the kernel, the status page and
 the limits other processes apply before sending followed in 0.20.3.21.
+The status page of 0.20.3.21 had no word for a starting renderer and
+listed it as not attested; the word came with 0.20.3.22.
 .Sh CAVEATS
 A process in capability mode cannot write a core dump.
 To see which call a confined renderer was refused, enable

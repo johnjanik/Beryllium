@@ -3,7 +3,8 @@
 
 - the browser's check of each renderer with the kernel when its channel
   connects (the "attested" and "ended" lines);
-- beryllium://sandbox, written by the browser as plain lines;
+- beryllium://sandbox, written by the browser as plain lines, and from
+  0.20.3.22 its word for a renderer that is still starting;
 - the cut lines of senders other than the browser;
 - the switch that turns a renderer's receive-side limits off.
 
@@ -50,17 +51,30 @@ def patched_text(patch, added_only=False):
     return text.replace("\\n", "\n").replace('\\"', '"')
 
 
-def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on"):
-    """The page as beryllium-sandbox-status-page.patch writes it."""
-    renderers = [r for r in rows if r[0] == "renderer"]
+STARTING = "not yet (starting)"
+
+
+def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on",
+         starting_count=None, build=21):
+    """The page as beryllium-sandbox-status-page.patch writes it: build 21
+    as 0.20.3.21 has it, build 22 with the count of starting renderers,
+    which the summary's "N of M" then leaves out."""
+    marked = [r for r in rows if r[4] == STARTING]
+    if build < 22:
+        assert not marked and starting_count is None, "0.20.3.21 has no word for starting"
+    renderers = [r for r in rows if r[0] == "renderer" and r not in marked]
     others = [r for r in rows if r[0] not in ("renderer", "browser")]
     if summary is None:
         summary = (sum(r[2] == "yes" for r in renderers), len(renderers),
                    sum(r[2] == "yes" for r in others), len(others))
+    if starting_count is None:
+        starting_count = len(marked)
+    counted = ("" if build < 22 else f"renderers starting: {starting_count}; ")
     lines = ["Beryllium sandbox status", "",
              "Every value below was read in the browser when this page was loaded:", "",
-             "summary: renderers in capability mode: %d of %d; other child processes in "
-             "capability mode: %d of %d; the browser process is not confined" % summary, ""]
+             "summary: renderers in capability mode: %d of %d; " % summary[:2] + counted +
+             "other child processes in capability mode: %d of %d; "
+             "the browser process is not confined" % summary[2:], ""]
     for kind, pid, mode, requested, was in rows:
         lines.append(f"process: {kind} | pid: {pid} | capability mode by the kernel: {mode}"
                      f" | lockdown requested: {requested} | attested at connect: {was}")
@@ -148,6 +162,119 @@ class Page(unittest.TestCase):
         self.assertEqual(capsicum.sandbox_page_problems(status, {}, False),
                          ["the page lists no process"])
 
+    def test_the_page_of_0_20_3_21_has_no_count_of_starting_renderers(self):
+        self.assertIsNone(capsicum.parse_sandbox_page(page(CONFINED))["starting_count"])
+        self.assertEqual(capsicum.parse_sandbox_page(page(CONFINED, build=22))["starting_count"], 0)
+
+
+# The page from 0.20.3.22, as the patch's own code wrote it on 16 November
+# 2026: the function that builds the page, taken from the patched file and
+# run on Linux with stand-ins for what it calls, for a browser with four
+# renderers the browser asked to lock down. 201 is attested; 202 and 203 are
+# not ready yet, and 203 has locked down already; 204 is ready and was not
+# attested, which is a renderer the browser refused. (The body's text, as
+# the suite reads it from the page.)
+FROM_THE_CODE = """Beryllium sandbox status
+
+Every value below was read in the browser when this page was loaded:
+capability mode from the kernel (kern.proc.pid, what procstat -s
+prints as C), the rest from the browser's own records. Nothing here
+is a process's own report. Reload the page to read again.
+
+A renderer marked starting was launched a moment ago and has not
+connected to the browser yet. The browser asks the kernel about
+it when it connects, and ends it unless the kernel says it is
+confined. When this page opens in a new tab, its own renderer
+is one. Reload the page to see what became of it.
+
+summary: renderers in capability mode: 1 of 2; renderers starting: 2; other child processes in capability mode: 0 of 1; the browser process is not confined
+
+process: browser | pid: 100 | capability mode by the kernel: no | lockdown requested: no | attested at connect: not applicable
+process: renderer | pid: 201 | capability mode by the kernel: yes | lockdown requested: yes | attested at connect: yes
+process: renderer | pid: 202 | capability mode by the kernel: no | lockdown requested: yes | attested at connect: not yet (starting)
+process: renderer | pid: 203 | capability mode by the kernel: yes | lockdown requested: yes | attested at connect: not yet (starting)
+process: renderer | pid: 204 | capability mode by the kernel: no | lockdown requested: yes | attested at connect: no
+process: GPU (GPU) | pid: 300 | capability mode by the kernel: no | lockdown requested: no | attested at connect: not applicable
+
+renderer lockdown (BerylliumCapsicumRenderer): on
+renderers attested by the kernel at connect, this session: 1
+renderers ended because the kernel did not attest them, this session: 0
+receive-side limits (BerylliumReceiveSideLimits): on
+switches in effect that weaken a sandbox: none
+kernel: FreeBSD 16.0-CURRENT
+
+With the lockdown off, no process is confined, and a page that
+takes over a renderer has the access you have. With it on, the
+renderers are confined and the browser, GPU, network and storage
+processes are not. man beryllium-sandbox says what that means.
+"""
+FROM_THE_CODE_KERNEL = {100: False, 201: True, 202: False, 203: True, 204: False, 300: False}
+
+MARKED = [("browser", 100, "no", "no", "not applicable"),
+          ("renderer", 201, "yes", "yes", "yes"),
+          ("renderer", 202, "no", "yes", STARTING),
+          ("GPU (GPU)", 300, "no", "no", "not applicable")]
+SETTLED = [("renderer", 202, "yes", "yes", "yes") if r[1] == 202 else r for r in MARKED]
+
+
+class PageThatMarksStartingRenderers(unittest.TestCase):
+    """beryllium://sandbox from 0.20.3.22."""
+
+    def test_the_text_the_code_wrote_is_read_whole(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        self.assertEqual([(r["pid"], r["mode"], r["attested"]) for r in status["rows"]],
+                         [(100, "no", "not applicable"), (201, "yes", "yes"),
+                          (202, "no", STARTING), (203, "yes", STARTING),
+                          (204, "no", "no"), (300, "no", "not applicable")])
+        self.assertEqual(status["summary"], (1, 2, 0, 1))
+        self.assertEqual(status["starting_count"], 2)
+        self.assertEqual(len(status["settings"]), len(capsicum.PAGE_SETTINGS))
+
+    def test_only_the_marked_renderers_are_starting(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        self.assertEqual(capsicum.starting_renderers(status), {202, 203})
+        self.assertEqual(capsicum.unattested_renderers(status), {202, 203, 204})
+
+    def test_a_renderer_the_browser_refused_is_a_problem_at_once(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        problems = capsicum.sandbox_page_problems(
+            status, FROM_THE_CODE_KERNEL, True, capsicum.starting_renderers(status))
+        self.assertEqual(problems, ["renderer pid 204: lockdown requested yes, attested no, "
+                                    "with the lockdown on"])
+
+    def test_the_summary_leaves_starting_renderers_out_and_counts_them(self):
+        ok = capsicum.parse_sandbox_page(page(MARKED, build=22))
+        self.assertEqual((ok["summary"], ok["starting_count"]), ((1, 1, 0, 1), 1))
+        self.assertEqual(capsicum.sandbox_page_problems(
+            ok, kernel(MARKED), True, capsicum.starting_renderers(ok)), [])
+        # counted with the rest, as 0.20.3.21 did
+        old = capsicum.parse_sandbox_page(page(MARKED, build=22, summary=(1, 2, 0, 1)))
+        self.assertTrue(any("the summary says (1, 2, 0, 1)" in p for p in
+                            capsicum.sandbox_page_problems(old, kernel(MARKED), True, {202})))
+        miscounted = capsicum.parse_sandbox_page(page(MARKED, build=22, starting_count=0))
+        self.assertIn("the summary says 0 renderers starting and 1 lines are marked so",
+                      capsicum.sandbox_page_problems(miscounted, kernel(MARKED), True, {202}))
+
+    def test_starting_is_a_word_for_a_renderer_asked_to_lock_down(self):
+        rows = [("renderer", 202, "no", "no", STARTING) if r[1] == 202 else r for r in MARKED]
+        status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off"))
+        problems = capsicum.sandbox_page_problems(status, kernel(rows), False)
+        self.assertTrue(any("pid 202: marked starting, which is for a renderer asked to lock "
+                            "down" in p for p in problems), problems)
+
+    def test_a_mark_without_a_count_is_a_problem(self):
+        text = page(MARKED, build=22).replace("renderers starting: 1; ", "")
+        status = capsicum.parse_sandbox_page(text)
+        self.assertIsNone(status["starting_count"])
+        problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
+        self.assertTrue(any("does not count starting renderers" in p for p in problems), problems)
+
+    def test_a_starting_renderer_that_locked_down_meanwhile_is_not_a_disagreement(self):
+        status = capsicum.parse_sandbox_page(page(MARKED, build=22))
+        modes = kernel(MARKED)
+        modes[202] = True
+        self.assertEqual(capsicum.sandbox_page_problems(status, modes, True, {202}), [])
+
 
 def line(pid, text):
     return f"[{pid}:{pid}:1115/100000.000000:WARNING:x.cc:1] beryllium-sandbox: {text}"
@@ -211,8 +338,19 @@ class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
                       "; the browser process is not confined"):
             self.assertIn(piece, said, piece)
         for word in ('"yes"', '"no"', '"unknown"', '"not applicable"', '"renderer"',
-                     '"browser"', '"on"', '"off"'):
+                     '"browser"', '"on"', '"off"', f'"{capsicum.PAGE_STARTING}"'):
             self.assertIn(word, patch_text("beryllium-sandbox-status-page.patch"), word)
+        self.assertEqual(capsicum.PAGE_STARTING, STARTING)
+        self.assertIn("; renderers starting: ", said)
+
+    def test_the_text_kept_from_the_code_is_what_the_patch_still_writes(self):
+        """FROM_THE_CODE was written by the patched file's own function. Each
+        of its lines that is fixed text must still be in the patch, so a
+        change to the page's wording cannot leave the fixture behind."""
+        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        for text in FROM_THE_CODE.split("\n\n")[1:3] + FROM_THE_CODE.split("\n\n")[-1:]:
+            for fixed in text.strip().splitlines():
+                self.assertIn(fixed, said, fixed)
 
     def test_the_attestation_lines(self):
         patch = patch_text("beryllium-kernel-attested-renderer.patch")
@@ -404,6 +542,53 @@ class StartingRenderers(unittest.TestCase):
             self.run_test([page(OPEN, lockdown="off")], browser_args=[],
                           kernel={100: False, 201: True, 300: False})
         self.assertIn("the page says capability mode no, procstat says yes", str(e.exception))
+
+
+class StartingRenderersMarkedByThePage(unittest.TestCase):
+    """The same test on a page from 0.20.3.22, which says who is starting."""
+
+    METHOD = "test_sandbox_page_matches_the_kernel"
+    KERNEL = {100: False, 201: True, 202: True, 300: False}
+
+    def run_test(self, readings, kernel=None):
+        t = gate_case(sandbox.SandboxHonesty, self.METHOD, LOCKDOWN)
+        t.GRACE_SECONDS = 5.0
+        t.browser.new_page.return_value.eval.side_effect = list(readings)
+        with clock(), modes_are(kernel or self.KERNEL):
+            t.test_sandbox_page_matches_the_kernel()
+        return t
+
+    def test_passes_when_a_later_reading_shows_it_confined_and_attested(self):
+        t = self.run_test([page(MARKED, build=22), page(SETTLED, build=22)])
+        note = t.note.call_args[0][0]
+        self.assertIn("caught while they were starting: [202]", note)
+        self.assertIn("summary: (1, 1, 0, 1), starting 1", note)
+
+    def test_fails_when_it_is_still_starting_after_the_grace(self):
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([page(MARKED, build=22)] * 12)
+        self.assertIn("pid 202: still not confined and attested", str(e.exception))
+
+    def test_fails_when_the_starting_renderer_was_then_refused(self):
+        refused = [("renderer", 202, "no", "yes", "no") if r[1] == 202 else r for r in MARKED]
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([page(MARKED, build=22)] + [page(refused, build=22, ended=1)] * 11,
+                          kernel={100: False, 201: True, 202: False, 300: False})
+        self.assertIn("pid 202: still not confined and attested", str(e.exception))
+        self.assertIn("counts 1 renderers ended", str(e.exception))
+
+    def test_fails_on_an_unattested_renderer_the_page_does_not_call_starting(self):
+        """However the starting ones turn out: here both are confined and
+        attested in the next reading, and the refused one is gone from it."""
+        later = [("browser", 100, "no", "no", "not applicable"),
+                 ("renderer", 201, "yes", "yes", "yes"),
+                 ("renderer", 202, "yes", "yes", "yes"),
+                 ("renderer", 203, "yes", "yes", "yes"),
+                 ("GPU (GPU)", 300, "no", "no", "not applicable")]
+        with self.assertRaises(AssertionError) as e:
+            self.run_test([FROM_THE_CODE, page(later, build=22)], kernel=FROM_THE_CODE_KERNEL)
+        self.assertIn("pid 204: lockdown requested yes, attested no", str(e.exception))
+        self.assertNotIn("still not confined", str(e.exception))
 
 
 class UnconfinedRendererTest(unittest.TestCase):

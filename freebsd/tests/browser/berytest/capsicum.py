@@ -469,12 +469,19 @@ def locked_pids(log_lines):
 
 # beryllium://sandbox as 0.20.3.21 writes it
 # (patches/security/beryllium-sandbox-status-page.patch): plain lines.
+# From 0.20.3.22 a renderer the browser asked to lock down and has not
+# checked yet, because it has not connected, is "not yet (starting)", and
+# the summary counts those apart. 0.20.3.21 listed such a renderer as
+# attested "no" and counted it with the rest.
 PAGE_TITLE = "Beryllium sandbox status"
+PAGE_STARTING = "not yet (starting)"
 PAGE_ROW_RE = re.compile(
     r"^process: (.*?) \| pid: (\d+) \| capability mode by the kernel: (yes|no|unknown)"
-    r" \| lockdown requested: (yes|no) \| attested at connect: (yes|no|not applicable)$")
+    r" \| lockdown requested: (yes|no)"
+    r" \| attested at connect: (yes|no|not applicable|not yet \(starting\))$")
 PAGE_SUMMARY_RE = re.compile(
-    r"^summary: renderers in capability mode: (\d+) of (\d+); other child processes in "
+    r"^summary: renderers in capability mode: (\d+) of (\d+); "
+    r"(?:renderers starting: (\d+); )?other child processes in "
     r"capability mode: (\d+) of (\d+); the browser process is not confined$")
 PAGE_SETTINGS = {
     "lockdown": "renderer lockdown (BerylliumCapsicumRenderer): ",
@@ -489,12 +496,14 @@ PAGE_SETTINGS = {
 def parse_sandbox_page(text):
     """The status page's text as {"rows": [{kind, pid, mode, requested,
     attested}], "summary": (renderers confined, renderers, others confined,
-    others) or None, "settings": {...}}; None when the text is not
-    Beryllium's status page (a build before 0.20.3.21 has Chromium's page,
-    which shows nothing on FreeBSD)."""
+    others) or None, "starting_count": the summary's count of starting
+    renderers, or None on a page that has no such count (0.20.3.21),
+    "settings": {...}}; None when the text is not Beryllium's status page (a
+    build before 0.20.3.21 has Chromium's page, which shows nothing on
+    FreeBSD)."""
     if not text or PAGE_TITLE not in text:
         return None
-    rows, summary, settings = [], None, {}
+    rows, summary, starting_count, settings = [], None, None, {}
     for line in text.splitlines():
         line = line.strip()
         m = PAGE_ROW_RE.match(line)
@@ -504,25 +513,42 @@ def parse_sandbox_page(text):
             continue
         m = PAGE_SUMMARY_RE.match(line)
         if m:
-            summary = tuple(int(g) for g in m.groups())
+            confined, renderers, starting, others_confined, others = m.groups()
+            summary = (int(confined), int(renderers), int(others_confined), int(others))
+            starting_count = None if starting is None else int(starting)
             continue
         for key, prefix in PAGE_SETTINGS.items():
             if line.startswith(prefix):
                 settings[key] = line[len(prefix):]
-    return {"rows": rows, "summary": summary, "settings": settings}
+    return {"rows": rows, "summary": summary, "starting_count": starting_count,
+            "settings": settings}
+
+
+def unattested_renderers(status):
+    """The pids of the renderers the browser asked to lock down that the
+    page does not show as both in capability mode and attested."""
+    return {r["pid"] for r in status["rows"]
+            if r["kind"] == "renderer" and r["requested"] == "yes"
+            and (r["mode"], r["attested"]) != ("yes", "yes")}
 
 
 def starting_renderers(status):
-    """The pids of the renderers the browser asked to lock down that the
-    page shows as not there yet: not in capability mode, or not attested.
+    """The pids of the renderers the page shows while they are starting.
     The browser lists a renderer from the moment it is launched, and the
     renderer locks down and connects a moment later. The page's own renderer
     is caught this way whenever the page is opened in a new tab: the browser
     writes the page while that renderer is still starting (the first run on
-    0.20.3.21, 15 November 2026, showed two)."""
+    0.20.3.21, 15 November 2026, showed two).
+
+    A page from 0.20.3.22 marks them itself, and only those count: a
+    renderer it lists as asked to lock down, not attested and not starting
+    was checked by the browser and refused. 0.20.3.21's page has no such
+    mark, so there every unattested renderer is taken to be starting and is
+    judged by a later reading."""
+    if status.get("starting_count") is None:
+        return unattested_renderers(status)
     return {r["pid"] for r in status["rows"]
-            if r["kind"] == "renderer" and r["requested"] == "yes"
-            and (r["mode"], r["attested"]) != ("yes", "yes")}
+            if r["kind"] == "renderer" and r["attested"] == PAGE_STARTING}
 
 
 def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
@@ -551,13 +577,28 @@ def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
                             f"{r['mode']}, procstat says {word[actual]}")
     renderers = [r for r in rows if r["kind"] == "renderer"]
     others = [r for r in rows if r["kind"] not in ("renderer", "browser")]
-    counted = (sum(r["mode"] == "yes" for r in renderers), len(renderers),
+    marked = [r for r in rows if r["attested"] == PAGE_STARTING]
+    said_starting = status.get("starting_count")
+    # A page that counts starting renderers leaves them out of "N of M".
+    settled = renderers if said_starting is None else [r for r in renderers if r not in marked]
+    counted = (sum(r["mode"] == "yes" for r in settled), len(settled),
                sum(r["mode"] == "yes" for r in others), len(others))
     if status["summary"] is None:
         problems.append("the page has no summary line")
     elif status["summary"] != counted:
         problems.append(f"the summary says {status['summary']} and the lines add up to {counted} "
                         "(renderers confined, renderers, others confined, others)")
+    if said_starting is None:
+        if marked:
+            problems.append(f"{len(marked)} lines are marked starting and the summary "
+                            "does not count starting renderers")
+    elif said_starting != len(marked):
+        problems.append(f"the summary says {said_starting} renderers starting and "
+                        f"{len(marked)} lines are marked so")
+    for r in marked:
+        if r["kind"] != "renderer" or r["requested"] != "yes":
+            problems.append(f"{r['kind']} pid {r['pid']}: marked starting, which is for a "
+                            f"renderer asked to lock down (lockdown requested {r['requested']})")
     if not any(r["kind"] == "browser" for r in rows):
         problems.append("the page has no line for the browser process")
     said = status["settings"].get("lockdown")

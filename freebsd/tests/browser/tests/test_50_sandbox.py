@@ -220,7 +220,9 @@ class SandboxHonesty(Gate):
         the sum of the lines, and with the lockdown on every renderer was
         asked to lock down and attested (S-STA-02, S-STA-03). A renderer the
         page lists while it is still starting gets GRACE_SECONDS to show as
-        confined and attested in a later reading, or to be gone."""
+        confined and attested in a later reading, or to be gone. From
+        0.20.3.22 the page says which renderers are starting, and one it
+        lists as unattested without that word fails at once."""
         self.browser.new_page(self.ctx.fixtures().url("busy.html"))
         page = self.browser.new_page()
         try:
@@ -230,7 +232,8 @@ class SandboxHonesty(Gate):
             modes = capsicum.capability_modes([r["pid"] for r in status["rows"]])
             # The page is written while its own renderer is starting, so
             # with the lockdown on that renderer shows as not confined and
-            # not attested yet. It, and any other caught the same way, is
+            # not attested yet ("no" on 0.20.3.21, "not yet (starting)"
+            # from 0.20.3.22). It, and any other caught the same way, is
             # judged by what a later reading says of it.
             starting = capsicum.starting_renderers(status) if self.strict() else set()
             still, latest = set(starting), status
@@ -241,7 +244,7 @@ class SandboxHonesty(Gate):
                 if again is None:
                     break
                 latest = again
-                still &= capsicum.starting_renderers(latest)
+                still &= capsicum.unattested_renderers(latest)
         finally:
             self.browser.close_page(page)
         problems = capsicum.sandbox_page_problems(status, modes, self.strict(), starting)
@@ -256,7 +259,9 @@ class SandboxHonesty(Gate):
             [f"{r['kind']} pid {r['pid']}: page {r['mode']}, procstat "
              f"{ {True: 'yes', False: 'no', None: 'unreadable'}.get(modes.get(r['pid']), 'gone') }"
              f"; requested {r['requested']}, attested {r['attested']}" for r in status["rows"]]
-            + [f"summary: {status['summary']}"]
+            + [f"summary: {status['summary']}"
+               + (f", starting {status['starting_count']}"
+                  if status["starting_count"] is not None else "")]
             + [f"{k}: {v}" for k, v in sorted(status["settings"].items())]
             + ([f"renderers the page caught while they were starting: {sorted(starting)}; "
                 + ("each was confined and attested, or gone, in a later reading" if not still
