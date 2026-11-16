@@ -23,6 +23,7 @@ security/beryllium-sandbox-status-page.patch
 security/beryllium-webgpu-off-by-default.patch
 security/beryllium-renderer-hardening.patch
 security/beryllium-capability-trap-report.patch
+security/beryllium-no-device-video-frames-under-lockdown.patch
 privacy/beryllium-services-off-by-default.patch
 privacy/beryllium-noise-hash-whole-token.patch
 privacy/beryllium-noise-snapshot-channel-order.patch
