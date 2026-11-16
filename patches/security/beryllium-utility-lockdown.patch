@@ -266,7 +266,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    // The PlatformChannel that will be used to transmit an invitation to the
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -128,6 +128,32 @@
+@@ -129,6 +129,32 @@
  // before. utrace is a no-op unless the process is traced.
  constexpr char kLockdownMarker[] = "BERYLLIUM-LOCKDOWN";
  
@@ -299,7 +299,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
  // What a renderer must read before capability mode refuses it, found by the
  // Capsicum survey (4 November 2026): the memory and shared-memory sysctls
  // and uname() are cached in base/system on FreeBSD once read; the executable
-@@ -302,8 +328,9 @@
+@@ -303,8 +329,9 @@
    }
    char line[1400];
    size_t used = 0;
@@ -311,7 +311,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    used = TrapAppendNumber(line, sizeof(line), used,
                            static_cast<uintptr_t>(getpid()), 10);
    used = TrapAppend(line, sizeof(line), used,
-@@ -620,11 +647,12 @@
+@@ -621,11 +648,12 @@
  // Enters capability mode; returns false, with errno set, if it did not.
  // |confinement| receives what was done to the descriptors, or what stopped
  // the lockdown.
@@ -328,7 +328,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
      return true;
    }
    // Read before the sweep, assigned after it: ConfineDescriptors() returns
-@@ -643,7 +671,8 @@
+@@ -644,7 +672,8 @@
        PLOG(WARNING) << "beryllium-sandbox: the trap report is off "
                         "(PROC_TRAPCAP_CTL)";
      } else {
@@ -338,7 +338,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " reports refused calls (BerylliumCapsicumTrap), "
                     << g_trap_module_count << " modules listed";
      }
-@@ -664,7 +693,7 @@
+@@ -665,7 +694,7 @@
    if (!HardenRenderer(&confinement->hardening, &confinement->violation)) {
      return false;
    }
@@ -347,7 +347,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
    if (cap_enter() != 0) {
      return false;
    }
-@@ -800,18 +829,34 @@
+@@ -801,18 +830,34 @@
    if (hook)
      CHECK(std::move(hook).Run(options));
  
@@ -388,7 +388,7 @@ security-review: required (sandbox setup, process launch, IPC boundary)
                     << " capability_mode=1 closed_directories="
                     << confinement.closed_directories
                     << " limited=" << confinement.limited
-@@ -823,6 +868,12 @@
+@@ -824,6 +869,12 @@
                     << (confinement.hardening.empty() ? "-"
                                                       : confinement.hardening);
      }

@@ -68,18 +68,19 @@ security-review: required (sandbox setup, signal handling in a confined
  #include <stdint.h>
  #include <sys/param.h>
  #include <sys/capsicum.h>
-@@ -23,8 +26,10 @@
+@@ -23,8 +26,11 @@
  // utrace(2) needs sys/param.h, sys/time.h and sys/uio.h first.
  #include <sys/ktrace.h>
  #include <time.h>
 +#include <ucontext.h>
  #include <unistd.h>
  
++#include <algorithm>
 +#include <atomic>
  #include <cstddef>
  #include <cstring>
  #include <limits>
-@@ -73,6 +78,7 @@
+@@ -73,6 +79,7 @@
  #include "crypto/nss_util.h"
  #endif
  
@@ -87,7 +88,7 @@ security-review: required (sandbox setup, signal handling in a confined
  #include "third_party/boringssl/src/include/openssl/crypto.h"
  
  #include "ui/gfx/font_util.h"
-@@ -137,6 +143,18 @@
+@@ -137,6 +144,18 @@
    std::ignore = base::SysInfo::OperatingSystemArchitecture();
    std::ignore = base::SysInfo::KernelVersionNumber::Current();
    std::ignore = base::SysInfo::NumberOfProcessors();
@@ -106,7 +107,7 @@ security-review: required (sandbox setup, signal handling in a confined
    base::FilePath unused;
    base::PathService::Get(base::FILE_EXE, &unused);
    base::PathService::Get(base::DIR_EXE, &unused);
-@@ -150,6 +168,226 @@
+@@ -150,6 +169,226 @@
    localtime_r(&now, &local);
  }
  
@@ -333,7 +334,7 @@ security-review: required (sandbox setup, signal handling in a confined
  // What a renderer may hold at the lockdown point, and with which rights:
  // the policy in base/posix/capsicum_rights.h (plan/06 section 3.2; feature
  // matrix S-REN-04 and S-REN-05). Descriptors 0 to 2 are stdio, limited by
-@@ -397,9 +635,17 @@
+@@ -397,9 +636,17 @@
    const int threads = ThreadCount(&thread_names);
    base::freebsd::ExpectConfinement();
    if (base::FeatureList::IsEnabled(kBerylliumCapsicumTrap)) {

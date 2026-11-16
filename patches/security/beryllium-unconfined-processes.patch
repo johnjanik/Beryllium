@@ -85,7 +85,7 @@ security-review: required (sandbox reporting, process hardening)
  }
 --- a/sandbox/policy/freebsd/sandbox_freebsd.cc
 +++ b/sandbox/policy/freebsd/sandbox_freebsd.cc
-@@ -119,6 +119,16 @@
+@@ -120,6 +120,16 @@
  BASE_FEATURE(kBerylliumRendererHardening, base::FEATURE_ENABLED_BY_DEFAULT);
  BASE_FEATURE(kBerylliumRendererTraceable, base::FEATURE_DISABLED_BY_DEFAULT);
  
@@ -102,7 +102,7 @@ security-review: required (sandbox reporting, process hardening)
  // Written with utrace(2) at the lockdown point, whether or not the renderer
  // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
  // splits each process's trace there, separating what happens before the
-@@ -869,6 +879,17 @@
+@@ -870,6 +880,17 @@
                                                       : confinement.hardening);
      }
    } else {
