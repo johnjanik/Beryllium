@@ -31,12 +31,14 @@ Stage: 4 (Beryllium series). Depends on
   records) and beryllium-receive-limits-switch.patch (the feature it
   reports).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.21).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.21 (released 16 November 2026): every line agrees with
+  procstat -s, except that a renderer still starting is listed as not
+  confined for a moment (the page's own, each time it opens in a new tab).
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_sandbox_page_matches_the_kernel reads the page and compares the
   capability mode on every line with procstat -s for that pid, with the
-  lockdown on and off; freebsd/tools/tests/test_sandbox_page.py tests the
+  lockdown on and off; freebsd/tools/tests/test_sandbox_status.py tests the
   page's parser on a copy of the text this patch writes.
 security-review: required (sandbox reporting)
 

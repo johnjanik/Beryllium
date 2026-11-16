@@ -17,8 +17,9 @@ Purpose: plan/18 section 7, decided by the owner on 11 November 2026
 Stage: 4 (Beryllium series). Applies over the BSD patch for this file
   (stage 2).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.21).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.21 (released 16 November 2026): the GPU page lists
+  webgpu as disabled_off.
 Test: freebsd/tests/browser/tests/test_40_rendering.py test_gpu_info
   records the feature status the GPU page gives for webgpu, and
   test_webgl_webgpu_canvas what a page gets from navigator.gpu; from this

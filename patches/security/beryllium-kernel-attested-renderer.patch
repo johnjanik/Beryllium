@@ -43,8 +43,10 @@ Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch
   beryllium-sender-side-rights.patch (the launcher registers each renderer
   it starts with the lockdown on).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.21).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.21 (released 16 November 2026): in the lockdown run on
+  the released package the browser attested 7 renderers and ended none,
+  and with --no-sandbox it ended all 13.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log
   reads the browser's "attested" and "ended" lines; under the gate, on a
   build that writes them, every renderer that reported its lockdown must

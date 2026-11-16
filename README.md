@@ -30,35 +30,71 @@ Capsicum. Beryllium is an independent project; see
 > on ([below](#experimental-renderer-lockdown)); it is not yet a complete
 > sandbox. Do not rely on Beryllium to contain an attack yet.
 
-Current release: **Beryllium 0.20.3.20**, based on Chromium 156.0.8078.79
+Current release: **Beryllium 0.20.3.21**, based on Chromium 156.0.8078.79
 and Helium 0.20.3.
 
 - **Packages:** FreeBSD 16.0-CURRENT, amd64. Other FreeBSD versions: build from source (below).
-- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. No test run of 0.20.3.20 itself is recorded: it is the browser of 0.20.3.18 and 0.20.3.19 built a third time, and the runs were made on those two. On 0.20.3.19 the whole test suite passes in two runs, one with the renderer lockdown on and one without it (12 November 2026). On 0.20.3.18 it passed in seven runs that day: four with the lockdown, and three without it, of which one with the network and one with the diagnostics. What the first three of those lockdown runs did not check, and the later ones did, is under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
+- **Checked on:** FreeBSD 16.0-CURRENT, NVIDIA GeForce RTX 5090 Laptop GPU (driver 595.99.02), KDE Plasma on Wayland. On the released package of 0.20.3.21 the whole test suite passes in two runs, one without the renderer lockdown and one with it (16 November 2026). A test build of the same sources passed both the evening before, after one test of the new status page was corrected; that is told under [Known issues](#known-issues). YouTube plays in ordinary use; in the suite's automated session YouTube itself ends playback after about 45 seconds (see [Known issues](#known-issues)).
 - **Works:** browsing; video playback, including YouTube, in every format the suite tests (H.264, VP9 and AV1 with AAC and Opus, as files and through Media Source); WebGL; text in Chinese, Japanese, Korean and emoji, with the fonts the package brings; the toolbar in all of Helium's layouts; Beryllium's own name, logo and icons, `beryllium://` pages and profile folder.
 - **Privacy check:** a fresh browser, idle and showing a local page, contacts no outside server; online services are off in a new profile, and even when switched on, with consent given, they contact nothing until a server is entered (test suite, `privacy` group).
-- **Not yet:** a sandbox on by default; WebGPU (no adapter is found).
+- **Not yet:** a sandbox on by default; WebGPU (off unless you switch it on, and then no adapter is found).
 
-### New in 0.20.3.20 (since 0.20.3.19)
+### New in 0.20.3.21 (since 0.20.3.20)
 
-Nothing in the browser. 0.20.3.20 was built from the same sources as
-0.20.3.19 with the version number raised: the two packages' build
-manifests list the same 20 patches with the same digests, the same build
-arguments and the same Chromium, Helium and FreeBSD patch set, and differ
-in the version alone. If 0.20.3.19 is installed there is no reason to
-hurry the update.
+Five patches, all in the sandbox work. Without the lockdown switched on,
+two things change: WebGPU is off, and `beryllium://sandbox` is a new
+page. The rest acts when the experimental renderer lockdown is on
+([below](#experimental-renderer-lockdown)).
 
-It is the second signed release. Checked as GitHub serves it, the day it
-was published (12 November 2026): the signature verifies against
-[freebsd/release-keys](freebsd/release-keys/README.md), the package has
-the SHA-256 the signed file lists, and `install.sh` accepts the release
-and refuses it as a downgrade or under another tag (off FreeBSD, with
-stand-ins for `pkg` and `fetch`, as for 0.20.3.19).
+- **The browser asks the kernel about each renderer.** Until now the
+  browser took a renderer's own word that it had locked down. With the
+  lockdown on, the browser now asks the kernel whether each renderer is
+  in capability mode when the renderer connects, and ends one the kernel
+  does not vouch for. In the lockdown run on the released package the
+  browser attested all 7 renderers and ended none. In a run made so that
+  no renderer could lock down (the lockdown on together with
+  `--no-sandbox`) it ended all 13, and the test's page was gone before
+  it answered a script. So the lockdown and `--no-sandbox` do not go
+  together: no page loads. What the browser sends a renderer before the
+  kernel has answered is not held back yet
+  ([Still to finish](#still-to-finish), item 2).
+- **`beryllium://sandbox`.** A plain page, written by the browser each
+  time it is loaded, with one line for every process: its kind, its
+  process ID, and whether the kernel has it in capability mode, which
+  you can compare with `procstat -s`. It also says whether the lockdown
+  is on, how many renderers the kernel attested and how many were ended
+  in this session, and whether a switch that weakens a sandbox is in
+  effect. The suite compares every line with `procstat`. One line can
+  mislead; see [Known issues](#known-issues).
+- **Other processes cut what they send a renderer.** The browser already
+  cut the rights on every descriptor before sending it to a confined
+  renderer. The GPU process, the network service and the storage service
+  now do the same on their direct connections to one. In the lockdown
+  run on the released package, 274 of the 275 cuts were the browser's
+  and 1 was the GPU process's.
+- **A test switch for the receiver's half.**
+  `--disable-features=BerylliumReceiveSideLimits` turns off the limits a
+  renderer applies to what it receives, so that a test can see whether
+  the senders' cut is enough without them. It is: in that run every
+  descriptor of the 5 renderers read stayed inside the policy. The
+  switch is for tests; a renderer started with it says so in the log.
+- **WebGPU is off by default.** It found no adapter in any release, and
+  the decision was to keep its interface to the GPU process closed to
+  pages until that process has a policy. `beryllium://gpu` now lists
+  WebGPU as disabled. `--enable-features=WebGPUService` turns it back
+  on, with no adapter, as before.
 
-In the repository since 0.20.3.19, and not part of the package: the
-installer takes nothing unsigned as the latest release. Until a signed
-release existed it accepted 0.20.3.18 that way, known by its SHA-256;
-0.20.3.18 still installs by name (`sh install.sh --release v0.20.3.18`).
+It is the third signed release. Checked as GitHub
+serves it, the day it was published (16 November 2026): the signature
+verifies against [freebsd/release-keys](freebsd/release-keys/README.md),
+the package has the SHA-256 the signed file lists, its build manifest
+lists 25 patches with the digests of this repository's and no compiler
+cache, and `install.sh` accepts the release and refuses it as a
+downgrade or under another tag (off FreeBSD, with stand-ins for `pkg`
+and `fetch`, as for 0.20.3.19).
+
+0.20.3.20 (12 November 2026) changed nothing in the browser: it was
+0.20.3.19 built again with the version number raised.
 
 ### New in 0.20.3.19 (since 0.20.3.18)
 
@@ -242,6 +278,8 @@ the lockdown on.
 
 Each release states what is enforced, so you can check it yourself with
 `procstat -s` (a `C` in the flags column means Capsicum capability mode).
+From 0.20.3.21 the browser shows the same at `beryllium://sandbox`: one
+line for each process with the kernel's answer.
 
 | Process | Status |
 |---|---|
@@ -275,10 +313,14 @@ procstat -s $(pgrep -f -- --type=renderer)
 
 It is off by default because it is not yet a complete sandbox. What it
 does today: every descriptor a confined renderer holds is cut to the
-rights its kind needs, the browser cuts what it sends such a renderer
-before sending it, the renderer is the only thread in its process when it
-locks down, a renderer that cannot be confined ends, and the suite checks
-all of it from outside with `procstat`. What is still missing is listed
+rights its kind needs; the browser, the GPU process, the network service
+and the storage service cut what they send such a renderer before
+sending it; the renderer is the only thread in its process when it locks
+down; a renderer that cannot be confined ends; the browser asks the
+kernel about each renderer when it connects and ends one that is not in
+capability mode; and the suite checks all of it from outside with
+`procstat`. Do not combine it with `--no-sandbox`: no renderer can lock
+down then, and the browser ends every one. What is still missing is listed
 under [Still to finish](#still-to-finish). An external
 adversarial review of the lockdown, its tests and the release tools
 (7 November 2026), and what changed because of it, is recorded in
@@ -294,23 +336,30 @@ In the order they are planned.
 stands, the design, the work, the tests, and how it is to be attacked.
 [plan/14](plan/14-RENDERER-SANDBOX.md) has the results of each build.
 
-1. **What other child processes send a renderer** is cut by the receiver
-   only. The browser cuts every descriptor it sends a confined renderer
-   before sending it, but the direct connections between a renderer and
-   the GPU process, the network service and the storage service carry no
-   sender-side cut yet. Build 0.20.3.21 (15 November 2026, not released
-   yet) has it, and passes a test that switches the receiver's half
-   off: every descriptor of every renderer stayed inside the policy.
-2. **The kernel's word on each renderer.** The browser checks each
-   renderer's capability mode with the kernel before it gets a page, and
-   a `beryllium://sandbox` page shows the answer per process. Build
-   0.20.3.21 (15 November 2026, not released yet) has both: the browser
-   attested every renderer in a lockdown run and, in a run where no
-   renderer could lock down, ended all 13. The page lists every process
-   with the kernel's answer; it shows a renderer that is still starting
-   as not confined, which the next build is to word properly. One step
-   is left after that: holding back everything the browser sends until
-   the kernel has answered.
+1. **What other child processes send a renderer.** In 0.20.3.21 the GPU
+   process, the network service and the storage service cut every
+   descriptor they send a confined renderer before sending it, as the
+   browser did already, and a test that switches the receiver's half off
+   passes: every descriptor of every renderer read stayed inside the
+   policy. In the runs so far the GPU process made one or two such cuts
+   and the two services none; whether those services sent a renderer any
+   descriptor is not known from the runs. Left: a list, kept in the
+   repository and checked by a test, of which kinds of process may hold
+   a connection to a renderer; the same cut tried on its own, outside
+   the browser, on FreeBSD 14, 15 and 16; and video frames in GPU memory
+   buffers, which Mesa drivers use and which nobody has run with the
+   lockdown.
+2. **The kernel's word on each renderer.** In 0.20.3.21 the browser asks
+   the kernel about each renderer when it connects, and ends one that is
+   not in capability mode: it attested every renderer in each lockdown
+   run and, in the runs where no renderer could lock down, ended all 13.
+   `beryllium://sandbox` lists every process with the kernel's answer.
+   Two things are left. The page shows a renderer that is still starting
+   as not confined ([Known issues](#known-issues)), which the next build
+   is to word properly. And the browser does not yet hold back what it
+   sends a renderer until the kernel has answered, so a renderer that
+   skipped its lockdown could read what arrives in that moment before
+   it is ended.
 3. **On by default, fail closed.** The lockdown becomes the default when
    a release candidate passes the whole suite with the lockdown on 100
    times in a row, over at least three boots (the suite keeps the count:
@@ -319,7 +368,10 @@ stands, the design, the work, the tests, and how it is to be attacked.
    one. In the last run on 0.20.3.18 and in the run on 0.20.3.19 the gate
    read the whole of the lockdown's log (Known issues); the others were
    made before that, several at the same time, and the tally leaves them
-   out. The 100 are counted on the build that is to carry the default.
+   out. 0.20.3.21 passes with the lockdown in two runs, one on the test
+   build and one on the released package, each with the whole log read;
+   a run before them failed on the test of the status page (Known
+   issues). The 100 are counted on the build that is to carry the default.
    One call is still refused after the lockdown, `cpuset_getaffinity`,
    once in each of 20 renderers in the survey of 0.20.3.19; it does no
    harm, and it has to go before a refused call can be treated as an
@@ -346,10 +398,10 @@ stands, the design, the work, the tests, and how it is to be attacked.
    hardening flags the review named as the main deficit.
 7. **WebGPU** finds no adapter. Chromium gives Linux and BSD a WebGPU
    adapter only when the GPU process uses Vulkan, which it does not here.
-   Decided: a coming build turns WebGPU off by default, with a switch for
-   those who want it, until the GPU process has a policy. Build 0.20.3.21
-   (not released yet) does: its GPU page lists WebGPU as disabled, and
-   `--enable-features=WebGPUService` turns it on.
+   Decided: WebGPU is off by default, with a switch for those who want
+   it, until the GPU process has a policy. Done in 0.20.3.21: its GPU
+   page lists WebGPU as disabled, and `--enable-features=WebGPUService`
+   turns it on. Making WebGPU work is not being pursued now.
 
 ## Install
 
@@ -446,13 +498,31 @@ set it, and the launcher will not start the browser without it.
   group fails on any script drawn without its glyphs and names the
   package. (Releases up to 0.20.3.12 brought no font for Chinese,
   Japanese, Korean or emoji: `pkg install noto-sans-sc noto-emoji` there.)
-- **WebGPU** finds no adapter.
+- **WebGPU** is off from 0.20.3.21. Switched on with
+  `--enable-features=WebGPUService`, it finds no adapter, as in every
+  earlier release, where it was on.
+- **`beryllium://sandbox` shows a starting renderer as not confined.**
+  With the lockdown on, a renderer the browser has just launched is
+  listed as "capability mode by the kernel: no" and "attested at
+  connect: no" until it has locked down, which takes a moment. The page
+  is written while its own renderer is starting, so each time it is
+  opened in a new tab it lists that one renderer this way, and the
+  summary counts it as not in capability mode. The line is true of that
+  instant and reads like a failure. Reload the page, or run
+  `procstat -s` on the process ID: the renderer is confined by then, or
+  it was ended. A build after 0.20.3.21 is to call such a renderer
+  "starting" and count it apart. The suite's first run on the test
+  build of 0.20.3.21 failed on this: its test compared the page with a
+  `procstat` reading made a moment later. The test was corrected the
+  same evening (15 November 2026) to judge a renderer caught starting
+  by a later reading of the page, and has passed in both lockdown runs
+  since.
 - **The canvas noise can still be read around.** Helium applies its
   canvas noise when a page reads a canvas through `getImageData`,
   `toDataURL`, `toBlob` or `convertToBlob`. 0.20.3.18 adds WebGL
   `readPixels` in its usual format. Still without noise in 0.20.3.18 and
-  in 0.20.3.19 and 0.20.3.20, which have the same code, measured on
-  0.20.3.18 in 60
+  in 0.20.3.19, 0.20.3.20 and 0.20.3.21, whose noise code is the same,
+  measured on 0.20.3.18 in 60
   readbacks of 60 each (12 November 2026): a canvas copied
   into a video frame, and a canvas read through WebGL one pixel at a
   time, which is exact because an area of one colour is left exact. Not
@@ -482,8 +552,8 @@ set it, and the launcher will not start the browser without it.
   not in the package). 0.20.3.18 then passed with the corrected check:
   340 lines read, the whole log; a lockdown report from each of the
   eight renderers, each with one thread; no refused descriptor. 0.20.3.19
-  passed the same way, with 310 lines. Releases before 0.20.3.18 have not
-  been run again.
+  passed the same way, with 310 lines, and the released package of
+  0.20.3.21 with 315. Releases before 0.20.3.18 have not been run again.
 - **YouTube under the test suite.** YouTube plays in ordinary use
   (checked by hand on 0.20.3.17). In the suite's session, a new profile
   driven over DevTools, the video plays for about 45 seconds and then
@@ -621,12 +691,12 @@ What differs:
 
 | Layer | Purpose |
 |---|---|
-| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.20 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
+| **Capsicum renderer sandbox** | Every renderer enters capability mode with an audited, rights-limited set of file descriptors: no path access, no direct network sockets, no access to other processes. Sandbox setup failure is fatal in production builds. This is the central milestone; 0.20.3.21 has the lockdown as an opt-in whose tests pass, and not yet on by default. |
 | **Per-process policies** | Separate confinement for PDF, print, audio, network, GPU and media utility processes, each with its own tests or a published risk statement. |
 | **Process hardening** | Tracing disabled, no privilege gain, calibrated resource limits per process type. |
 | **Optional jail profile** | An administrator-managed whole-browser jail as an outer perimeter. Never a substitute for the renderer sandbox and never installed automatically. |
 | **Resource profiles** | Measured `rctl` rule sets for jail deployments. |
-| **Kernel-attested status** | Status pages report what the kernel says about each process, which you can check yourself with `procstat`. The first step is in this release: `beryllium://gpu` reports the GPU process's real state. |
+| **Kernel-attested status** | Status pages report what the kernel says about each process, which you can check yourself with `procstat`. In this release: `beryllium://gpu` reports the GPU process's real state, and `beryllium://sandbox` lists every process with the kernel's answer; a renderer that is still starting is not yet told apart there. |
 | **MAC module study** | An optional, administrator-loaded policy that narrows what sandboxed processes can reach in the kernel. Not required for a first release. |
 
 ## Roadmap
@@ -635,7 +705,7 @@ What differs:
 |---|---|---|
 | 0. Baseline | Reproduce the FreeBSD Chromium build and record what is actually sandboxed | mostly done; the per-process baseline of the stock Chromium remains |
 | 1. Native build | `www/beryllium` builds and runs on FreeBSD with the inherited privacy behaviour and no false sandbox claims | in progress: packages build and run |
-| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.20, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser cutting what it sends a confined renderer, a single thread at the lockdown, and a test suite that is a gate and passes; still to come, the same cut on what the GPU process sends, the kernel check, and then on by default |
+| 2. Capsicum renderer | Renderers confined in capability mode and verified by tests | in progress: in 0.20.3.21, clean descriptors at launch, anonymous shared memory, no swap file, an opt-in lockdown with least rights on every descriptor, admission by place and shape, the browser and the other processes that connect to a renderer cutting what they send it, a single thread at the lockdown, the browser asking the kernel about each renderer and ending one that is not confined, and a test suite that is a gate and passes; still to come, holding back what the browser sends until the kernel has answered, the last refused call, and then on by default |
 | 3. Other processes | Utility, audio, network and GPU policies | planned |
 | 4. Jail and resources | Optional jail profile and measured resource limits | planned |
 | 5. MAC module study | Decision memo, prototype if justified | planned |

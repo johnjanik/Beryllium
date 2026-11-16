@@ -23,8 +23,9 @@ Purpose: plan/18 section 0.3 (adversarial review plan/16, finding BER-05;
     the default (plan/18 section 3.3).
 Stage: 4 (Beryllium series). Depends on beryllium-descriptor-rights.patch.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.21).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.21 (released 16 November 2026): with the feature off,
+  the 5 renderers read held 20 to 36 descriptors, none outside the policy.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py, class SenderAlone,
   test_the_senders_cut_alone_keeps_the_policy: the lockdown on and this
   feature off, every descriptor of every renderer inside the policy, and
