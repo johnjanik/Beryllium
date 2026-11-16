@@ -54,8 +54,11 @@ def patched_text(patch, added_only=False):
 STARTING = "not yet (starting)"
 
 
+FINE = {"kernel_capability_mode": "available", "kernel_signals_refused": "yes"}
+
+
 def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on",
-         starting_count=None, build=21):
+         starting_count=None, build=21, kernel_check=FINE):
     """The page as beryllium-sandbox-status-page.patch writes it: build 21
     as 0.20.3.21 has it, build 22 with the count of starting renderers,
     which the summary's "N of M" then leaves out."""
@@ -84,6 +87,8 @@ def page(rows, lockdown="on", summary=None, attested=3, ended=0, limits="on",
               f"receive-side limits (BerylliumReceiveSideLimits): {limits}",
               "switches in effect that weaken a sandbox: none",
               "kernel: FreeBSD 16.0-CURRENT"]
+    if build >= 22:
+        lines += [capsicum.PAGE_SETTINGS[key] + said for key, said in kernel_check.items()]
     return "\n".join(lines)
 
 
@@ -202,6 +207,8 @@ renderers ended because the kernel did not attest them, this session: 0
 receive-side limits (BerylliumReceiveSideLimits): on
 switches in effect that weaken a sandbox: none
 kernel: FreeBSD 16.0-CURRENT
+kernel check: capability mode: available
+kernel check: a process in capability mode is refused signals to other processes (FreeBSD-SA-26:28.capsicum): yes
 
 With the lockdown off, no process is confined, and a page that
 takes over a renderer has the access you have. With it on, the
@@ -269,6 +276,30 @@ class PageThatMarksStartingRenderers(unittest.TestCase):
         problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
         self.assertTrue(any("does not count starting renderers" in p for p in problems), problems)
 
+    def test_the_kernel_check_is_on_the_page_and_must_be_fine_under_the_lockdown(self):
+        status = capsicum.parse_sandbox_page(FROM_THE_CODE)
+        self.assertEqual({k: status["settings"][k] for k in FINE}, FINE)
+        self.assertEqual(capsicum.KERNEL_CHECK_FINE, FINE)
+        bad = dict(FINE, kernel_signals_refused="no, this kernel needs the fix")
+        status = capsicum.parse_sandbox_page(page(MARKED, build=22, kernel_check=bad))
+        problems = capsicum.sandbox_page_problems(status, kernel(MARKED), True, {202})
+        self.assertEqual(problems, [capsicum.PAGE_SETTINGS["kernel_signals_refused"]
+                                    + "no, this kernel needs the fix"])
+        # without the lockdown the page only reports it
+        rows = [r for r in OPEN]
+        status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off",
+                                                  kernel_check=bad))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), False), [])
+        # a page from 0.20.3.22 without the lines is wrong either way
+        status = capsicum.parse_sandbox_page(page(rows, build=22, lockdown="off",
+                                                  kernel_check={}))
+        problems = capsicum.sandbox_page_problems(status, kernel(rows), False)
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(all(p.startswith("the page has no line") for p in problems), problems)
+        # and 0.20.3.21's page, which has no such lines, is not held to them
+        status = capsicum.parse_sandbox_page(page(rows, lockdown="off"))
+        self.assertEqual(capsicum.sandbox_page_problems(status, kernel(rows), False), [])
+
     def test_a_starting_renderer_that_locked_down_meanwhile_is_not_a_disagreement(self):
         status = capsicum.parse_sandbox_page(page(MARKED, build=22))
         modes = kernel(MARKED)
@@ -326,11 +357,18 @@ class Log(unittest.TestCase):
 class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
     """The parsers above against the text of the patches themselves."""
 
+    def page_patches(self):
+        """What the page's patches write: the page itself, and from
+        0.20.3.22 the two lines of the kernel check."""
+        return "\n".join(patched_text(patch_text(name)) for name in
+                         ("beryllium-sandbox-status-page.patch",
+                          "beryllium-kernel-check.patch"))
+
     def test_the_status_page(self):
-        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        said = self.page_patches()
         self.assertIn(capsicum.PAGE_TITLE, said)
         for prefix in capsicum.PAGE_SETTINGS.values():
-            self.assertIn(prefix, said, prefix)
+            self.assertTrue(prefix in said, f"no patch writes {prefix!r}")
         for piece in ("process: ", " | pid: ", " | capability mode by the kernel: ",
                       " | lockdown requested: ", " | attested at connect: ",
                       "summary: renderers in capability mode: ",
@@ -347,10 +385,13 @@ class PatchesWriteWhatTheSuiteReads(unittest.TestCase):
         """FROM_THE_CODE was written by the patched file's own function. Each
         of its lines that is fixed text must still be in the patch, so a
         change to the page's wording cannot leave the fixture behind."""
-        said = patched_text(patch_text("beryllium-sandbox-status-page.patch"))
+        said = self.page_patches()
         for text in FROM_THE_CODE.split("\n\n")[1:3] + FROM_THE_CODE.split("\n\n")[-1:]:
             for fixed in text.strip().splitlines():
-                self.assertIn(fixed, said, fixed)
+                self.assertTrue(fixed in said, f"no patch writes {fixed!r}")
+        for key, fine in FINE.items():
+            self.assertIn(capsicum.PAGE_SETTINGS[key] + fine, FROM_THE_CODE)
+            self.assertTrue(f'"{fine}"' in said, f"no patch writes {fine!r}")
 
     def test_the_attestation_lines(self):
         patch = patch_text("beryllium-kernel-attested-renderer.patch")

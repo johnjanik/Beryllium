@@ -609,7 +609,14 @@ PAGE_SETTINGS = {
     "receive_limits": "receive-side limits (BerylliumReceiveSideLimits): ",
     "weakening_switches": "switches in effect that weaken a sandbox: ",
     "kernel": "kernel: ",
+    # From 0.20.3.22 (beryllium-kernel-check.patch): what the browser found
+    # when it started, by trying it in a child process.
+    "kernel_capability_mode": "kernel check: capability mode: ",
+    "kernel_signals_refused": ("kernel check: a process in capability mode is refused "
+                               "signals to other processes (FreeBSD-SA-26:28.capsicum): "),
 }
+# What the two kernel check lines say on a kernel the lockdown can rely on.
+KERNEL_CHECK_FINE = {"kernel_capability_mode": "available", "kernel_signals_refused": "yes"}
 
 
 def parse_sandbox_page(text):
@@ -714,6 +721,17 @@ def sandbox_page_problems(status, kernel_modes, lockdown, starting=()):
     elif said_starting != len(marked):
         problems.append(f"the summary says {said_starting} renderers starting and "
                         f"{len(marked)} lines are marked so")
+    # A page that counts starting renderers is from 0.20.3.22, which also
+    # reports its check of the kernel. With the lockdown on, a kernel that
+    # fails the check fails the gate: the lockdown then confines less than
+    # it says, or nothing locks down at all.
+    if said_starting is not None:
+        for key, fine in KERNEL_CHECK_FINE.items():
+            said_kernel = status["settings"].get(key)
+            if said_kernel is None:
+                problems.append(f"the page has no line \"{PAGE_SETTINGS[key].strip()}\"")
+            elif lockdown and said_kernel != fine:
+                problems.append(f"{PAGE_SETTINGS[key]}{said_kernel}")
     for r in marked:
         if r["kind"] != "renderer" or r["requested"] != "yes":
             problems.append(f"{r['kind']} pid {r['pid']}: marked starting, which is for a "
