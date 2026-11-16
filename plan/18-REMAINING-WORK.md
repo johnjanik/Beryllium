@@ -1448,8 +1448,8 @@ with another number: 0.20.3.19 and 0.20.3.20 are both the code of
 2026, and 0.20.3.21, built that evening, is the first build since
 0.20.3.18 that differs from the one before it. All five compiled at the
 first attempt. Its results are in 14-RENDERER-SANDBOX.md section 3: the
-suite passes without the lockdown, and with it but for one test of the
-new page, where the test was at fault and is corrected.
+suite passes without the lockdown, and with it once the test of the new
+page was corrected (the test was at fault, not the page).
 
 **What was and was not checked before that build.** Each patch applies
 to the files as the build will meet them (`patch-workbench`, all four
