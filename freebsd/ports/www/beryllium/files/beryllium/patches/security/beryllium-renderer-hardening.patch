@@ -41,8 +41,12 @@ Purpose: plan/18 section 3.2, P3 (plan/06 section 3.1; feature matrix
     --disable-features=BerylliumRendererHardening shows it at once.
 Stage: 4 (Beryllium series). Depends on beryllium-capsicum-renderer.patch.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22). The lockdown's own code, taken
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026): each of 8
+  renderers in the lockdown run set no-new-privileges, no-core and no-fork
+  and the whole suite passed, so the limit on processes leaves a renderer's
+  threads alone; with the default, procstat read none of the descriptors
+  of 4 locked-down renderers and 184 of the browser's. The lockdown's own code, taken
   from the patched file, type-checks against FreeBSD 16's headers with
   stand-ins for Chromium's declarations.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py test_lockdown_log

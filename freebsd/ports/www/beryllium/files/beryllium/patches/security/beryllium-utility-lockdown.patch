@@ -49,8 +49,11 @@ Stage: 4 (Beryllium series). Depends on
   beryllium-capability-trap-report.patch and
   beryllium-sandbox-status-page.patch.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22). base/posix/capsicum_rights.cc
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026). No service on
+  the list started in the suite's run, so no utility has locked down yet.
+  The marker works: the survey sorted the audio, network and storage
+  services and the print compositor by what each said it was. base/posix/capsicum_rights.cc
   and the lockdown's code with InitializeSandbox() type-check against
   FreeBSD 16's headers with stand-ins for Chromium's declarations.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py, class

@@ -41,8 +41,12 @@ Purpose: plan/18 section 3.2, P2 (feature matrix S-REN-02). Every survey
 Stage: 4 (Beryllium series). Depends on beryllium-capsicum-renderer.patch
   and, for the place in the file, beryllium-renderer-hardening.patch.
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22). The lockdown's own code, taken
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026): the survey of
+  21 renderers shows no call refused after the lockdown, where every
+  survey before showed cpuset_getaffinity, and 9 renderers with the trap
+  report on reported none. So the handler has not yet written a line on
+  FreeBSD: nothing was refused. The lockdown's own code, taken
   from the patched file, type-checks against FreeBSD 16's headers with
   stand-ins for Chromium's declarations. The handler and the module list,
   taken from the patched file and run on Linux with a breakpoint standing

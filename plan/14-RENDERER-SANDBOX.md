@@ -1107,6 +1107,68 @@ FreeBSD test bed, so an increment must be worth a build.
    `RLIMIT_NPROC` 1 leaves a renderer's threads alone, that nothing in a
    renderer's start waits for the browser before its lockdown, and that
    abseil's is the only processor count read after it.
+   **0.20.3.22 built as a test build, 16 November 2026: all nine patches
+   compiled, the suite passes with the lockdown, and one new test fails
+   without it, on an error in a patch.** Three reports that morning: the
+   whole suite without the lockdown (11:30), with it (11:40), and the
+   Capsicum survey with it (11:45). Not released, and not to be: the next
+   build carries the correction.
+   With the lockdown (42 pass, 4 skipped, nothing fails):
+   - *The three things only a run could show* each came out as read.
+     The limit on processes leaves threads alone: 8 renderers set
+     no-new-privileges, no-core and no-fork and the whole suite ran in
+     them. Nothing in a renderer's start waits for the browser: 8
+     renderers were invited 38 to 57 ms after their launch (median 45),
+     which is also the first measurement of how long a renderer takes
+     to reach capability mode, and nothing was cut for a renderer before
+     its invitation. And nothing is refused after the lockdown any more:
+     the survey's 21 renderers have no refusal after the marker, where
+     every survey since 0.20.3.3 had `cpuset_getaffinity`, and 9
+     renderers with the trap report on reported none. So abseil's was
+     the count. The trap handler has therefore not written a line on
+     FreeBSD yet.
+   - *The gate:* 463 lines, 8 lockdown reports with one thread each, 14
+     socket pairs, 411 cuts (409 by the browser, 2 by the GPU process),
+     8 attestations, none ended.
+   - *Untraceable by default:* with the default, `procstat` read none of
+     the descriptors of 4 locked-down renderers and 184 of the browser's.
+   - *An unconfined renderer:* under `--no-sandbox` 11 renderers were
+     ended before they were sent anything, each 0 ms after its launch.
+     The browser keeps trying, further apart each time, so this test now
+     takes a minute.
+   - *The page:* the kernel check says capability mode available and
+     signals refused; two renderers were marked starting and each was
+     attested in a later reading; every unconfined process has its
+     statement.
+   - *Utilities:* no service on the list started, so no utility has
+     locked down yet.
+   Without the lockdown (36 pass, 9 skipped, 1 fails):
+   `test_children_cannot_gain_privileges`. The GPU process, the network
+   service and the storage service report that they cannot gain
+   privileges; the four renderers could. The patch set the flag in the
+   branch for the other process types, which a renderer does not reach,
+   and a renderer with the lockdown off is not locked down either.
+   Corrected the same day for the next build: every child that is not
+   about to lock down sets it.
+   The survey, now that every process says what it is beside its marker:
+   - the *print compositor*, which no survey had caught, asks for one
+     file after its start (a Widevine hint in the profile) and nothing
+     else;
+   - the *storage service* asks for nothing by path after its start,
+     only the one `cpuset_getaffinity` that the lockdown's warm-up
+     removes. It holds the profile's LevelDB files open for writing, so
+     the browser hands them to it. That is Chromium's restricted mode
+     for it, in effect on this port without anyone having switched it
+     on, which 18-REMAINING-WORK.md section 4.2 had as not verified;
+   - the *audio service* loads PulseAudio's libraries and connects to
+     its socket after its start; the *network service* and the *GPU
+     process* are as the survey of 10 November had them;
+   - the browser's test child for the kernel check shows in the trace
+     with `kill` and `sigqueue` each refused once.
+   Both the print compositor and the storage service can be tried under
+   the lockdown on this build without another: start the suite's
+   utilities class with them named
+   (`--browser-arg=--beryllium-confine-services=storage.mojom.StorageService,printing.mojom.PrintCompositor`).
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch. What has to be true first, and how the default
    changes in two steps, is in 18-REMAINING-WORK.md section 3.

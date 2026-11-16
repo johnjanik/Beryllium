@@ -27,8 +27,12 @@ Purpose: plan/18 sections 4.3 and 4.7 (feature matrix S-PRC-08, S-HRD-01;
 Stage: 4 (Beryllium series). Depends on beryllium-utility-lockdown.patch
   (the place in both files).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.22). The lockdown's code with
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in the test build of 0.20.3.22 (16 November 2026): the page has
+  the statements, and the GPU process, the network service and the storage
+  service report that they cannot gain privileges. A renderer with the
+  lockdown off could: that build set the flag in the branch for the other
+  process types only. Corrected here for 0.20.3.23. The lockdown's code with
   InitializeSandbox() type-checks against FreeBSD 16's headers; the page's
   function was run on Linux with stand-ins and wrote the lines.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
@@ -102,21 +106,35 @@ security-review: required (sandbox reporting, process hardening)
  // Written with utrace(2) at the lockdown point, whether or not the renderer
  // then locks down: the Capsicum survey (freebsd/tests/browser, ktrace -t u)
  // splits each process's trace there, separating what happens before the
-@@ -870,6 +880,17 @@
-                                                      : confinement.hardening);
-     }
-   } else {
+@@ -837,10 +847,28 @@
+   const bool confined_utility =
+       process_type == switches::kUtilityProcess &&
+       command_line->HasSwitch(base::freebsd::kBerylliumLockdownSwitch);
++  const bool locks_down =
++      confined_utility ||
++      (sandbox_type == sandbox::mojom::Sandbox::kRenderer &&
++       base::FeatureList::IsEnabled(base::freebsd::kBerylliumCapsicumRenderer));
 +#if defined(PROC_NO_NEW_PRIVS_CTL)
-+    if (!process_type.empty() &&
-+        base::FeatureList::IsEnabled(kBerylliumChildNoNewPrivileges)) {
-+      int no_new_privs = PROC_NO_NEW_PRIVS_ENABLE;
-+      if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_CTL, &no_new_privs) != 0) {
-+        PLOG(WARNING) << "beryllium-sandbox: " << process_type << " pid="
-+                      << getpid() << " keeps the means to gain privileges "
-+                                     "(PROC_NO_NEW_PRIVS_CTL)";
-+      }
++  // Every child that is not about to lock down, a renderer with the lockdown
++  // off among them (a process that locks down sets this in its lockdown).
++  // The first test build of 0.20.3.22 had this in the branch for the other
++  // process types only, and a renderer with the lockdown off kept the means
++  // to gain privileges; the suite's test of every child found it.
++  if (!locks_down && !process_type.empty() &&
++      base::FeatureList::IsEnabled(kBerylliumChildNoNewPrivileges)) {
++    int no_new_privs = PROC_NO_NEW_PRIVS_ENABLE;
++    if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_CTL, &no_new_privs) != 0) {
++      PLOG(WARNING) << "beryllium-sandbox: " << process_type << " pid="
++                    << getpid() << " keeps the means to gain privileges "
++                                   "(PROC_NO_NEW_PRIVS_CTL)";
 +    }
++  }
 +#endif
-     // Every other process writes the marker too, where its sandbox would
-     // begin: the Capsicum survey then says, for each kind of process, what
-     // capability mode would refuse it after its start (plan/18 section 4.2,
+   if (sandbox_type == sandbox::mojom::Sandbox::kRenderer || confined_utility) {
+-    const bool requested =
+-        confined_utility || base::FeatureList::IsEnabled(
+-                                base::freebsd::kBerylliumCapsicumRenderer);
++    const bool requested = locks_down;
+     if (confined_utility) {
+       g_lockdown_label = "utility";
+     }

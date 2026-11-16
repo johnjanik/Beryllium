@@ -202,14 +202,17 @@ class Marker(unittest.TestCase):
         # the browser listed 7001 as a utility and 7004 as a renderer; the
         # others came and went, or are the browser itself
         summary = capsicum.summarise(procs, {7001: "utility", 7004: "renderer"})
-        self.assertEqual(sorted(summary), ["gpu-process", "renderer", "unknown",
-                                           "utility network.mojom.NetworkService",
-                                           "utility unzip.mojom.Unzipper"])
-        self.assertEqual(summary["utility unzip.mojom.Unzipper"]["cap_after"],
+        self.assertEqual(sorted(summary), ["gpu-process", "network.mojom.NetworkService",
+                                           "renderer", "unknown", "unzip.mojom.Unzipper"])
+        self.assertEqual(summary["unzip.mojom.Unzipper"]["cap_after"],
                          {"system call not allowed: open": 1})
+        # One section a service: the browser's list names a utility by its
+        # service too (here 7001), so the trace and the descriptors of a
+        # service are filed under one name.
+        self.assertEqual(summary["network.mojom.NetworkService"]["pids"], [7001])
         text = capsicum.report(summary, {}, None)
-        self.assertIn("== utility unzip.mojom.Unzipper (1 processes)", text)
-        unzip = text[text.index("== utility unzip.mojom.Unzipper"):]
+        self.assertIn("== unzip.mojom.Unzipper (1 processes)", text)
+        unzip = text[text.index("== unzip.mojom.Unzipper"):]
         self.assertIn("After the point where its sandbox would begin", unzip.split("==")[1]
                       if "==" in unzip[3:] else unzip)
         renderer = text[text.index("== renderer"):]
