@@ -919,7 +919,8 @@ FreeBSD test bed, so an increment must be worth a build.
    on 0.20.3.18 and 0.20.3.19 are what there is for this code. The
    release is signed and verifies as GitHub serves it
    (18-REMAINING-WORK.md section 5.1).
-   **Written for build 0.20.3.21, 15 November 2026, and not compiled:**
+   **Written for build 0.20.3.21, 15 November 2026** (not compiled when
+   this paragraph was written; the results follow it):
    five patches, the first change to the browser since 0.20.3.18
    (18-REMAINING-WORK.md sections 0.3, 1, 2 and 7 have the design of
    each and what differs from it).
@@ -956,7 +957,9 @@ FreeBSD test bed, so an increment must be worth a build.
    **0.20.3.21, built 15 November 2026: the five patches compiled at the
    first attempt and do what they were written to do; one test of the
    new page failed, and the test was at fault.** Two runs that evening,
-   18:45 without the lockdown and 18:53 with it. Not published yet.
+   18:45 without the lockdown and 18:53 with it. This was a test build
+   with the compiler cache; the package published is the second build,
+   below.
    Without the lockdown (36 pass, 6 skipped): everything passes. WebGPU
    is listed as `disabled_off`, where every build to 0.20.3.20 said
    enabled; a page still gets no adapter. `beryllium://sandbox` lists the
@@ -1027,11 +1030,38 @@ FreeBSD test bed, so an increment must be worth a build.
    renderers. With the receiver's half off the 5 renderers read held 20
    to 36 descriptors, none outside the policy. Canvas noise on 1040 and
    997 pixels, and on 998 and 1052.
+   **0.20.3.21 published, 16 November 2026**, from commit 75d4a22: the
+   third signed release, and the first whose browser differs from
+   0.20.3.18. Checked as GitHub serves it that day: the signature
+   verifies against freebsd/release-keys; the package has the SHA-256
+   the signed file lists (f7ce01db...932b28bc); its build manifest lists
+   25 patches with the digests of the repository's, the five new ones
+   among them, and `compiler_cache: none`; `install.sh` accepts the
+   release as the latest and by its tag, and refuses it as a downgrade
+   or under another tag (off FreeBSD, with stand-ins, as for 0.20.3.19).
    What the page should say differently, for the next build: a renderer
    that is not ready yet is "starting", and the summary counts it apart.
    As built, a person who opens the page with the lockdown on sees one
    renderer "not in capability mode, not attested", which is the page's
    own, a moment before it locks down. True, and misleading.
+   **Written for 0.20.3.22, 16 November 2026, and not compiled:** the
+   page tells such a renderer apart. The browser makes its check in the
+   task in which a renderer becomes ready, so one that was asked to lock
+   down, is not ready (`RenderProcessHost::IsReady()`) and is not
+   attested has not been checked yet: its line says "attested at
+   connect: not yet (starting)", the summary has "renderers starting: S"
+   and leaves those out of "N of M", and the page explains the word when
+   it uses it. A renderer that is ready and not attested was refused and
+   is being ended; it stays "no". The suite reads both pages: on
+   0.20.3.21's, every unattested renderer is taken to be starting and
+   judged by a later reading, as before; on the new one only the marked
+   ones are, and an unattested renderer without the mark fails the gate.
+   The function that writes the page was taken out of the patched file
+   and run on Linux against stand-ins for what it calls, and the text it
+   wrote for six made-up processes is a fixture of the unit tests. That
+   is the page's own code producing its own text, and it is not a build:
+   whether `IsReady()` is false for exactly as long as intended is for
+   the first run on 0.20.3.22 to show.
 6. **Default on, fail closed** in the production package; the devel package
    keeps the switch. What has to be true first, and how the default
    changes in two steps, is in 18-REMAINING-WORK.md section 3.

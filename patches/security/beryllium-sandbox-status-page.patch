@@ -12,16 +12,28 @@ Purpose: plan/18 section 2 (feature matrix S-STA-02, S-STA-03). The page
         process: its kind, its pid, capability mode by the kernel (yes, no
         or unknown, from KernelSaysCapabilityMode), whether the browser
         asked it to lock down, and for those whether the browser's check at
-        connect passed;
+        connect passed: yes, no, or "not yet (starting)";
       - a summary that counts, and makes no judgement: renderers in
-        capability mode N of M, other child processes K of L, the browser
-        process not confined;
+        capability mode N of M, renderers starting S, other child processes
+        K of L, the browser process not confined;
       - whether the lockdown feature is on, how many renderers the kernel
         attested this session and how many the browser ended, whether the
         receive-side limits are on, whether --no-sandbox is in effect, and
         the kernel's name and release.
   Nothing on the page is a process's own report. Capability mode is read
     from the kernel when the page is loaded; reloading reads it again.
+  A starting renderer (from 0.20.3.22): the browser lists a renderer from
+    the moment its process exists, and asks the kernel about it when it
+    becomes ready (launched and connected), in the same task. One that was
+    asked to lock down, is not ready and is not attested has therefore not
+    been checked yet. 0.20.3.21 listed it as "attested at connect: no" and
+    counted it among the renderers not in capability mode, which was true
+    of that instant and read as a failed lockdown; the page's own renderer
+    is in that state every time the page opens in a new tab. Now it is
+    "not yet (starting)", the summary counts it apart from "N of M", and
+    the page explains the word when it uses it. A renderer that is ready
+    and not attested failed the check and is being ended: that one is
+    still "no" and still counted.
   Why not Chromium's page with a FreeBSD branch in its script: that needs
     changes to a TypeScript resource and its build rules, which this tree
     has never compiled a change to. One C++ file is the smaller risk for a
@@ -31,18 +43,24 @@ Stage: 4 (Beryllium series). Depends on
   records) and beryllium-receive-limits-switch.patch (the feature it
   reports).
 Refreshed against: Chromium 156.0.8078.79, Helium 0.20.3 (2f81b9ca),
-  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. Not yet
-  compiled (written for build 0.20.3.21).
+  FreeBSD ports 6ad3e0c8, using freebsd/tools/patch-workbench. First
+  built in 0.20.3.21 (released 16 November 2026), where every line agreed
+  with procstat -s. The wording for a starting renderer is for 0.20.3.22
+  and not yet compiled; it was type-checked against stand-in declarations.
 Test: freebsd/tests/browser/tests/test_50_sandbox.py
   test_sandbox_page_matches_the_kernel reads the page and compares the
   capability mode on every line with procstat -s for that pid, with the
-  lockdown on and off; freebsd/tools/tests/test_sandbox_page.py tests the
-  page's parser on a copy of the text this patch writes.
+  lockdown on and off; a renderer the page marks as starting must be
+  confined and attested, or gone, in a later reading. From 0.20.3.22 a
+  renderer the page lists as asked to lock down, not attested and not
+  starting fails the gate. freebsd/tools/tests/test_sandbox_status.py
+  tests the page's parser on a copy of the text this patch writes.
 security-review: required (sandbox reporting)
+
 
 --- a/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
 +++ b/chrome/browser/ui/webui/sandbox/sandbox_internals_ui.cc
-@@ -31,8 +31,171 @@
+@@ -31,8 +31,196 @@
  #include "sandbox/policy/sandbox.h"
  #endif
  
@@ -91,6 +109,7 @@ security-review: required (sandbox reporting)
 +  std::string rows;
 +  int renderers = 0;
 +  int renderers_confined = 0;
++  int renderers_starting = 0;
 +  int others = 0;
 +  int others_confined = 0;
 +
@@ -112,7 +131,8 @@ security-review: required (sandbox reporting)
 +
 +  for (auto it = content::RenderProcessHost::AllHostsIterator(); !it.IsAtEnd();
 +       it.Advance()) {
-+    const base::Process& process = it.GetCurrentValue()->GetProcess();
++    content::RenderProcessHost* host = it.GetCurrentValue();
++    const base::Process& process = host->GetProcess();
 +    if (!process.IsValid() || process.is_current()) {
 +      continue;
 +    }
@@ -120,13 +140,28 @@ security-review: required (sandbox reporting)
 +    const base::freebsd::KernelAnswer answer =
 +        base::freebsd::KernelSaysCapabilityMode(pid);
 +    const bool requested = base::freebsd::IsConfinedPeer(pid);
-+    ++renderers;
-+    if (answer == base::freebsd::KernelAnswer::kYes) {
-+      ++renderers_confined;
++    const bool attested = requested && base::freebsd::WasAttested(pid);
++    // The browser asks the kernel about a renderer at the moment it becomes
++    // ready (launched, and its channel connected), in the same task. So a
++    // renderer that was asked to lock down, is not ready and is not attested
++    // has not been checked yet: it is starting, and "no" would read as a
++    // failure of the lockdown. This page's own renderer is in that state
++    // whenever the page opens in a new tab (the first run on 0.20.3.21). A
++    // renderer that is ready and not attested failed the check and is being
++    // ended; that one stays "no". Starting renderers are counted apart.
++    const bool starting = requested && !attested && !host->IsReady();
++    if (starting) {
++      ++renderers_starting;
++    } else {
++      ++renderers;
++      if (answer == base::freebsd::KernelAnswer::kYes) {
++        ++renderers_confined;
++      }
 +    }
 +    add_row("renderer", pid, answer, requested ? "yes" : "no",
 +            !requested ? "not applicable"
-+                       : base::freebsd::WasAttested(pid) ? "yes" : "no");
++                       : attested ? "yes"
++                                  : starting ? "not yet (starting)" : "no");
 +  }
 +
 +  for (content::BrowserChildProcessHostIterator it; !it.Done(); ++it) {
@@ -167,9 +202,17 @@ security-review: required (sandbox reporting)
 +      "capability mode from the kernel (kern.proc.pid, what procstat -s\n"
 +      "prints as C), the rest from the browser's own records. Nothing here\n"
 +      "is a process's own report. Reload the page to read again.\n\n";
++  if (renderers_starting > 0) {
++    page += "A renderer marked starting was launched a moment ago and has not\n"
++            "connected to the browser yet. The browser asks the kernel about\n"
++            "it when it connects, and ends it unless the kernel says it is\n"
++            "confined. When this page opens in a new tab, its own renderer\n"
++            "is one. Reload the page to see what became of it.\n\n";
++  }
 +  page += "summary: renderers in capability mode: " +
 +          base::NumberToString(renderers_confined) + " of " +
-+          base::NumberToString(renderers) +
++          base::NumberToString(renderers) + "; renderers starting: " +
++          base::NumberToString(renderers_starting) +
 +          "; other child processes in capability mode: " +
 +          base::NumberToString(others_confined) + " of " +
 +          base::NumberToString(others) +
@@ -214,7 +257,7 @@ security-review: required (sandbox reporting)
  #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
  static void SetSandboxStatusData(content::WebUIDataSource* source) {
    // Get expected sandboxing status of renderers.
-@@ -81,6 +244,11 @@
+@@ -81,6 +269,11 @@
    SetSandboxStatusData(source);
    source->UseStringsJs();
  #endif
